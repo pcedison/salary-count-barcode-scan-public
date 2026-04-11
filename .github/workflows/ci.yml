@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  required-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+
+      - name: Verify release readiness
+        run: npm run verify:release
+
+      - name: Check patch hygiene
+        run: git diff --check
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    needs: required-checks
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Build Docker image
+        run: docker build -t salary-scan-ci .
+
+      - name: Start Docker smoke container
+        run: |
+          docker run -d --rm --name salary-scan-smoke -p 18080:8080 \
+            -e NODE_ENV=production \
+            -e DATABASE_URL=postgresql://smoke:smoke@db.internal.test:5432/smoke \
+            -e SESSION_SECRET=0123456789abcdef0123456789abcdef \
+            -e SESSION_SECURE=true \
+            -e BACKUP_ENCRYPTION_KEY=abcdef0123456789abcdef0123456789 \
+            -e APP_RUNTIME_DIR=/tmp/barcode_scan_V3-runtime \
+            -e APP_BACKUP_DIR=/tmp/barcode_scan_V3-runtime/backups \
+            -e APP_LOG_DIR=/tmp/barcode_scan_V3-runtime/logs \
+            salary-scan-ci
+
+      - name: Probe live endpoint
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:18080/live; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs salary-scan-smoke
+          exit 1
+
+      - name: Stop Docker smoke container
+        if: always()
+        run: docker rm -f salary-scan-smoke || true

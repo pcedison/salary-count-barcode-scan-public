@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <title>員工薪資計算系統</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <!-- Print styles -->
+    <style media="print">
+      body { font-size: 8pt; line-height: 1.2; }
+      .container { padding: 10px; box-shadow: none; }
+      h1 { font-size: 10pt; margin-bottom: 5px; }
+      table { border-collapse: collapse; margin-top: 5px; }
+      th, td { border: 1px solid black; padding: 3px; text-align: left; font-size: 8pt; }
+      .total-row, .deduction-row { font-size: 8pt; }
+      .deduction-row { color: #000; }
+      .input-section, .month-title-section, .calculation-notes .edit-button-calc, .clear-data-section { display: none; }
+      #resultTable { display: block !important; }
+      #resultTable table { display: table !important; }
+      @page { size: A4; margin: 10mm; }
+    </style>
+  </body>
+</html>

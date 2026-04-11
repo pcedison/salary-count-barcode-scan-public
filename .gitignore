@@ -1,0 +1,81 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Testing
+coverage
+
+# Production
+build
+dist
+
+# Environment files
+.env
+.env.generated.local
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.supabase_primary
+
+# Database backups and logs
+backups/
+logs/
+attached_assets/
+*.log
+data/
+backup.json
+neon-backup-*.json
+*.backup.json
+
+# Sensitive configuration
+supabase_config.json
+
+# Temporary files
+/tmp
+*.tmp
+*.temp
+test-*.js
+test-*.cjs
+simple-*.js
+simple-*.cjs
+
+# Archive files
+*.tar.gz
+*.zip
+*.rar
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor directories and files
+.idea
+.vscode
+.claude/
+.config/
+.local/
+*.swp
+*.swo
+*.sublime-*
+
+# OS generated files
+.DS_Store?
+ehthumbs.db
+
+# Replit specific (keep these)
+# .replit
+# replit.nix
+
+# Ad-hoc development scripts (not part of test suite)
+scripts/check-employee-types.ts
+scripts/test-employee-type.ts
+scripts/test-put-employee-type.ts
+scripts/test-schema.ts
