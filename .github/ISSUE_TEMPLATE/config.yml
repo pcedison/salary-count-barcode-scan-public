@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability report
+    url: https://github.com/pcedison/salary-count-barcode-scan-public/security/advisories/new
+    about: Report vulnerabilities privately through GitHub Security Advisories instead of public issues.
+  - name: Public release checklist
+    url: https://github.com/pcedison/salary-count-barcode-scan-public/blob/main/docs/PUBLIC_RELEASE_CHECKLIST.md
+    about: Review the operator-facing public release checklist before filing deployment readiness questions.

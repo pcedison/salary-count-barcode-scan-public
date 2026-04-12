@@ -14,6 +14,16 @@ Before a broad public rollout, operators should still complete the external plat
 - require GitHub checks on `main`
 - run a short canary window with live monitoring
 
+## Intended Audience
+
+This repository is a good fit for:
+
+- small teams that need an attendance and salary workflow they can self-host
+- operators who are comfortable managing PostgreSQL, LINE configuration, and deployment secrets
+- contributors who want a real-world Express + React codebase with release and operations guardrails
+
+This repository is not a drop-in managed SaaS product. If you need zero-config onboarding, hosted support, or compliance guarantees out of the box, treat this codebase as a foundation that still needs operator ownership.
+
 ## Core Capabilities
 
 - session-based admin authentication with SUPER escalation
@@ -78,12 +88,18 @@ npm run test:real-db
 ## Documentation Map
 
 - [API_DOCUMENTATION.md](API_DOCUMENTATION.md): live API contract
+- [SECURITY.md](SECURITY.md): vulnerability disclosure and security reporting policy
+- [CONTRIBUTING.md](CONTRIBUTING.md): contributor setup, testing, and pull request expectations
+- [CHANGELOG.md](CHANGELOG.md): public release history for the clean-room repository
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): public system map for the major runtime components
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md): environment variables and runtime path policy
 - [docs/OPERATOR_RELEASE_READINESS.md](docs/OPERATOR_RELEASE_READINESS.md): operator go/no-go checklist before publishing
 - [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md): deployment and canary rollout procedure
 - [docs/OPERATIONS_RUNBOOK.md](docs/OPERATIONS_RUNBOOK.md): day-2 operations and incident response
 - [docs/MAINTENANCE.md](docs/MAINTENANCE.md): recurring maintenance tasks and cleanup cadence
 - [docs/PUBLIC_RELEASE_CHECKLIST.md](docs/PUBLIC_RELEASE_CHECKLIST.md): short public-release checklist
+- [docs/PUBLIC_REPO_HARDENING_PLAN.md](docs/PUBLIC_REPO_HARDENING_PLAN.md): tracked hardening backlog for public-project maturity
+- [docs/SUPPORT_POLICY.md](docs/SUPPORT_POLICY.md): public maintenance scope and support expectations
 - [docs/ZEABUR_BUILD_CONTRACT.md](docs/ZEABUR_BUILD_CONTRACT.md): deployment contract and build expectations for Zeabur
 
 ## Public Release Notes

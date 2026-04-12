@@ -9,7 +9,8 @@ const PACKAGE_LOCK_PATH = path.join(ROOT_DIR, "package-lock.json");
 const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 const IMPACT_LEVELS = new Set(["patch", "minor", "major"]);
-const DOC_PATH_PATTERN = /^(docs\/|README\.md$|API_DOCUMENTATION\.md$|DATABASE_SCHEMA\.md$)/;
+const DOC_PATH_PATTERN = /^(docs\/|\.github\/|README\.md$|API_DOCUMENTATION\.md$|DATABASE_SCHEMA\.md$|SECURITY\.md$|CONTRIBUTING\.md$|CHANGELOG\.md$)/;
+const GOVERNANCE_TOOLING_PATH_PATTERN = /^scripts\/version-auto\.mjs$/;
 const TEST_PATH_PATTERN = /(\.test\.[cm]?[jt]sx?$|\.integration\.test\.[cm]?[jt]sx?$)/;
 const ARCHITECTURE_PATH_PATTERNS = [
   /^server\/bootstrap\//,
@@ -240,8 +241,13 @@ function classifyImpact(files) {
       .map((file) => file.path.split("/")[0])
       .filter((segment) => ["client", "server", "shared", "scripts"].includes(segment))
   );
-  const docsOnly = files.every((file) => DOC_PATH_PATTERN.test(file.path));
-  const testOnly = files.every((file) => TEST_PATH_PATTERN.test(file.path) || DOC_PATH_PATTERN.test(file.path));
+  const docsOnly = files.every((file) => DOC_PATH_PATTERN.test(file.path) || GOVERNANCE_TOOLING_PATH_PATTERN.test(file.path));
+  const testOnly = files.every(
+    (file) =>
+      TEST_PATH_PATTERN.test(file.path) ||
+      DOC_PATH_PATTERN.test(file.path) ||
+      GOVERNANCE_TOOLING_PATH_PATTERN.test(file.path)
+  );
   const touchesArchitecture = files.some((file) =>
     ARCHITECTURE_PATH_PATTERNS.some((pattern) => pattern.test(file.path))
   );
