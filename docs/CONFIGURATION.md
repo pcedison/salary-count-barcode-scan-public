@@ -17,7 +17,7 @@
 | `SESSION_SECURE` | Production | Must be `true` in production |
 | `BACKUP_ENCRYPTION_KEY` | Production backup protection | At least 32 characters, or use `ENCRYPTION_KEY` |
 | `ENCRYPTION_KEY` | AES / backup protection | At least 32 characters |
-| `SUPER_ADMIN_PIN` | Optional | Must be hashed in production |
+| `SUPER_ADMIN_PIN` | Optional | Must be hashed in production; plaintext is rejected at startup |
 
 ## Optional variables
 
@@ -108,6 +108,20 @@ This prints a deployment-ready env block for:
 - `ENCRYPTION_KEY`
 - `ENCRYPTION_SALT`
 - `USE_AES_ENCRYPTION=true`
+
+Generate a production-safe `SUPER_ADMIN_PIN` hash locally:
+
+```bash
+npm run super-pin:hash -- 123456
+```
+
+If you only want the raw hash value for copying into Zeabur:
+
+```bash
+npm run super-pin:hash -- --raw 123456
+```
+
+Never store a plaintext `SUPER_ADMIN_PIN` in Zeabur production variables.
 
 ## Release gate
 

@@ -78,6 +78,27 @@ When redeploying on Zeabur:
 3. Do not override install/build commands unless necessary
 4. Remove `NPM_CONFIG_PRODUCTION`, `npm_config_production`, `NPM_CONFIG_OMIT`, and `npm_config_omit` from Zeabur Variables
 5. Clear the Zeabur build cache if the logs still reflect an older install strategy
+6. Replace any plaintext `SUPER_ADMIN_PIN` with a hashed value generated via `npm run super-pin:hash -- --raw <your-pin>`
+
+## Zeabur Runtime Guardrails
+
+Zeabur startup can still fail even when the image build succeeds if production variables do not satisfy runtime validation.
+
+The most common example is:
+
+- `SUPER_ADMIN_PIN` left as plaintext from an older deployment
+
+In production, the app rejects plaintext values and exits with:
+
+```text
+Error: SUPER_ADMIN_PIN must be hashed in production
+```
+
+To fix this, generate a hash locally and paste the resulting value into the Zeabur variable:
+
+```bash
+npm run super-pin:hash -- --raw <your-pin>
+```
 
 ## When A Build Fails Again
 

@@ -30,6 +30,7 @@
     "aes:migrate": "node scripts/migrate-to-aes.mjs --execute",
     "aes:rollback": "node scripts/migrate-to-aes.mjs --rollback",
     "secrets:generate": "node scripts/generate-secrets.mjs",
+    "super-pin:hash": "node scripts/hash-super-admin-pin.mjs",
     "security:supabase:check": "node scripts/harden-supabase-public-schema.mjs --check",
     "security:supabase:harden": "node scripts/harden-supabase-public-schema.mjs --apply",
     "db:employee-recycle-bin:check": "node scripts/apply-employee-recycle-bin-schema.mjs --check",
