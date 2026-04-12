@@ -19,7 +19,8 @@ const ClockInPage = lazy(() => import("@/pages/ClockInPage"));
 const QRCodePage = lazy(() => import("@/pages/QRCodePage"));
 
 const APP_TITLE = "員工薪資計算系統";
-const APP_VERSION = "1.0.0";
+const APP_VERSION = __APP_VERSION__;
+const APP_COPYRIGHT_YEAR = new Date().getFullYear();
 
 const MAIN_TAB_COMPONENTS: Record<MainTab, LazyExoticComponent<ComponentType>> = {
   attendance: AttendancePage,
@@ -87,7 +88,7 @@ function MainLayout({
         </div>
 
         <div className="border-t border-gray-200 bg-gray-50 px-6 py-4 text-center text-sm text-gray-500">
-          {APP_TITLE} &copy; 2025 版本 {APP_VERSION}
+          {APP_TITLE} &copy; {APP_COPYRIGHT_YEAR} 版本 {APP_VERSION}
         </div>
       </div>
     </div>

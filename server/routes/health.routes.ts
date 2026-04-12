@@ -2,6 +2,7 @@ import fs from "fs";
 import v8 from "v8";
 import type { Express } from "express";
 
+import { getAppVersion } from "../config/appVersion";
 import { db } from "../db";
 
 const SERVER_START_TIME = Date.now();
@@ -144,7 +145,7 @@ export function registerHealthRoutes(app: Express): void {
       status: isHealthy ? "healthy" : "degraded",
       timestamp: new Date().toISOString(),
       uptimeSeconds: getUptimeSeconds(),
-      version: process.env.npm_package_version || "1.0.0",
+      version: getAppVersion(),
       checks: {
         database,
         memory,
