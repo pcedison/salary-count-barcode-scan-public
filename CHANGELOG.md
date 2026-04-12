@@ -8,6 +8,20 @@ This repository follows Keep a Changelog style and uses the clean-room public hi
 
 - No unreleased notes yet.
 
+## [2.1.3] - 2026-04-13
+
+### Added
+
+- `npm run smoke:live` for reusable Zeabur/public deployment smoke checks with JSON report output under `tmp/`.
+
+### Changed
+
+- `docs/OPERATIONS_RUNBOOK.md` now documents the live smoke command for operator-side canary checks.
+
+### Fixed
+
+- `/api/health` now reports the packaged application version in production instead of falling back to `0.0.0` after server bundling.
+
 ## [2.1.2] - 2026-04-13
 
 ### Added

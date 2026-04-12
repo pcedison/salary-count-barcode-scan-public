@@ -10,6 +10,7 @@ Verify service health:
 curl https://your-app.example.com/api/health
 curl https://your-app.example.com/ready
 curl https://your-app.example.com/live
+npm run smoke:live -- --base-url https://your-app.example.com
 ```
 
 Expected outcomes:
@@ -23,6 +24,8 @@ Then review the SUPER-admin dashboard:
 - backup list loads successfully
 - operational metrics load successfully
 - no unexplained spike appears in failure counters
+
+The live smoke command writes a JSON report to `tmp/` by default and classifies each check as `pass`, `fail`, or `blocked`.
 
 ## 2. Release Monitoring
 
