@@ -1,6 +1,6 @@
 {
   "name": "rest-express",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -33,6 +33,7 @@
     "super-pin:hash": "node scripts/hash-super-admin-pin.mjs",
     "version:preview": "node scripts/version-auto.mjs",
     "version:auto": "node scripts/version-auto.mjs --apply",
+    "smoke:live": "node scripts/live-smoke.mjs",
     "security:supabase:check": "node scripts/harden-supabase-public-schema.mjs --check",
     "security:supabase:harden": "node scripts/harden-supabase-public-schema.mjs --apply",
     "db:employee-recycle-bin:check": "node scripts/apply-employee-recycle-bin-schema.mjs --check",
