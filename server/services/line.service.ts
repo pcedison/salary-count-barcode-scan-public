@@ -6,6 +6,7 @@ const log = createLogger('line-service');
 const LINE_TOKEN_ENDPOINT = 'https://api.line.me/oauth2/v2.1/token';
 const LINE_PROFILE_ENDPOINT = 'https://api.line.me/v2/profile';
 const LINE_AUTHORIZE_ENDPOINT = 'https://access.line.me/oauth2/v2.1/authorize';
+const LINE_API_TIMEOUT_MS = 8_000;
 
 function maskLineUserId(lineUserId: string): string {
   const normalized = lineUserId.trim();
@@ -21,6 +22,30 @@ export interface LineProfile {
   displayName: string;
   pictureUrl?: string;
   statusMessage?: string;
+}
+
+async function fetchLineApi(
+  url: string,
+  init: RequestInit,
+  operation: string
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), LINE_API_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`${operation} timed out after ${LINE_API_TIMEOUT_MS}ms`);
+    }
+
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function isLineConfigured(): boolean {
@@ -53,11 +78,11 @@ export async function exchangeCodeForToken(code: string): Promise<{ access_token
     client_secret: process.env.LINE_LOGIN_CHANNEL_SECRET!
   });
 
-  const response = await fetch(LINE_TOKEN_ENDPOINT, {
+  const response = await fetchLineApi(LINE_TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString()
-  });
+  }, 'LINE token exchange');
 
   if (!response.ok) {
     const text = await response.text();
@@ -68,9 +93,9 @@ export async function exchangeCodeForToken(code: string): Promise<{ access_token
 }
 
 export async function getLineProfile(accessToken: string): Promise<LineProfile> {
-  const response = await fetch(LINE_PROFILE_ENDPOINT, {
+  const response = await fetchLineApi(LINE_PROFILE_ENDPOINT, {
     headers: { Authorization: `Bearer ${accessToken}` }
-  });
+  }, 'LINE profile fetch');
 
   if (!response.ok) {
     throw new Error(`LINE profile fetch failed: ${response.status}`);
@@ -81,8 +106,10 @@ export async function getLineProfile(accessToken: string): Promise<LineProfile> 
 
 export async function verifyLiffAccessToken(accessToken: string): Promise<LineProfile | null> {
   try {
-    const verifyRes = await fetch(
-      `https://api.line.me/oauth2/v2.1/verify?access_token=${encodeURIComponent(accessToken)}`
+    const verifyRes = await fetchLineApi(
+      `https://api.line.me/oauth2/v2.1/verify?access_token=${encodeURIComponent(accessToken)}`,
+      {},
+      'LINE access token verification'
     );
     if (!verifyRes.ok) return null;
 
