@@ -44,6 +44,11 @@ const storageMock = vi.hoisted(() => ({
       ? recycleBinState.employee
       : undefined
   ),
+  getEmployeeByIdIncludingDeleted: vi.fn(async (id: number) =>
+    id === recycleBinState.employee.id
+      ? recycleBinState.employee
+      : undefined
+  ),
   deleteEmployee: vi.fn(async (id: number, deletedBy = 'admin') => {
     if (id !== recycleBinState.employee.id || recycleBinState.employee.deletedAt) {
       return false;
@@ -73,6 +78,24 @@ const storageMock = vi.hoisted(() => ({
       purgeAfterAt: null
     };
     return recycleBinState.employee;
+  }),
+  purgeEmployee: vi.fn(async (id: number) => {
+    if (id !== recycleBinState.employee.id || !recycleBinState.employee.deletedAt) {
+      return {
+        purged: false,
+        anonymizedSalaryRecords: 0
+      };
+    }
+
+    recycleBinState.employee = {
+      ...recycleBinState.employee,
+      deletedAt: new Date('2026-04-08T02:00:00.000Z')
+    };
+
+    return {
+      purged: true,
+      anonymizedSalaryRecords: 3
+    };
   }),
   getSettings: vi.fn(async () => ({ barcodeEnabled: true }))
 }));
@@ -249,6 +272,52 @@ describe('employee recycle-bin routes integration', () => {
           name: '回收桶測試員工'
         })
       ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('permanently purges employees that are already in the recycle bin', async () => {
+    recycleBinState.employee = {
+      ...recycleBinState.employee,
+      deletedAt: new Date('2026-04-08T02:00:00.000Z'),
+      deletedBy: 'admin',
+      purgeAfterAt: new Date('2026-05-08T02:00:00.000Z'),
+      lineUserId: null,
+      lineDisplayName: null,
+      linePictureUrl: null,
+      lineBindingDate: null
+    };
+
+    const server = await createJsonTestServer(registerEmployeeRoutes, {
+      setupApp: async (app) => {
+        setupTestAdminSession(app);
+      }
+    });
+
+    try {
+      const purgeResult = await jsonRequest<Record<string, unknown>>(
+        server.baseUrl,
+        '/api/employees/5/purge',
+        {
+          method: 'DELETE',
+          headers: {
+            'content-type': 'application/json',
+            [TEST_ADMIN_HEADER]: 'true'
+          },
+          body: JSON.stringify({
+            confirmName: '回收桶測試員工'
+          })
+        }
+      );
+
+      expect(purgeResult.response.status).toBe(200);
+      expect(purgeResult.body).toEqual({
+        success: true,
+        anonymizedSalaryRecords: 3
+      });
+      expect(storageMock.getEmployeeByIdIncludingDeleted).toHaveBeenCalledWith(5);
+      expect(storageMock.purgeEmployee).toHaveBeenCalledWith(5);
     } finally {
       await server.close();
     }

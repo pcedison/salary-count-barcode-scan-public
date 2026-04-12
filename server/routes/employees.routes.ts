@@ -413,7 +413,7 @@ export function registerEmployeeRoutes(app: Express): void {
       }
 
       // Fetch employee to verify it is in the recycle bin and name matches
-      const employee = await storage.getEmployeeById(id);
+      const employee = await storage.getEmployeeByIdIncludingDeleted(id);
       if (!employee) {
         return res.status(404).json({ success: false, message: '找不到員工' });
       }
