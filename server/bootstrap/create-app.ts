@@ -36,7 +36,7 @@ function installApiRequestLogging(app: Express): void {
         duration,
         capturedJsonResponse
       );
-      const level = getApiRequestLogLevel(res.statusCode);
+      const level = getApiRequestLogLevel(res.statusCode, path, capturedJsonResponse);
       requestLog[level](logLine);
     });
 

@@ -33,9 +33,42 @@ function summarizeApiResponseBody(body: unknown): string | null {
   return Object.keys(summary).length > 0 ? JSON.stringify(summary) : null;
 }
 
-export function getApiRequestLogLevel(statusCode: number): LogLevel {
+function isExpectedProtectedRouteResponse(
+  statusCode: number,
+  path: string,
+  responseBody?: unknown
+) {
+  if (statusCode !== 401) {
+    return false;
+  }
+
+  if (path === '/api/dashboard/operational-metrics') {
+    return true;
+  }
+
+  if (
+    path === '/api/attendance/today' &&
+    typeof responseBody === 'object' &&
+    responseBody !== null &&
+    (responseBody as Record<string, unknown>).code === 'SCAN_SESSION_REQUIRED'
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+export function getApiRequestLogLevel(
+  statusCode: number,
+  path = '',
+  responseBody?: unknown
+): LogLevel {
   if (statusCode >= 500) {
     return 'error';
+  }
+
+  if (isExpectedProtectedRouteResponse(statusCode, path, responseBody)) {
+    return 'info';
   }
 
   if (statusCode >= 400) {
