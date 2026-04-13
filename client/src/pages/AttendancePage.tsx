@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Lock, Shield, User, UserCheck } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { invalidateAttendanceQueries } from '@/lib/attendanceRecords';
+import { getAttendanceSyncBadge } from '@/lib/attendanceSyncStatus';
 import { debugLog, debugWarn } from '@/lib/debug';
 import { getCurrentYearMonth, getMonthName, getTodayDate, getCurrentTime } from '@/lib/utils';
 import { eventBus, EventNames } from '@/lib/eventBus';
@@ -67,6 +68,7 @@ export default function AttendancePage() {
     : attendanceData;
 
   const { year, month } = getCurrentYearMonth();
+  const syncBadge = getAttendanceSyncBadge(syncStatus);
 
   // 處理員工選擇變更
   const handleEmployeeChange = (employeeId: string) => {
@@ -446,13 +448,17 @@ export default function AttendancePage() {
             </Button>
           )}
           <div className="relative">
-            <button className={`bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-md text-sm flex items-center ${syncStatus.synced ? 'text-success' : 'text-warning'}`}>
-              <span className="material-icons text-sm mr-1">{syncStatus.synced ? 'cloud_done' : 'sync'}</span>
-              {syncStatus.synced ? '資料已同步' : '同步中...'}
+            <button
+              className={`bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-md text-sm flex items-center ${syncBadge.tone}`}
+              title={syncBadge.detail}
+              type="button"
+            >
+              <span className="material-icons text-sm mr-1">{syncBadge.icon}</span>
+              {syncBadge.label}
             </button>
             {/* Sync Status Tooltip - can be enhanced with hover state */}
             <div className="hidden absolute top-full right-0 mt-2 w-64 bg-white p-3 rounded-md shadow-lg z-10 text-sm">
-              最後同步時間：{syncStatus.lastSynced || '未知'}
+              {syncBadge.detail}
             </div>
           </div>
           {/* 只在管理員模式下顯示計算薪資按鈕 */}

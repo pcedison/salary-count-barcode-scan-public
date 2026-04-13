@@ -2,9 +2,13 @@ import { useState, useEffect, useMemo } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAdmin } from '@/hooks/useAdmin';
-import { apiRequest } from '@/lib/queryClient';
+import { apiRequest, getQueryFn } from '@/lib/queryClient';
 import { useSettings } from '@/hooks/useSettings';
 import { useEmployees } from '@/hooks/useEmployees';
+import {
+  createAttendanceSyncStatus,
+  type AttendanceSyncStatus,
+} from '@/lib/attendanceSyncStatus';
 import {
   invalidateAttendanceQueries,
   normalizeAttendanceRecord,
@@ -84,21 +88,21 @@ export function useAttendanceData() {
   const { settings, holidays } = useSettings({ requireAdminSettings: isAdmin });
 
   const [salaryResult, setSalaryResult] = useState<SalaryResult | null>(null);
-  const [syncStatus, setSyncStatus] = useState<{ synced: boolean; lastSynced: string | null }>({
-    synced: true,
-    lastSynced: null
-  });
+  const [syncStatus, setSyncStatus] = useState<AttendanceSyncStatus>(
+    createAttendanceSyncStatus('syncing', null)
+  );
 
   // Fetch attendance data.
   const attendanceQueryKey = isAdmin ? '/api/attendance' : '/api/attendance/today';
 
   const {
-    data: rawAttendanceData = [],
+    data: rawAttendanceData,
     isLoading,
     error
-  } = useQuery<AttendanceRecordLike[] | PaginatedPayload<AttendanceRecordLike>>({
+  } = useQuery<AttendanceRecordLike[] | PaginatedPayload<AttendanceRecordLike> | null>({
     queryKey: [attendanceQueryKey],
     enabled: true,
+    queryFn: isAdmin ? undefined : getQueryFn({ on401: 'returnNull' }),
     refetchInterval: 30000,
     staleTime: 15000,
     refetchIntervalInBackground: false,
@@ -106,8 +110,10 @@ export function useAttendanceData() {
     retry: 1
   });
 
+  const isKioskLocked = !isAdmin && rawAttendanceData === null;
+
   const attendanceData = useMemo<AttendanceRecord[]>(() => {
-    const records = extractListData(rawAttendanceData);
+    const records = rawAttendanceData ? extractListData(rawAttendanceData) : [];
     return records.map((record) => normalizeAttendanceRecord(record));
   }, [rawAttendanceData]);
 
@@ -125,18 +131,23 @@ export function useAttendanceData() {
 
   // Keep sync state aligned with the latest query outcome.
   useEffect(() => {
-    if (!isLoading && !error) {
-      setSyncStatus({
-        synced: true,
-        lastSynced: new Date().toLocaleString()
-      });
-    } else if (error) {
-      setSyncStatus({
-        synced: false,
-        lastSynced: syncStatus.lastSynced
-      });
+    if (isKioskLocked) {
+      setSyncStatus((previous) =>
+        createAttendanceSyncStatus('locked', previous.lastSynced)
+      );
+      return;
     }
-  }, [attendanceData, isLoading, error]);
+
+    if (!isLoading && !error) {
+      setSyncStatus(
+        createAttendanceSyncStatus('synced', new Date().toLocaleString())
+      );
+    } else if (error) {
+      setSyncStatus((previous) =>
+        createAttendanceSyncStatus('error', previous.lastSynced)
+      );
+    }
+  }, [attendanceData, error, isKioskLocked, isLoading]);
   // Enrich attendance rows with employee metadata.
   const { employees } = useEmployees({ requireAdminDetails: isAdmin });
 
@@ -336,7 +347,9 @@ export function useAttendanceData() {
   // Add a new attendance record
   const addAttendance = async (record: NewAttendanceRecord) => {
     try {
-      setSyncStatus({ ...syncStatus, synced: false });
+      setSyncStatus((previous) =>
+        createAttendanceSyncStatus('syncing', previous.lastSynced)
+      );
       await createAttendanceMutation.mutateAsync(record);
       return true;
     } catch (error) {
@@ -347,7 +360,9 @@ export function useAttendanceData() {
   // Update an attendance record
   const updateAttendance = async (id: number, data: Partial<NewAttendanceRecord>) => {
     try {
-      setSyncStatus({ ...syncStatus, synced: false });
+      setSyncStatus((previous) =>
+        createAttendanceSyncStatus('syncing', previous.lastSynced)
+      );
       await updateAttendanceMutation.mutateAsync({ id, data });
       return true;
     } catch (error) {
@@ -358,7 +373,9 @@ export function useAttendanceData() {
   // Delete an attendance record
   const deleteAttendance = async (id: number) => {
     try {
-      setSyncStatus({ ...syncStatus, synced: false });
+      setSyncStatus((previous) =>
+        createAttendanceSyncStatus('syncing', previous.lastSynced)
+      );
       await deleteSingleAttendanceMutation.mutateAsync(id);
       return true;
     } catch (error) {
@@ -369,7 +386,9 @@ export function useAttendanceData() {
   // Clear all attendance records
   const clearAllData = async () => {
     try {
-      setSyncStatus({ ...syncStatus, synced: false });
+      setSyncStatus((previous) =>
+        createAttendanceSyncStatus('syncing', previous.lastSynced)
+      );
       await deleteFilteredAttendanceMutation.mutateAsync({});
       setSalaryResult(null);
       return true;
