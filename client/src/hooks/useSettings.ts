@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useAdmin } from "@/hooks/useAdmin";
@@ -190,20 +190,31 @@ export function useSettings(options: UseSettingsOptions = {}) {
     }
   };
 
-  const mergedPublicSettings = toPublicSettingsPayload(
-    publicSettings ?? DEFAULT_PUBLIC_SETTINGS,
+  const mergedPublicSettings = useMemo(
+    () =>
+      toPublicSettingsPayload(
+        publicSettings ?? DEFAULT_PUBLIC_SETTINGS,
+      ),
+    [publicSettings],
+  );
+
+  const resolvedAdminSettings = useMemo(
+    () => (adminSettings ? toAdminSettingsPayload(adminSettings) : null),
+    [adminSettings],
+  );
+
+  const resolvedSettings = useMemo(
+    () =>
+      needsAdminSettings
+        ? resolvedAdminSettings
+        : toAdminSettingsPayload(mergedPublicSettings),
+    [mergedPublicSettings, needsAdminSettings, resolvedAdminSettings],
   );
 
   return {
-    settings: needsAdminSettings
-      ? adminSettings
-        ? toAdminSettingsPayload(adminSettings)
-        : null
-      : toAdminSettingsPayload(mergedPublicSettings),
+    settings: resolvedSettings,
     publicSettings: mergedPublicSettings,
-    adminSettings: adminSettings
-      ? toAdminSettingsPayload(adminSettings)
-      : null,
+    adminSettings: resolvedAdminSettings,
     barcodeEnabled: mergedPublicSettings.barcodeEnabled,
     isLoading:
       isPublicSettingsLoading || (needsAdminSettings && isAdminSettingsLoading),

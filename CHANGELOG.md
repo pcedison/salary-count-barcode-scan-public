@@ -8,6 +8,17 @@ This repository follows Keep a Changelog style and uses the clean-room public hi
 
 - No unreleased notes yet.
 
+## [2.1.4] - 2026-04-14
+
+### Changed
+
+- Expected 401 responses for the locked kiosk attendance endpoint and anonymous operational metrics probe now log at `info` level instead of `warn`.
+- The ad-hoc live Playwright smoke script now validates the public QR code route against its admin gate and uses more stable UI locators.
+
+### Fixed
+
+- `useSettings()` now memoizes resolved settings payloads so the Settings page no longer reinitializes form state on every render and triggers the React "Maximum update depth exceeded" warning.
+
 ## [2.1.3] - 2026-04-13
 
 ### Added
