@@ -8,6 +8,16 @@ This repository follows Keep a Changelog style and uses the clean-room public hi
 
 - No unreleased notes yet.
 
+## [2.1.5] - 2026-04-14
+
+### Changed
+
+- The attendance page now treats the public `/api/attendance/today` lock gate as a waiting state instead of showing a misleading perpetual "syncing" badge.
+
+### Fixed
+
+- The attendance sync badge now distinguishes between `資料已同步`, `同步中...`, `等待解鎖`, and `同步失敗`, so a locked kiosk no longer looks like an active sync that never finishes.
+
 ## [2.1.4] - 2026-04-14
 
 ### Changed
