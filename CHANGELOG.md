@@ -8,6 +8,13 @@ This repository follows Keep a Changelog style and uses the clean-room public hi
 
 - No unreleased notes yet.
 
+## [2.1.7] - 2026-04-15
+
+### Fixed
+
+- `POST /api/verify-admin` now accepts a valid super admin PIN and creates a SUPER session directly, so operators can log in with either the standard admin PIN or the super admin PIN from the first prompt.
+- Admin login messaging now makes it clear that the shared PIN dialog accepts either a standard admin PIN or a super admin PIN.
+
 ## [2.1.6] - 2026-04-15
 
 ### Changed
