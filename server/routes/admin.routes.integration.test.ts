@@ -150,7 +150,57 @@ describe('admin routes integration', () => {
     }
   });
 
-  it('elevates an authenticated admin session to SUPER only through the explicit elevation route', async () => {
+  it('allows direct super admin login through the standard verify-admin route', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.SESSION_SECRET = 'admin-session-secret-1234567890123456';
+    process.env.SESSION_SECURE = 'false';
+    process.env.SUPER_ADMIN_PIN = hashAdminPin(TEST_SUPER_PIN);
+
+    const server = await createJsonTestServer(registerAdminRoutes, {
+      setupApp: async (app) => {
+        setupAdminSession(app);
+      }
+    });
+
+    try {
+      const loginResult = await jsonRequest<Record<string, any>>(server.baseUrl, '/api/verify-admin', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          pin: TEST_SUPER_PIN
+        })
+      });
+
+      expect(loginResult.response.status).toBe(200);
+      expect(loginResult.body).toMatchObject({
+        success: true,
+        authMode: 'session',
+        permissionLevel: 4
+      });
+
+      const loginCookie = loginResult.response.headers.get('set-cookie');
+      const loginCookieHeader = loginCookie?.split(';')[0];
+
+      const sessionResult = await jsonRequest<Record<string, any>>(server.baseUrl, '/api/admin/session', {
+        headers: {
+          cookie: loginCookieHeader || ''
+        }
+      });
+
+      expect(sessionResult.response.status).toBe(200);
+      expect(sessionResult.body).toMatchObject({
+        success: true,
+        isAdmin: true,
+        permissionLevel: 4
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('elevates an authenticated admin session to SUPER through the explicit elevation route', async () => {
     const server = await createJsonTestServer(registerAdminRoutes, {
       setupApp: async (app) => {
         setupAdminSession(app);

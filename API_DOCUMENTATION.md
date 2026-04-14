@@ -16,7 +16,7 @@ All admin routes use the session cookie. The login flow is PIN-based, but the re
 
 | Method | Path | Access | Notes |
 | --- | --- | --- | --- |
-| `POST` | `/api/verify-admin` | Public | Verifies the admin PIN and creates an admin session. |
+| `POST` | `/api/verify-admin` | Public | Verifies either the standard admin PIN or `SUPER_ADMIN_PIN` and creates the corresponding admin session. |
 | `GET` | `/api/admin/session` | Public | Returns current admin session state. |
 | `POST` | `/api/admin/logout` | Admin session | Clears the admin session. |
 | `POST` | `/api/admin/elevate-super` | Admin session | Promotes an admin session to SUPER after validating `SUPER_ADMIN_PIN`. |

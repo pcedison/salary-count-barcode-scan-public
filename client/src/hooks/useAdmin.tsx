@@ -361,7 +361,10 @@ export function AdminProvider({ children }: { children: ReactNode }) {
 
       toast({
         title: "驗證失敗",
-        description: "管理員 PIN 不正確。",
+        description:
+          requiredLevel >= AdminPermissionLevel.SUPER
+            ? "Super 管理員 PIN 不正確。"
+            : "管理員或 Super 管理員 PIN 不正確。",
         variant: "destructive",
       });
       return false;
@@ -369,7 +372,10 @@ export function AdminProvider({ children }: { children: ReactNode }) {
       console.error("Admin verification error:", error);
       toast({
         title: "驗證發生錯誤",
-        description: "無法驗證管理員 PIN，請稍後再試。",
+        description:
+          requiredLevel >= AdminPermissionLevel.SUPER
+            ? "無法驗證 Super 管理員 PIN，請稍後再試。"
+            : "無法驗證管理員或 Super 管理員 PIN，請稍後再試。",
         variant: "destructive",
       });
       return false;

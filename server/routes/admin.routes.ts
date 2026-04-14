@@ -48,8 +48,15 @@ export function registerAdminRoutes(app: Express): void {
         return res.status(400).json({ success: false, message: 'PIN is required' });
       }
 
-      const isValid = await verifyAdminPermission(pin);
-      if (!isValid) {
+      const isAdminPin = await verifyAdminPermission(pin);
+      const isSuperPin = !isAdminPin && (await verifySuperAdminPermission(pin));
+      const permissionLevel = isAdminPin
+        ? PermissionLevel.ADMIN
+        : isSuperPin
+          ? PermissionLevel.SUPER
+          : null;
+
+      if (!permissionLevel) {
         recordCounter('admin.login.failure');
         logOperation(OperationType.LOGIN, 'Admin login failed', {
           ip: req.ip,
@@ -61,18 +68,20 @@ export function registerAdminRoutes(app: Express): void {
 
       // Transparent PBKDF2 iteration upgrade: re-hash with current iterations on login
       try {
-        const settings = await storage.getSettings();
-        if (settings?.adminPin && needsRehash(settings.adminPin)) {
-          const upgraded = hashAdminPin(pin);
-          await storage.createOrUpdateSettings({ ...settings, adminPin: upgraded });
-          log.info('Admin PIN auto-upgraded to current PBKDF2 iteration count');
+        if (isAdminPin) {
+          const settings = await storage.getSettings();
+          if (settings?.adminPin && needsRehash(settings.adminPin)) {
+            const upgraded = hashAdminPin(pin);
+            await storage.createOrUpdateSettings({ ...settings, adminPin: upgraded });
+            log.info('Admin PIN auto-upgraded to current PBKDF2 iteration count');
+          }
         }
       } catch (rehashErr) {
         log.error('Failed to auto-upgrade admin PIN hash:', rehashErr);
       }
 
-      await createAdminSession(req, PermissionLevel.ADMIN);
-      logOperation(OperationType.LOGIN, 'Admin login succeeded', {
+      await createAdminSession(req, permissionLevel);
+      logOperation(OperationType.LOGIN, permissionLevel >= PermissionLevel.SUPER ? 'Super admin login succeeded' : 'Admin login succeeded', {
         ip: req.ip,
         success: true,
       });
@@ -80,7 +89,7 @@ export function registerAdminRoutes(app: Express): void {
       return res.json({
         success: true,
         authMode: 'session',
-        permissionLevel: PermissionLevel.ADMIN,
+        permissionLevel,
         superAdminConfigured: isSuperAdminPinConfigured(),
         ...buildAdminSessionPolicyPayload(),
       });
