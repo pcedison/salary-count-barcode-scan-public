@@ -1,22 +1,39 @@
-import { lazy, Suspense, type ComponentType, type LazyExoticComponent, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, type ComponentType, type LazyExoticComponent, type ReactNode } from "react";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Route, Switch, useLocation } from "wouter";
 
 import { Toaster } from "@/components/ui/toaster";
 import { AdminProvider } from "@/hooks/useAdmin";
 import { MAIN_NAV_ITEMS, getMainTabForPath, getPathForMainTab, type MainTab } from "@/lib/appNavigation";
+import { getIdleScheduler, preloadMainTab, registerMainTabPreloader } from "@/lib/mainTabPreload";
 import { queryClient } from "./lib/queryClient";
 import type { PublicSettingsPayload } from "@shared/settings";
 
-const AttendancePage = lazy(() => import("@/pages/AttendancePage"));
-const HistoryPage = lazy(() => import("@/pages/HistoryPage"));
-const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
-const PrintSalaryPage = lazy(() => import("@/pages/PrintSalaryPage"));
-const BarcodeScanPage = lazy(() => import("@/pages/BarcodeScanPage"));
-const EmployeesPage = lazy(() => import("@/pages/EmployeesPage"));
-const NotFound = lazy(() => import("@/pages/not-found"));
-const ClockInPage = lazy(() => import("@/pages/ClockInPage"));
-const QRCodePage = lazy(() => import("@/pages/QRCodePage"));
+const loadAttendancePage = () => import("@/pages/AttendancePage");
+const loadHistoryPage = () => import("@/pages/HistoryPage");
+const loadSettingsPage = () => import("@/pages/SettingsPage");
+const loadPrintSalaryPage = () => import("@/pages/PrintSalaryPage");
+const loadBarcodeScanPage = () => import("@/pages/BarcodeScanPage");
+const loadEmployeesPage = () => import("@/pages/EmployeesPage");
+const loadNotFoundPage = () => import("@/pages/not-found");
+const loadClockInPage = () => import("@/pages/ClockInPage");
+const loadQRCodePage = () => import("@/pages/QRCodePage");
+
+const AttendancePage = lazy(loadAttendancePage);
+const HistoryPage = lazy(loadHistoryPage);
+const SettingsPage = lazy(loadSettingsPage);
+const PrintSalaryPage = lazy(loadPrintSalaryPage);
+const BarcodeScanPage = lazy(loadBarcodeScanPage);
+const EmployeesPage = lazy(loadEmployeesPage);
+const NotFound = lazy(loadNotFoundPage);
+const ClockInPage = lazy(loadClockInPage);
+const QRCodePage = lazy(loadQRCodePage);
+
+registerMainTabPreloader("attendance", loadAttendancePage);
+registerMainTabPreloader("barcode", loadBarcodeScanPage);
+registerMainTabPreloader("employees", loadEmployeesPage);
+registerMainTabPreloader("history", loadHistoryPage);
+registerMainTabPreloader("settings", loadSettingsPage);
 
 const APP_TITLE = "員工薪資計算系統";
 const APP_VERSION = __APP_VERSION__;
@@ -53,6 +70,21 @@ function MainLayout({
     ? MAIN_NAV_ITEMS
     : MAIN_NAV_ITEMS.filter((item) => item.tab !== "barcode");
 
+  useEffect(() => {
+    const scheduler = getIdleScheduler();
+    const idleHandle = scheduler.schedule(() => {
+      for (const item of navItems) {
+        if (item.tab === resolvedActiveTab) {
+          continue;
+        }
+
+        void preloadMainTab(item.tab);
+      }
+    });
+
+    return () => scheduler.cancel(idleHandle);
+  }, [navItems, resolvedActiveTab]);
+
   return (
     <div className="min-h-screen bg-background p-4 md:p-6">
       <div className="mx-auto max-w-7xl overflow-hidden rounded-lg bg-white shadow-md">
@@ -75,6 +107,12 @@ function MainLayout({
                   if (resolvedActiveTab !== item.tab) {
                     setLocation(getPathForMainTab(item.tab));
                   }
+                }}
+                onMouseEnter={() => {
+                  void preloadMainTab(item.tab);
+                }}
+                onFocus={() => {
+                  void preloadMainTab(item.tab);
                 }}
               >
                 {item.label}

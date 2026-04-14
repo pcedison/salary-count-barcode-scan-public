@@ -8,6 +8,16 @@ This repository follows Keep a Changelog style and uses the clean-room public hi
 
 - No unreleased notes yet.
 
+## [2.1.6] - 2026-04-15
+
+### Changed
+
+- Main navigation now preloads non-active app sections during browser idle time and warms the next tab on hover/focus, so switching into the Settings page feels faster on first open.
+
+### Added
+
+- `client/src/lib/mainTabPreload.ts` centralizes lazy-route preloading so the main tabs can share the same idle/hover preload strategy.
+
 ## [2.1.5] - 2026-04-14
 
 ### Changed
