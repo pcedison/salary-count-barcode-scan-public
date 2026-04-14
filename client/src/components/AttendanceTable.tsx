@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useToast } from "@/hooks/use-toast";
-import { useAttendanceData } from '@/hooks/useAttendanceData';
 import { Button } from '@/components/ui/button';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
 import {
@@ -31,12 +30,24 @@ interface AttendanceTableProps {
   }>;
   isLoading: boolean;
   canEdit?: boolean;
+  onUpdateAttendance: (id: number, data: {
+    date?: string;
+    clockIn?: string;
+    clockOut?: string;
+    isHoliday?: boolean;
+    holidayType?: string | null;
+  }) => Promise<boolean>;
+  onDeleteAttendance: (id: number) => Promise<boolean>;
 }
 
-export default function AttendanceTable({ data, isLoading, canEdit = true }: AttendanceTableProps) {
+export default function AttendanceTable({
+  data,
+  isLoading,
+  canEdit = true,
+  onUpdateAttendance,
+  onDeleteAttendance,
+}: AttendanceTableProps) {
   const { toast } = useToast();
-  const { updateAttendance, deleteAttendance, addAttendance } = useAttendanceData();
-
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingRecord, setEditingRecord] = useState<any>(null);
   const [editDate, setEditDate] = useState<string>('');
@@ -68,7 +79,7 @@ export default function AttendanceTable({ data, isLoading, canEdit = true }: Att
 
     try {
       // 所有記錄都是真實記錄，使用更新
-      await updateAttendance(editingId, {
+      await onUpdateAttendance(editingId, {
         date: editDate,
         clockIn: editClockIn || '08:00',
         clockOut: editClockOut || '17:00'
@@ -104,9 +115,7 @@ export default function AttendanceTable({ data, isLoading, canEdit = true }: Att
         holidayType: newType === 'none' ? null : newType,
         isHoliday: newType !== 'none'
       };
-
-      await updateAttendance(recordId, updateData);
-
+      await onUpdateAttendance(recordId, updateData);
       const typeLabel = holidayTypeOptions.find(opt => opt.value === newType)?.label || '正常出勤';
       toast({
         title: "已更新",
@@ -128,8 +137,7 @@ export default function AttendanceTable({ data, isLoading, canEdit = true }: Att
   const handleDelete = async (id: number) => {
     if (confirm('確定要刪除此考勤記錄嗎？')) {
       try {
-        await deleteAttendance(id);
-
+        await onDeleteAttendance(id);
         toast({
           title: "已刪除",
           description: "考勤記錄已成功刪除。",
