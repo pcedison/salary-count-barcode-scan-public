@@ -94,6 +94,13 @@ export function useAttendanceData() {
 
   // Fetch attendance data.
   const attendanceQueryKey = isAdmin ? '/api/attendance' : '/api/attendance/today';
+  const attendanceQueryFn = useMemo(
+    () =>
+      getQueryFn<AttendanceRecordLike[] | PaginatedPayload<AttendanceRecordLike> | null>({
+        on401: isAdmin ? 'throw' : 'returnNull',
+      }),
+    [isAdmin]
+  );
 
   const {
     data: rawAttendanceData,
@@ -101,8 +108,8 @@ export function useAttendanceData() {
     error
   } = useQuery<AttendanceRecordLike[] | PaginatedPayload<AttendanceRecordLike> | null>({
     queryKey: [attendanceQueryKey],
+    queryFn: attendanceQueryFn,
     enabled: true,
-    queryFn: isAdmin ? undefined : getQueryFn({ on401: 'returnNull' }),
     refetchInterval: 30000,
     staleTime: 15000,
     refetchIntervalInBackground: false,

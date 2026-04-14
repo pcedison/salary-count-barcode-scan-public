@@ -28,6 +28,8 @@ export default function AttendancePage() {
     attendanceData,
     isLoading,
     addAttendance,
+    updateAttendance,
+    deleteAttendance,
     syncStatus,
     calculateSalary,
     salaryResult,
@@ -474,8 +476,13 @@ export default function AttendancePage() {
       </div>
 
       {/* Attendance Data Table */}
-      <AttendanceTable data={filteredAttendanceData} isLoading={isLoading} canEdit={isAdmin} />
-
+      <AttendanceTable
+        data={filteredAttendanceData}
+        isLoading={isLoading}
+        canEdit={isAdmin}
+        onUpdateAttendance={updateAttendance}
+        onDeleteAttendance={deleteAttendance}
+      />
       {/* Salary Result Table */}
       {showSalaryResult && salaryResult && (
         <SalaryResultTable
