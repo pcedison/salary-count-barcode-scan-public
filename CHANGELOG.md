@@ -8,6 +8,12 @@ This repository follows Keep a Changelog style and uses the clean-room public hi
 
 - No unreleased notes yet.
 
+## [2.1.8] - 2026-04-15
+
+### Fixed
+
+- `client/src/lib/mainTabPreload.ts` now absorbs lazy-route preload failures so idle and hover prefetching does not raise unhandled promise rejections during transient chunk-load errors.
+
 ## [2.1.7] - 2026-04-15
 
 ### Fixed
