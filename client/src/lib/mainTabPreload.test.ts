@@ -16,6 +16,14 @@ describe("main tab preload", () => {
     expect(preload).toHaveBeenCalledTimes(1);
   });
 
+  it("absorbs preload failures so background prefetch stays non-fatal", async () => {
+    const preload = vi.fn().mockRejectedValue(new Error("chunk load failed"));
+    registerMainTabPreloader("settings", preload);
+
+    await expect(preloadMainTab("settings")).resolves.toBeUndefined();
+    expect(preload).toHaveBeenCalledTimes(1);
+  });
+
   it("returns a fallback scheduler when window is unavailable", () => {
     const scheduler = getIdleScheduler();
 

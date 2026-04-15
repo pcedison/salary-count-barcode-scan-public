@@ -12,7 +12,15 @@ export function registerMainTabPreloader(
 }
 
 export function preloadMainTab(tab: MainTab) {
-  return preloaders.get(tab)?.();
+  const preload = preloaders.get(tab);
+  if (!preload) {
+    return undefined;
+  }
+
+  return preload().then(
+    () => undefined,
+    () => undefined,
+  );
 }
 
 export function getIdleScheduler() {
