@@ -83,11 +83,35 @@ async function fetchStatus(client) {
   };
 }
 
+async function fetchExistingTables(client) {
+  const result = await client.query(
+    `
+      select
+        c.relname as table_name
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where c.relkind = 'r'
+        and n.nspname = 'public'
+        and c.relname = any($1::text[])
+      order by c.relname
+    `,
+    [TABLES],
+  );
+
+  return new Set(result.rows.map((row) => row.table_name));
+}
+
 async function applyHardening(client) {
   await client.query("begin");
 
   try {
+    const existingTables = await fetchExistingTables(client);
+
     for (const tableName of TABLES) {
+      if (!existingTables.has(tableName)) {
+        continue;
+      }
+
       const qualified = `public.${quoteIdent(tableName)}`;
       await client.query(`alter table ${qualified} enable row level security`);
       await client.query(
