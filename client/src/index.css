@@ -80,53 +80,49 @@
     @apply border-border;
   }
 
+  html,
+  body,
+  #root {
+    @apply min-h-screen;
+  }
+
   body {
     @apply font-sans antialiased bg-background text-foreground;
   }
-}/* ============================================================
-   追加至 client/src/index.css 最末端
-   （保留原有 @tailwind 三行與 @layer base 完全不動）
-   ============================================================ */
-
-/* ── 字體載入（index.html 的 <link> 版本見下方說明） ── */
-/* 若偏好在 CSS 中載入字體，可取消以下 @import 的註解：    */
-/* @import url('https://cdn.jsdelivr.net/npm/lxgw-wenkai-tc-web@latest/style.css'); */
-
-/* ── 設計 Token ───────────────────────────────────────── */
-:root {
-  /* 字體 */
-  --font-kai: 'LXGW WenKai TC', 'Noto Serif TC', 'PingFang TC', 'Microsoft JhengHei', serif;
-
-  /* 中性色：暖白紙感 */
-  --paper:        #FBFAF6;
-  --paper-soft:   #F4F1E9;
-  --paper-sink:   #EDEAE0;
-  --ink-1:        #2A2E2A;
-  --ink-2:        #5E6460;
-  --ink-3:        #8E948E;
-  --ink-4:        #B8BCB4;
-  --line:         #E2DED3;
-  --line-soft:    #EBE7DB;
-
-  /* 主色：青竹 */
-  --sage:         #6B8E7F;
-  --sage-deep:    #4F7365;
-  --sage-soft:    #E4EDE6;
-  --sage-tint:    #F0F5F0;
-
-  /* 輔助色 */
-  --clay:         #B66F4A;
-  --clay-soft:    #F6E7DE;
-  --sky:          #7A9AB3;
-  --sky-soft:     #E4ECF2;
-  --amber:        #C7954A;
-  --amber-soft:   #F5ECD9;
-  --moss:         #7FA36A;
-  --moss-soft:    #E6EEDD;
 }
 
-/* ── 全域字體覆蓋 ─────────────────────────────────────── */
-/* 僅影響使用 AppShell 的頁面；ClockInPage / PrintSalaryPage 不受影響 */
+/* 字體與紙感主題 */
+:root {
+  --font-kai: "LXGW WenKai TC", "Noto Serif TC", "PingFang TC", "Microsoft JhengHei", serif;
+  --paper: #fbfaf6;
+  --paper-soft: #f4f1e9;
+  --paper-sink: #edeae0;
+  --ink-1: #2a2e2a;
+  --ink-2: #5e6460;
+  --ink-3: #8e948e;
+  --ink-4: #b8bcb4;
+  --line: #e2ded3;
+  --line-soft: #ebe7db;
+  --sage: #6b8e7f;
+  --sage-deep: #4f7365;
+  --sage-soft: #e4ede6;
+  --sage-tint: #f0f5f0;
+  --clay: #b66f4a;
+  --clay-soft: #f6e7de;
+  --sky: #7a9ab3;
+  --sky-soft: #e4ecf2;
+  --amber: #c7954a;
+  --amber-soft: #f5ecd9;
+  --moss: #7fa36a;
+  --moss-soft: #e6eedd;
+  --background: 44 30% 97%;
+  --foreground: 120 4% 17%;
+  --primary: 152 15% 43%;
+  --primary-foreground: 44 30% 97%;
+  --border: 40 15% 86%;
+  --ring: 152 19% 36%;
+}
+
 body {
   font-family: var(--font-kai) !important;
   background: var(--paper);
@@ -134,19 +130,96 @@ body {
   letter-spacing: 0.01em;
 }
 
-/* ── 與 Tailwind/shadcn 共存：讓 CSS 變數對應 ─────────── */
-/* shadcn 的 --background 對應到宣紙白，讓舊元件底色一致 */
-:root {
-  --background: 44 30% 97%;   /* ≈ #FBFAF6 in HSL */
-  --foreground: 120 4% 17%;   /* ≈ #2A2E2A */
-  --primary:    152 15% 43%;  /* ≈ #6B8E7F (sage) */
-  --primary-foreground: 44 30% 97%;
-  --border:     40 15% 86%;   /* ≈ #E2DED3 */
-  --ring:       152 19% 36%;  /* ≈ #4F7365 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
 }
 
-/* ── 卷軸美化（與側邊欄風格一致） ─────────────────────── */
-::-webkit-scrollbar       { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; border: 2px solid var(--paper); }
-::-webkit-scrollbar-thumb:hover { background: var(--ink-4); }
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border: 2px solid var(--paper);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-4);
+}
+
+@layer components {
+  .page-stack {
+    @apply space-y-4 sm:space-y-5 lg:space-y-6;
+  }
+
+  .page-panel {
+    @apply rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6;
+  }
+
+  .page-panel-muted {
+    @apply rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm sm:p-5 lg:p-6;
+  }
+
+  .page-panel-accent {
+    @apply rounded-2xl border border-sky-200 bg-sky-50/70 p-4 shadow-sm sm:p-5;
+  }
+
+  .page-header {
+    @apply flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between;
+  }
+
+  .page-header-copy {
+    @apply min-w-0 space-y-1;
+  }
+
+  .page-title {
+    @apply text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl;
+  }
+
+  .page-subtitle {
+    @apply text-sm leading-6 text-slate-500;
+  }
+
+  .page-actions {
+    @apply flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center;
+  }
+
+  .page-badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium;
+  }
+
+  .page-badge-primary {
+    @apply bg-primary/10 text-primary;
+  }
+
+  .page-badge-muted {
+    @apply border border-slate-200 bg-white text-slate-600;
+  }
+
+  .page-badge-accent {
+    @apply bg-sky-100 text-sky-700;
+  }
+
+  .page-toolbar {
+    @apply flex flex-col gap-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm sm:p-5 lg:flex-row lg:items-end lg:justify-between;
+  }
+
+  .page-toolbar-group {
+    @apply flex flex-col gap-2 sm:flex-row sm:flex-wrap;
+  }
+
+  .page-button-row {
+    @apply flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end;
+  }
+
+  .page-segment-scroll {
+    @apply -mx-1 overflow-x-auto px-1 pb-1;
+    scrollbar-width: none;
+  }
+
+  .page-segment-scroll::-webkit-scrollbar {
+    display: none;
+  }
+}

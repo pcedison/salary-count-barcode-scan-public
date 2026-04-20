@@ -49,22 +49,19 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
   const [notes, setNotes] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
 
-  const selectedEmployee = employees.find(e => e.id === selectedEmployeeId);
+  const selectedEmployee = employees.find((employee) => employee.id === selectedEmployeeId);
 
-  // 自動選擇第一位一般員工（非主管/經理）作為預設顯示
   useEffect(() => {
     if (employees.length > 0 && selectedEmployeeId === null) {
-      // 優先尋找一般員工（position 不包含 主管、經理、老闆、負責人 等關鍵字）
       const managerKeywords = ['主管', '經理', '老闆', '負責人', '總監', '董事', '執行長', 'manager', 'director', 'boss', 'owner'];
-      const regularEmployee = employees.find(emp => {
-        const position = (emp.position || '').toLowerCase();
-        return !managerKeywords.some(keyword => position.includes(keyword.toLowerCase()));
+      const regularEmployee = employees.find((employee) => {
+        const position = (employee.position || '').toLowerCase();
+        return !managerKeywords.some((keyword) => position.includes(keyword.toLowerCase()));
       });
 
       if (regularEmployee) {
         setSelectedEmployeeId(regularEmployee.id);
       } else if (employees.length > 0) {
-        // 如果沒有一般員工，選擇第一位員工
         setSelectedEmployeeId(employees[0].id);
       }
     }
@@ -102,6 +99,7 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
 
   const saveUsedDates = async (newDates: string[]) => {
     if (!selectedEmployeeId || !isAdmin) return;
+
     setIsSaving(true);
     try {
       await apiRequest('PATCH', `/api/employees/${selectedEmployeeId}`, {
@@ -136,6 +134,7 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
 
   const handleAddLeaveDate = () => {
     if (!newLeaveDate) return;
+
     if (usedDates.includes(newLeaveDate)) {
       toast({
         title: "日期已存在",
@@ -144,16 +143,17 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
       });
       return;
     }
+
     const newDates = [...usedDates, newLeaveDate].sort();
     setUsedDates(newDates);
     setNewLeaveDate('');
-    saveUsedDates(newDates);
+    void saveUsedDates(newDates);
   };
 
   const handleRemoveLeaveDate = (date: string) => {
-    const newDates = usedDates.filter(d => d !== date);
+    const newDates = usedDates.filter((value) => value !== date);
     setUsedDates(newDates);
-    saveUsedDates(newDates);
+    void saveUsedDates(newDates);
   };
 
   const handleSave = async () => {
@@ -164,38 +164,38 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
   const dailySalary = Math.round(baseSalary / 30);
   const cashAmount = cashDays * dailySalary;
 
-  const months = [];
+  const months: string[] = [];
   const currentYear = new Date().getFullYear();
-  for (let year = currentYear; year <= currentYear + 1; year++) {
-    for (let month = 1; month <= 12; month++) {
+  for (let year = currentYear; year <= currentYear + 1; year += 1) {
+    for (let month = 1; month <= 12; month += 1) {
       months.push(`${year}年${month}月`);
     }
   }
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-sm">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-medium flex items-center gap-2">
-          <Calendar className="w-5 h-5 text-blue-600" />
+    <div className="rounded-lg bg-white p-4 shadow-sm sm:p-6">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="flex items-center gap-2 text-lg font-medium">
+          <Calendar className="h-5 w-5 text-blue-600" />
           特別假計數器
         </h3>
       </div>
 
-      <div className="bg-blue-50 border border-blue-200 rounded-md p-4 mb-6">
+      <div className="mb-6 rounded-md border border-blue-200 bg-blue-50 p-4">
         <div className="flex items-start gap-2">
-          <Info className="w-5 h-5 text-blue-600 mt-0.5" />
+          <Info className="mt-0.5 h-5 w-5 text-blue-600" />
           <div className="text-sm text-blue-800">
-            <p className="font-medium mb-2">採用「週年制」計算特別假</p>
-            <p>
+            <p className="mb-2 font-medium">採用「週年制」計算特別假</p>
+            <p className="leading-6">
               請使用勞工局特別假試算工具計算您的特別假天數：
               <a
                 href="https://calc.mol.gov.tw/Trail_New/html/RestDays.html"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center text-blue-600 hover:text-blue-800 underline ml-1"
+                className="ml-1 inline-flex items-center text-blue-600 underline hover:text-blue-800"
               >
                 勞工局特別假試算
-                <ExternalLink className="w-3 h-3 ml-1" />
+                <ExternalLink className="ml-1 h-3 w-3" />
               </a>
             </p>
           </div>
@@ -207,15 +207,15 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
           <Label>選擇員工</Label>
           <Select
             value={selectedEmployeeId?.toString() || ''}
-            onValueChange={(value) => setSelectedEmployeeId(value ? parseInt(value) : null)}
+            onValueChange={(value) => setSelectedEmployeeId(value ? parseInt(value, 10) : null)}
           >
-            <SelectTrigger className="w-full mt-1">
+            <SelectTrigger className="mt-1 w-full">
               <SelectValue placeholder="請選擇員工" />
             </SelectTrigger>
             <SelectContent>
-              {employees.map(emp => (
-                <SelectItem key={emp.id} value={emp.id.toString()}>
-                  {emp.name} {emp.position ? `(${emp.position})` : ''}
+              {employees.map((employee) => (
+                <SelectItem key={employee.id} value={employee.id.toString()}>
+                  {employee.name} {employee.position ? `(${employee.position})` : ''}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -224,16 +224,24 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
 
         {selectedEmployeeId && selectedEmployee && (
           <>
-            {/* 員工資料標題 - 顯示當前選擇的員工 */}
-            <div className="bg-green-50 border border-green-200 rounded-md p-3 mb-4">
-              <p className="text-sm text-green-800">
-                <span className="font-semibold">{selectedEmployee.name}</span>
-                {selectedEmployee.position && <span className="ml-2 text-green-600">({selectedEmployee.position})</span>}
-                <span className="ml-2 text-green-700">的特別假資料</span>
-              </p>
-              <p className="text-xs text-green-600 mt-1">
-                每位員工的特別假資料獨立儲存，切換員工即可查看/編輯不同員工的記錄
-              </p>
+            <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-sm text-green-800">
+                    <span className="font-semibold">{selectedEmployee.name}</span>
+                    {selectedEmployee.position && (
+                      <span className="ml-2 text-green-600">({selectedEmployee.position})</span>
+                    )}
+                    <span className="ml-2 text-green-700">的特別假資料</span>
+                  </p>
+                  <p className="mt-1 text-xs text-green-600">
+                    每位員工的特別假資料獨立儲存，切換員工即可查看/編輯不同員工的記錄
+                  </p>
+                </div>
+                <div className="inline-flex rounded-full bg-white px-3 py-1 text-xs font-medium text-green-700">
+                  核定特休 {specialLeaveDays} 天
+                </div>
+              </div>
             </div>
 
             <div>
@@ -247,9 +255,9 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
               />
             </div>
 
-            <div className="border rounded-md p-4">
+            <div className="rounded-xl border border-gray-200 p-4">
               <Label className="mb-2 block">使用特別假日期</Label>
-              <div className="flex gap-2 mb-3">
+              <div className="mb-3 flex flex-col gap-2 sm:flex-row">
                 <Input
                   type="date"
                   value={newLeaveDate}
@@ -261,6 +269,7 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
                   onClick={handleAddLeaveDate}
                   disabled={!isAdmin || !newLeaveDate}
                   variant="outline"
+                  className="w-full sm:w-auto"
                 >
                   新增日期
                 </Button>
@@ -271,15 +280,16 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
                   {usedDates.map((date) => (
                     <div
                       key={date}
-                      className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm flex items-center gap-1"
+                      className="flex items-center gap-1 rounded-full bg-green-100 px-3 py-1 text-sm text-green-800"
                     >
                       {date}
                       {isAdmin && (
                         <button
                           onClick={() => handleRemoveLeaveDate(date)}
-                          className="hover:text-red-600 ml-1"
+                          className="ml-1 hover:text-red-600"
+                          aria-label={`刪除 ${date}`}
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="h-3 w-3" />
                         </button>
                       )}
                     </div>
@@ -288,34 +298,37 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
               ) : (
                 <p className="text-sm text-gray-500">尚未選擇使用日期</p>
               )}
-              <p className="text-xs text-gray-500 mt-2">已使用 {usedDates.length} 天</p>
+
+              <p className="mt-2 text-xs text-gray-500">已使用 {usedDates.length} 天</p>
             </div>
 
-            <div className="border rounded-md p-4 bg-amber-50">
-              <div className="flex items-center gap-2 mb-3">
-                <DollarSign className="w-5 h-5 text-amber-600" />
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <DollarSign className="h-5 w-5 text-amber-600" />
                 <Label>特別假折抵日薪</Label>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <Label className="text-xs text-gray-500">折抵天數</Label>
                   <Select
                     value={cashDays.toString()}
-                    onValueChange={(value) => setCashDays(parseInt(value))}
+                    onValueChange={(value) => setCashDays(parseInt(value, 10))}
                     disabled={!isAdmin}
                   >
-                    <SelectTrigger className="w-full mt-1">
+                    <SelectTrigger className="mt-1 w-full">
                       <SelectValue placeholder="選擇天數" />
                     </SelectTrigger>
                     <SelectContent>
-                      {Array.from({ length: 31 }, (_, i) => (
-                        <SelectItem key={i} value={i.toString()}>
-                          {i} 天
+                      {Array.from({ length: 31 }, (_, index) => (
+                        <SelectItem key={index} value={index.toString()}>
+                          {index} 天
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
+
                 <div>
                   <Label className="text-xs text-gray-500">發放月份</Label>
                   <Select
@@ -323,11 +336,11 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
                     onValueChange={setCashMonth}
                     disabled={!isAdmin}
                   >
-                    <SelectTrigger className="w-full mt-1">
+                    <SelectTrigger className="mt-1 w-full">
                       <SelectValue placeholder="選擇發放月份" />
                     </SelectTrigger>
                     <SelectContent>
-                      {months.map(month => (
+                      {months.map((month) => (
                         <SelectItem key={month} value={month}>
                           {month}
                         </SelectItem>
@@ -336,12 +349,13 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
                   </Select>
                 </div>
               </div>
-              <div className="mt-3 p-2 bg-white rounded border">
+
+              <div className="mt-3 rounded border bg-white p-3">
                 <p className="text-sm">
                   折抵金額：<span className="font-bold text-amber-700">${cashAmount.toLocaleString()}</span>
-                  <span className="text-xs text-gray-500 ml-2">
-                    ({cashDays}天 × ${dailySalary}/日)
-                  </span>
+                </p>
+                <p className="mt-1 text-xs text-gray-500">
+                  {cashDays}天 × ${dailySalary}/日
                 </p>
               </div>
             </div>
@@ -358,25 +372,21 @@ export default function SpecialLeaveCounter({ employees: employeesProp, isAdmin,
               />
             </div>
 
-            <div className="bg-gray-100 p-4 rounded-md">
-              <div className="grid grid-cols-3 gap-4 text-center">
-                <div>
+            <div className="rounded-xl bg-gray-100 p-4">
+              <div className="grid grid-cols-1 gap-3 text-center sm:grid-cols-3">
+                <div className="rounded-lg bg-white p-3">
                   <p className="text-xs text-gray-500">特休剩餘天數</p>
                   <p className={`text-xl font-bold ${remainingDays < 0 ? 'text-red-600' : 'text-green-600'}`}>
                     {remainingDays} 天
                   </p>
                 </div>
-                <div>
+                <div className="rounded-lg bg-white p-3">
                   <p className="text-xs text-gray-500">已使用特休</p>
-                  <p className="text-xl font-bold text-blue-600">
-                    {usedDates.length} 天
-                  </p>
+                  <p className="text-xl font-bold text-blue-600">{usedDates.length} 天</p>
                 </div>
-                <div>
+                <div className="rounded-lg bg-white p-3">
                   <p className="text-xs text-gray-500">折抵日薪</p>
-                  <p className="text-xl font-bold text-amber-600">
-                    {cashDays} 天
-                  </p>
+                  <p className="text-xl font-bold text-amber-600">{cashDays} 天</p>
                 </div>
               </div>
             </div>

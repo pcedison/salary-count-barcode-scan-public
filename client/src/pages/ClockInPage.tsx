@@ -183,8 +183,8 @@ export default function ClockInPage() {
   }, [lineData, performClockIn]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 to-green-100 flex items-center justify-center p-4">
-      <Card className="w-full max-w-sm shadow-lg">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-green-50 to-green-100 p-4 sm:p-6">
+      <Card className="w-full max-w-md rounded-2xl border-green-100 shadow-lg">
         <CardHeader className="text-center pb-2">
           <CardTitle className="text-xl text-green-700">員工打卡系統</CardTitle>
           <CardDescription>使用 LINE 帳號快速打卡</CardDescription>
@@ -296,7 +296,7 @@ export default function ClockInPage() {
               </div>
 
               <Button
-                className="w-full bg-[#06C755] hover:bg-[#05b34d] text-white h-14 text-lg"
+                className="h-14 w-full bg-[#06C755] text-lg text-white hover:bg-[#05b34d]"
                 onClick={handleClockIn}
               >
                 確認打卡

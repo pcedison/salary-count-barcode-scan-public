@@ -72,8 +72,8 @@ export default function AdminLoginDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
+      <DialogContent className="max-w-md">
+        <DialogHeader className="space-y-2">
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
@@ -97,16 +97,16 @@ export default function AdminLoginDialog({
                 }
               }}
               onKeyDown={handleKeyPress}
-              className="w-full"
+              className="h-11 w-full text-center text-base tracking-[0.3em] sm:text-left sm:tracking-normal"
               autoFocus
             />
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={isVerifying}>
+          <Button variant="outline" onClick={onClose} disabled={isVerifying} className="w-full sm:w-auto">
             取消
           </Button>
-          <Button onClick={handleVerify} disabled={pin.length !== 6 || isVerifying}>
+          <Button onClick={handleVerify} disabled={pin.length !== 6 || isVerifying} className="w-full sm:w-auto">
             {isVerifying ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

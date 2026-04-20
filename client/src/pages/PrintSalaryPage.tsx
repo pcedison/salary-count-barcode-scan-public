@@ -440,8 +440,8 @@ ${attendanceRowsHtml}${summaryRowsHtml}
 
   if (!isAdmin) {
     return (
-      <div className="min-h-screen bg-background p-6">
-        <div className="mx-auto flex min-h-[70vh] max-w-2xl flex-col items-center justify-center rounded-2xl border bg-white p-10 text-center shadow-sm">
+      <div className="min-h-screen bg-background p-4 sm:p-6">
+        <div className="mx-auto flex min-h-[70vh] max-w-2xl flex-col items-center justify-center rounded-2xl border bg-white p-6 text-center shadow-sm sm:p-10">
           <div className="mb-6 rounded-full bg-amber-100 p-4 text-amber-700">
             <Lock className="h-10 w-10" />
           </div>
@@ -449,12 +449,12 @@ ${attendanceRowsHtml}${summaryRowsHtml}
           <p className="mb-8 max-w-lg text-gray-600">
             列印薪資單屬於管理功能。請先完成管理員驗證，再繼續查看或列印薪資資料。
           </p>
-          <div className="flex gap-3">
-            <Button variant="outline" onClick={handleBack}>
+          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+            <Button variant="outline" onClick={handleBack} className="w-full sm:w-auto">
               <ArrowLeft className="mr-2 h-4 w-4" />
               返回歷史記錄
             </Button>
-            <Button onClick={() => setIsAdminDialogOpen(true)}>
+            <Button onClick={() => setIsAdminDialogOpen(true)} className="w-full sm:w-auto">
               <Shield className="mr-2 h-4 w-4" />
               管理員登入
             </Button>
@@ -488,7 +488,7 @@ ${attendanceRowsHtml}${summaryRowsHtml}
 
   if (!salaryRecord) {
     return (
-      <div className="p-8 text-center">
+      <div className="p-6 text-center sm:p-8">
         <h2 className="mb-4 text-xl font-bold">找不到薪資紀錄</h2>
         <Button onClick={handleBack}>返回歷史記錄</Button>
       </div>
@@ -497,14 +497,14 @@ ${attendanceRowsHtml}${summaryRowsHtml}
 
   return (
     <div className="pb-8">
-      <div className="no-print sticky top-0 z-10 mb-4 bg-white p-4 shadow-sm">
-        <div className="flex items-center justify-between">
-          <Button variant="outline" onClick={handleBack}>
+      <div className="no-print sticky top-0 z-10 mb-4 bg-white/95 p-3 shadow-sm backdrop-blur sm:p-4">
+        <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <Button variant="outline" onClick={handleBack} className="w-full sm:w-auto">
             <ArrowLeft className="mr-2 h-4 w-4" />
             返回
           </Button>
-          <div className="space-x-2">
-            <Button onClick={handlePrint} className="bg-primary text-white hover:bg-primary/90">
+          <div className="w-full sm:w-auto">
+            <Button onClick={handlePrint} className="w-full bg-primary text-white hover:bg-primary/90 sm:w-auto">
               <Printer className="mr-2 h-4 w-4" />
               列印薪資單
             </Button>
@@ -512,28 +512,30 @@ ${attendanceRowsHtml}${summaryRowsHtml}
         </div>
       </div>
 
-      <PrintableSalarySheet result={{
-        salaryYear: salaryRecord.salaryYear,
-        salaryMonth: salaryRecord.salaryMonth,
-        baseSalary: salaryRecord.baseSalary,
-        grossSalary: salaryRecord.grossSalary,
-        netSalary: salaryRecord.netSalary,
-        housingAllowance: salaryRecord.housingAllowance ?? undefined,
-        welfareAllowance: salaryRecord.welfareAllowance ?? undefined,
-        allowances: (salaryRecord.allowances ?? undefined) as typeof salaryRecord.allowances & NonNullable<unknown> | undefined,
-        totalOT1Hours: salaryRecord.totalOT1Hours ?? 0,
-        totalOT2Hours: salaryRecord.totalOT2Hours ?? 0,
-        totalOvertimePay: salaryRecord.totalOvertimePay ?? 0,
-        holidayDays: salaryRecord.holidayDays ?? 0,
-        totalHolidayPay: salaryRecord.totalHolidayPay ?? 0,
-        deductions: salaryRecord.deductions ?? [],
-        totalDeductions: salaryRecord.totalDeductions ?? 0,
-        specialLeaveInfo: salaryRecord.specialLeaveInfo ?? undefined,
-        attendanceData: (salaryRecord.attendanceData ?? []).map(r => ({
-          ...r,
-          holidayType: r.holidayType ?? undefined
-        }))
-      }} />
+      <div className="px-3 sm:px-4">
+        <PrintableSalarySheet result={{
+          salaryYear: salaryRecord.salaryYear,
+          salaryMonth: salaryRecord.salaryMonth,
+          baseSalary: salaryRecord.baseSalary,
+          grossSalary: salaryRecord.grossSalary,
+          netSalary: salaryRecord.netSalary,
+          housingAllowance: salaryRecord.housingAllowance ?? undefined,
+          welfareAllowance: salaryRecord.welfareAllowance ?? undefined,
+          allowances: (salaryRecord.allowances ?? undefined) as typeof salaryRecord.allowances & NonNullable<unknown> | undefined,
+          totalOT1Hours: salaryRecord.totalOT1Hours ?? 0,
+          totalOT2Hours: salaryRecord.totalOT2Hours ?? 0,
+          totalOvertimePay: salaryRecord.totalOvertimePay ?? 0,
+          holidayDays: salaryRecord.holidayDays ?? 0,
+          totalHolidayPay: salaryRecord.totalHolidayPay ?? 0,
+          deductions: salaryRecord.deductions ?? [],
+          totalDeductions: salaryRecord.totalDeductions ?? 0,
+          specialLeaveInfo: salaryRecord.specialLeaveInfo ?? undefined,
+          attendanceData: (salaryRecord.attendanceData ?? []).map(r => ({
+            ...r,
+            holidayType: r.holidayType ?? undefined
+          }))
+        }} />
+      </div>
     </div>
   );
 }

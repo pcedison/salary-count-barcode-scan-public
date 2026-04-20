@@ -209,7 +209,7 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>匯入 CSV 資料</DialogTitle>
           <DialogDescription>
@@ -226,7 +226,7 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
           }}
           className="w-full"
         >
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-1 sm:grid-cols-2">
             <TabsTrigger value="attendance">考勤記錄匯入</TabsTrigger>
             <TabsTrigger value="salary">完整薪資記錄匯入</TabsTrigger>
           </TabsList>
@@ -256,7 +256,7 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
         </Tabs>
 
         <div className="mt-4">
-          <div className="flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6">
+          <div className="flex flex-col items-center justify-center rounded-md border-2 border-dashed p-5 sm:p-6">
             <input
               ref={fileInputRef}
               type="file"
@@ -278,6 +278,7 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
               variant="outline"
               onClick={() => fileInputRef.current?.click()}
               disabled={loading}
+              className="w-full sm:w-auto"
             >
               {loading ? (
                 <>
@@ -312,7 +313,7 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
                             {parseResult.preview.map((row, rowIndex) => (
                               <tr key={rowIndex} className={rowIndex === 0 ? 'bg-gray-100' : ''}>
                                 {Array.isArray(row) && row.map((cell, cellIndex) => (
-                                  <td key={cellIndex} className="px-2 py-1 text-xs truncate max-w-[100px]">
+                                  <td key={cellIndex} className="max-w-[8rem] truncate px-2 py-1 text-xs sm:max-w-[10rem]">
                                     {cell}
                                   </td>
                                 ))}
@@ -334,12 +335,14 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
             variant="outline"
             onClick={handleClose}
             disabled={loading}
+            className="w-full sm:w-auto"
           >
             取消
           </Button>
           <Button
             onClick={handleImport}
             disabled={loading || !file || !parseResult?.success}
+            className="w-full sm:w-auto"
           >
             {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             匯入
