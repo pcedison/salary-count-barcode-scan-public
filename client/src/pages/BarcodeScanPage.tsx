@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useBarcodeScanner } from "@/hooks/useBarcodeScanner";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { getQueryFn } from "@/lib/queryClient";
 import { getTodayDate } from "@/lib/utils";
 
@@ -75,6 +76,7 @@ function buildTimeline(records: PublicAttendanceRecord[]): TimelineRecord[] {
 }
 
 export default function BarcodeScanPage() {
+  const isMobile = useIsMobile();
   const {
     idNumber,
     setIdNumber,
@@ -125,25 +127,27 @@ export default function BarcodeScanPage() {
 
   return (
     <div className="page-stack">
-      <section className="page-panel-muted">
-        <div className="page-header">
-          <div className="page-header-copy">
-            <h2 className="page-title">條碼掃描打卡</h2>
-            <p className="page-subtitle">
-              請使用條碼掃描槍或輸入員工證號進行打卡。
-            </p>
-          </div>
+      {!isMobile ? (
+        <section className="page-panel-muted">
+          <div className="page-header">
+            <div className="page-header-copy">
+              <h2 className="page-title">條碼掃描打卡</h2>
+              <p className="page-subtitle">
+                請使用條碼掃描槍或輸入員工證號進行打卡。
+              </p>
+            </div>
 
-          <div className="page-badge page-badge-muted flex-col items-start font-mono sm:items-end">
-            <span className="text-base text-slate-900 sm:text-lg">
-              {currentTime}
-            </span>
-            <span className="text-xs text-slate-500">{todayDate}</span>
+            <div className="page-badge page-badge-muted flex-col items-start font-mono sm:items-end">
+              <span className="text-base text-slate-900 sm:text-lg">
+                {currentTime}
+              </span>
+              <span className="text-xs text-slate-500">{todayDate}</span>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,0.95fr)]">
+      <div className="grid gap-4 lg:gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,0.95fr)]">
         <div className="min-w-0 flex-1">
           <Card className="h-full rounded-2xl border-slate-200 shadow-sm">
             <CardHeader className="space-y-4 pb-4">
