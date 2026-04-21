@@ -1,4 +1,4 @@
-import { formatCurrency, getMonthName } from '@/lib/utils';
+import { formatCurrency, getMonthName, cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
 import { useToast } from "@/hooks/use-toast";
@@ -28,6 +28,13 @@ interface SalaryResultTableProps {
   onFinalize: () => void;
 }
 
+type ResultRow = {
+  label: string;
+  detail: string;
+  amount: string;
+  tone?: 'default' | 'muted' | 'danger' | 'summary';
+};
+
 export default function SalaryResultTable({ result, settings, onFinalize }: SalaryResultTableProps) {
   const { toast } = useToast();
   const [isEditingNotes, setIsEditingNotes] = useState(false);
@@ -37,10 +44,6 @@ export default function SalaryResultTable({ result, settings, onFinalize }: Sala
     `基本時薪：${settings?.baseHourlyRate || 119}元/小時`,
     `假日加班：以日薪計算，每日${result.holidayDailySalary}元`
   ]);
-
-  const handlePrint = () => {
-    window.print();
-  };
 
   const handleEditNotes = () => {
     setIsEditingNotes(true);
@@ -61,107 +64,152 @@ export default function SalaryResultTable({ result, settings, onFinalize }: Sala
     setCalculationNotes(newNotes);
   };
 
+  const rows: ResultRow[] = [
+    {
+      label: '基本薪資',
+      detail: '-',
+      amount: formatCurrency(result.baseSalary),
+    },
+    ...(result.housingAllowance && result.housingAllowance > 0
+      ? [{
+          label: '住房津貼',
+          detail: '-',
+          amount: formatCurrency(result.housingAllowance),
+          tone: 'muted' as const,
+        }]
+      : []),
+    ...(result.welfareAllowance && result.welfareAllowance > 0
+      ? [{
+          label: '福利金',
+          detail: '-',
+          amount: formatCurrency(result.welfareAllowance),
+          tone: 'default' as const,
+        }]
+      : []),
+    {
+      label: '加班費',
+      detail: `OT1: ${result.totalOT1Hours.toFixed(1)}小時, OT2: ${result.totalOT2Hours.toFixed(1)}小時`,
+      amount: formatCurrency(result.totalOvertimePay),
+      tone: 'muted',
+    },
+    ...(result.paidLeaveDays && result.paidLeaveDays > 0
+      ? [{
+          label: '特休',
+          detail: `${result.paidLeaveDays}天`,
+          amount: '有薪假',
+        }]
+      : []),
+    {
+      label: '假日加班',
+      detail: `${result.holidayDays}天${result.holidayDates && result.holidayDates.length > 0 ? ` (${result.holidayDates.join(', ')})` : ''}`,
+      amount: formatCurrency(result.totalHolidayPay),
+      tone: 'muted',
+    },
+    ...result.deductions.map((deduction) => ({
+      label: deduction.name,
+      detail: '-',
+      amount: deduction.amount > 0 ? `-${formatCurrency(deduction.amount)}` : '0',
+      tone: 'danger' as const,
+    })),
+    {
+      label: '實發金額',
+      detail: '-',
+      amount: formatCurrency(result.netSalary),
+      tone: 'summary',
+    }
+  ];
+
   return (
     <div id="resultTable" className="mt-8 space-y-4">
-      <h2 className="text-xl font-bold">{result.salaryYear}年{getMonthName(result.salaryMonth)}薪資計算結果</h2>
+      <h2 className="text-xl font-bold">
+        {result.salaryYear}年{getMonthName(result.salaryMonth)}薪資計算結果
+      </h2>
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead>
-            <tr className="bg-gray-50">
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">項目</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">明細</th>
-              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">金額</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td className="px-6 py-4 whitespace-nowrap font-medium">基本薪資</td>
-              <td className="px-6 py-4 whitespace-nowrap text-center">-</td>
-              <td className="px-6 py-4 whitespace-nowrap text-right font-['Roboto_Mono']">{formatCurrency(result.baseSalary)}</td>
-            </tr>
+      <div className="rounded-lg bg-white shadow">
+        <div className="space-y-3 p-4 md:hidden">
+          {rows.map((row, index) => (
+            <div
+              key={`${row.label}-${index}`}
+              className={cn(
+                "rounded-xl border border-gray-200 p-4",
+                row.tone === 'muted' && 'bg-gray-50',
+                row.tone === 'danger' && 'border-red-200 bg-red-50/60',
+                row.tone === 'summary' && 'border-slate-200 bg-slate-50'
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className={cn(
+                    "text-sm font-medium",
+                    row.tone === 'danger' ? 'text-error' : 'text-gray-900'
+                  )}>
+                    {row.label}
+                  </div>
+                  <div className="mt-1 text-xs leading-5 text-gray-500">{row.detail}</div>
+                </div>
+                <div className={cn(
+                  "text-right font-['Roboto_Mono'] text-sm font-semibold",
+                  row.tone === 'danger' && 'text-error',
+                  row.tone === 'summary' && 'text-slate-900'
+                )}>
+                  {row.amount}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
 
-            {result.housingAllowance && result.housingAllowance > 0 ? (
+        <div className="hidden overflow-x-auto md:block">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead>
               <tr className="bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap font-medium">住房津貼</td>
-                <td className="px-6 py-4 whitespace-nowrap text-center">-</td>
-                <td className="px-6 py-4 whitespace-nowrap text-right font-['Roboto_Mono']">{formatCurrency(result.housingAllowance)}</td>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 lg:px-6">項目</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500 lg:px-6">明細</th>
+                <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 lg:px-6">金額</th>
               </tr>
-            ) : null}
-
-            {result.welfareAllowance && result.welfareAllowance > 0 ? (
-              <tr className={result.housingAllowance && result.housingAllowance > 0 ? '' : 'bg-gray-50'}>
-                <td className="px-6 py-4 whitespace-nowrap font-medium">福利金</td>
-                <td className="px-6 py-4 whitespace-nowrap text-center">-</td>
-                <td className="px-6 py-4 whitespace-nowrap text-right font-['Roboto_Mono']">{formatCurrency(result.welfareAllowance)}</td>
-              </tr>
-            ) : null}
-
-            <tr className={
-              ((result.housingAllowance && result.housingAllowance > 0) ||
-               (result.welfareAllowance && result.welfareAllowance > 0)) ?
-              '' : 'bg-gray-50'
-            }>
-              <td className="px-6 py-4 whitespace-nowrap font-medium">加班費</td>
-              <td className="px-6 py-4 whitespace-nowrap text-center font-['Roboto_Mono']">
-                OT1: {result.totalOT1Hours.toFixed(1)}小時, OT2: {result.totalOT2Hours.toFixed(1)}小時
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-right font-['Roboto_Mono']">{formatCurrency(result.totalOvertimePay)}</td>
-            </tr>
-
-            {result.paidLeaveDays && result.paidLeaveDays > 0 ? (
-              <tr className="bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap font-medium">特休</td>
-                <td className="px-6 py-4 whitespace-nowrap text-center font-['Roboto_Mono']">{result.paidLeaveDays}天</td>
-                <td className="px-6 py-4 whitespace-nowrap text-right font-['Roboto_Mono']">有薪假</td>
-              </tr>
-            ) : null}
-
-            <tr className={result.paidLeaveDays && result.paidLeaveDays > 0 ? '' : 'bg-gray-50'}>
-              <td className="px-6 py-4 whitespace-nowrap font-medium">假日加班</td>
-              <td className="px-6 py-4 text-center font-['Roboto_Mono']">
-                {result.holidayDays}天
-                {result.holidayDates && result.holidayDates.length > 0 && (
-                  <span className="text-gray-600 ml-2">
-                    ({result.holidayDates.join(', ')})
-                  </span>
-                )}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-right font-['Roboto_Mono']">{formatCurrency(result.totalHolidayPay)}</td>
-            </tr>
-
-            {result.deductions.map((deduction, index) => (
-              <tr key={`deduction-${index}`} className={index % 2 === 0 ? 'bg-gray-50' : ''}>
-                <td className="px-6 py-4 whitespace-nowrap font-medium text-error">{deduction.name}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-center">-</td>
-                <td className="px-6 py-4 whitespace-nowrap text-right font-['Roboto_Mono'] text-error">
-                  {deduction.amount > 0 ? `-${formatCurrency(deduction.amount)}` : '0'}
-                </td>
-              </tr>
-            ))}
-
-            <tr className="bg-gray-100 font-bold">
-              <td className="px-6 py-4 whitespace-nowrap">實發金額</td>
-              <td className="px-6 py-4 whitespace-nowrap text-center">-</td>
-              <td className="px-6 py-4 whitespace-nowrap text-right font-['Roboto_Mono']">{formatCurrency(result.netSalary)}</td>
-            </tr>
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => (
+                <tr
+                  key={`${row.label}-${index}`}
+                  className={cn(
+                    row.tone === 'muted' && 'bg-gray-50',
+                    row.tone === 'summary' && 'bg-gray-100 font-bold'
+                  )}
+                >
+                  <td className={cn(
+                    "px-4 py-4 font-medium whitespace-nowrap lg:px-6",
+                    row.tone === 'danger' && 'text-error'
+                  )}>
+                    {row.label}
+                  </td>
+                  <td className="px-4 py-4 text-center font-['Roboto_Mono'] lg:px-6">{row.detail}</td>
+                  <td className={cn(
+                    "px-4 py-4 text-right font-['Roboto_Mono'] whitespace-nowrap lg:px-6",
+                    row.tone === 'danger' && 'text-error'
+                  )}>
+                    {row.amount}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* Calculation Notes */}
-      <div className="bg-gray-50 p-6 rounded-lg shadow-sm relative">
-        <div className="flex justify-between items-start">
-          <h3 className="text-lg font-medium mb-3">計算說明</h3>
+      <div className="relative rounded-lg bg-gray-50 p-4 shadow-sm sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <h3 className="text-lg font-medium">計算說明</h3>
           <button
-            className="text-warning text-sm hover:text-amber-600 flex items-center"
+            className="flex items-center text-sm text-warning hover:text-amber-600"
             onClick={isEditingNotes ? handleSaveNotes : handleEditNotes}
           >
-            <span className="material-icons text-sm mr-1">{isEditingNotes ? 'save' : 'edit'}</span>
+            <span className="material-icons mr-1 text-sm">{isEditingNotes ? 'save' : 'edit'}</span>
             {isEditingNotes ? '儲存' : '編輯'}
           </button>
         </div>
-        <ul className="space-y-2 text-sm pl-5 list-disc">
+
+        <ul className="mt-3 list-disc space-y-2 pl-5 text-sm">
           {isEditingNotes ? (
             calculationNotes.map((note, index) => (
               <li key={index}>
@@ -169,7 +217,7 @@ export default function SalaryResultTable({ result, settings, onFinalize }: Sala
                   type="text"
                   value={note}
                   onChange={(e) => handleNoteChange(index, e.target.value)}
-                  className="w-full px-3 py-1 border border-gray-300 rounded-md"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2"
                 />
               </li>
             ))
@@ -181,16 +229,19 @@ export default function SalaryResultTable({ result, settings, onFinalize }: Sala
         </ul>
       </div>
 
-      {/* 結算按鈕 */}
-      <div className="mt-8 p-6 bg-gray-50 border border-gray-200 rounded-lg shadow-sm flex flex-col items-center">
-        <h3 className="text-lg font-medium mb-2">完成薪資結算</h3>
-        <p className="text-center text-gray-600 mb-4">結算後將清除目前考勤紀錄，並將結果儲存至歷史紀錄中</p>
-        <Button
-          onClick={onFinalize}
-          className="bg-slate-700 hover:bg-slate-800 text-white px-8 py-3 rounded-md text-lg font-medium border-2 border-slate-500"
-        >
-          結算並清除
-        </Button>
+      <div className="mt-8 rounded-lg border border-gray-200 bg-gray-50 p-4 shadow-sm sm:p-6">
+        <div className="mx-auto max-w-2xl text-center">
+          <h3 className="text-lg font-medium">完成薪資結算</h3>
+          <p className="mt-2 text-sm text-gray-600 sm:text-base">
+            結算後將清除目前考勤紀錄，並將結果儲存至歷史紀錄中
+          </p>
+          <Button
+            onClick={onFinalize}
+            className="mt-4 w-full border-2 border-slate-500 bg-slate-700 px-8 py-3 text-base font-medium text-white hover:bg-slate-800 sm:w-auto sm:text-lg"
+          >
+            結算並清除
+          </Button>
+        </div>
       </div>
     </div>
   );

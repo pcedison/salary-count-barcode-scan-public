@@ -153,9 +153,14 @@ export default function EmployeesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">員工管理</h1>
-        <Button onClick={handleCreateNew} className="flex items-center">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold">員工管理</h1>
+          {isAdmin && !isLoadingEmployees && (
+            <p className="text-sm text-muted-foreground">目前共 {employees.length} 位員工資料可管理</p>
+          )}
+        </div>
+        <Button onClick={handleCreateNew} className="w-full justify-center sm:w-auto">
           <Plus className="mr-2 h-4 w-4" />
           新增員工
         </Button>
@@ -163,37 +168,43 @@ export default function EmployeesPage() {
 
       {!isAdmin && (
         <Card className="bg-amber-50 border-amber-200">
-          <CardContent className="pt-6 flex items-center">
-            <BadgeAlert className="text-amber-500 mr-2 h-5 w-5" />
-            <p className="text-amber-800">需要管理員權限才能查看和管理員工資料</p>
+          <CardContent className="flex items-start gap-3 p-4 sm:p-6">
+            <BadgeAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+            <p className="text-sm leading-relaxed text-amber-800 sm:text-base">
+              需要管理員權限才能查看和管理員工資料
+            </p>
           </CardContent>
         </Card>
       )}
 
-      {isAdmin && isLoadingEmployees && <div className="text-center py-10">載入中...</div>}
+      {isAdmin && isLoadingEmployees && <div className="py-12 text-center text-muted-foreground">載入中...</div>}
 
       {isAdmin && !isLoadingEmployees && employees.length === 0 && (
         <Card>
-          <CardContent className="pt-6 text-center">
+          <CardContent className="p-6 text-center sm:p-10">
             <p className="text-muted-foreground">尚未添加任何員工。點擊「新增員工」按鈕開始添加。</p>
           </CardContent>
         </Card>
       )}
 
-      {isAdmin && !isLoadingEmployees && employees.length > 0 && (
-        <EmployeesTableCard employees={employees} onEdit={handleEdit} onDelete={handleDeleteConfirm} />
-      )}
-
       {isAdmin && (
-        <EmployeeRecycleBinCard
-          employees={deletedEmployees}
-          isRestoring={restoreEmployeeMutation.isPending}
-          onRestore={(employeeId) => restoreEmployeeMutation.mutate(employeeId)}
-          isPurging={purgeEmployeeMutation.isPending}
-          onPurge={(employeeId, confirmName) => purgeEmployeeMutation.mutate({ id: employeeId, confirmName })}
-          isSuperAdmin={isSuperAdmin}
-          onElevateSuper={elevatePin}
-        />
+        <div className="space-y-6">
+          {!isLoadingEmployees && employees.length > 0 && (
+            <EmployeesTableCard employees={employees} onEdit={handleEdit} onDelete={handleDeleteConfirm} />
+          )}
+
+          <EmployeeRecycleBinCard
+            employees={deletedEmployees}
+            isRestoring={restoreEmployeeMutation.isPending}
+            onRestore={(employeeId) => restoreEmployeeMutation.mutate(employeeId)}
+            isPurging={purgeEmployeeMutation.isPending}
+            onPurge={(employeeId, confirmName) => purgeEmployeeMutation.mutate({ id: employeeId, confirmName })}
+            isSuperAdmin={isSuperAdmin}
+            onElevateSuper={elevatePin}
+          />
+
+          <LineBindingAdminPanel />
+        </div>
       )}
 
       <EmployeeFormDialog
@@ -219,8 +230,6 @@ export default function EmployeesPage() {
         onClose={() => setIsAdminDialogOpen(false)}
         onSuccess={handleAdminLoginSuccess}
       />
-
-      <LineBindingAdminPanel />
     </div>
   );
 }

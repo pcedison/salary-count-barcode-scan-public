@@ -67,8 +67,8 @@ export default function QRCodePage() {
 
   if (!isAdmin) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <Card className="w-full max-w-sm">
+      <div className="flex min-h-screen items-center justify-center p-4 sm:p-6">
+        <Card className="w-full max-w-sm rounded-2xl shadow-sm">
           <CardContent className="pt-6 text-center text-gray-500">
             需要管理員權限才能查看此頁面
           </CardContent>
@@ -78,8 +78,8 @@ export default function QRCodePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md shadow-lg">
+    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4 sm:p-6">
+      <Card className="w-full max-w-lg rounded-2xl shadow-lg">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-2">
             <QrCode className="h-8 w-8 text-green-600" />
@@ -95,7 +95,7 @@ export default function QRCodePage() {
               <img
                 src={qrDataUrl}
                 alt="LINE 打卡 QR Code"
-                className="w-64 h-64 border-4 border-green-200 rounded-lg"
+                className="h-auto w-full max-w-[16rem] rounded-lg border-4 border-green-200 sm:max-w-[18rem]"
               />
             </div>
           ) : (
@@ -104,7 +104,7 @@ export default function QRCodePage() {
 
           <p className="text-xs text-center text-gray-400 font-mono break-all">{clockInUrl}</p>
 
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <Button
               variant="outline"
               className="flex-1 gap-2"
