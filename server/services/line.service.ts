@@ -106,18 +106,26 @@ export async function getLineProfile(accessToken: string): Promise<LineProfile> 
 
 export async function verifyLiffAccessToken(accessToken: string): Promise<LineProfile | null> {
   try {
-    const verifyRes = await fetchLineApi(
-      `https://api.line.me/oauth2/v2.1/verify?access_token=${encodeURIComponent(accessToken)}`,
-      {},
-      'LINE access token verification'
-    );
-    if (!verifyRes.ok) return null;
+    // Run both LINE API calls in parallel to cut latency; each keeps its own AbortController timeout
+    const [verifyRes, profileRes] = await Promise.all([
+      fetchLineApi(
+        `https://api.line.me/oauth2/v2.1/verify?access_token=${encodeURIComponent(accessToken)}`,
+        {},
+        'LINE access token verification'
+      ),
+      fetchLineApi(
+        LINE_PROFILE_ENDPOINT,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        'LINE profile fetch'
+      )
+    ]);
+    if (!verifyRes.ok || !profileRes.ok) return null;
 
     const verifyData = await verifyRes.json() as { client_id: string; expires_in: number };
     if (verifyData.client_id !== process.env.LINE_LOGIN_CHANNEL_ID) return null;
     if (verifyData.expires_in <= 0) return null;
 
-    return getLineProfile(accessToken);
+    return profileRes.json() as Promise<LineProfile>;
   } catch {
     return null;
   }

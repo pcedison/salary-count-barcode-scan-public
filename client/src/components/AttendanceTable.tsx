@@ -211,6 +211,7 @@ export default function AttendanceTable({
       holidayType,
       isEditing,
       rowClassName: isHolidayRecord ? 'bg-gray-100 opacity-90' : (index % 2 === 1 ? 'bg-gray-50' : ''),
+      stickyBg: isHolidayRecord ? 'bg-gray-100' : (index % 2 === 1 ? 'bg-gray-50' : 'bg-white'),
       employeeName: record._employeeName || (record.employeeId ? `員工 ID: ${record.employeeId}` : '手動輸入'),
       departmentName: record._employeeDepartment || '未指定部門',
       workHours: isNoClockType ? '0' : isFlexibleHolidayType ? `${actualWorkHours}` : '8',
@@ -536,7 +537,7 @@ export default function AttendanceTable({
               <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500 lg:px-6">工作小時</th>
               <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500 lg:px-6">加班時數</th>
               <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500 lg:px-6">假日類型</th>
-              <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500 lg:px-6">
+              <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500 lg:px-6 sticky right-0 bg-gray-50 border-l border-gray-200 z-10">
                 {canEdit ? '操作' : '狀態'}
               </th>
             </tr>
@@ -613,7 +614,7 @@ export default function AttendanceTable({
                 <td className="px-4 py-4 text-center whitespace-nowrap lg:px-6">
                   {renderHolidayTypeControl(row)}
                 </td>
-                <td className="px-4 py-4 text-center whitespace-nowrap lg:px-6">
+                <td className={`px-4 py-4 text-center whitespace-nowrap lg:px-6 sticky right-0 z-10 border-l border-gray-200 ${row.stickyBg}`}>
                   {renderDesktopActions(row)}
                 </td>
               </tr>
