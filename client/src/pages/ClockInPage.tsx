@@ -41,10 +41,13 @@ export default function ClockInPage() {
   const [errorMessage, setErrorMessage] = useState('');
 
   // 共用打卡邏輯（LIFF 自動觸發與手動按鈕都走這裡）
-  const performClockIn = useCallback(async (userId: string) => {
+  // clientTimestamp：掃碼當下由前端捕捉，減少 API 往返造成的記錄延遲
+  const performClockIn = useCallback(async (userId: string, clientTimestamp?: string) => {
     setState('clocking');
     try {
-      const res = await apiRequest('POST', '/api/line/clock-in', { lineUserId: userId });
+      const body: Record<string, string> = { lineUserId: userId };
+      if (clientTimestamp) body.clientTimestamp = clientTimestamp;
+      const res = await apiRequest('POST', '/api/line/clock-in', body);
       const data = await res.json();
       if (data.success) {
         setClockResult({
@@ -62,6 +65,20 @@ export default function ClockInPage() {
       setErrorMessage(err?.message ?? '打卡失敗，請再試一次');
       setState('error');
     }
+  }, []);
+
+  // LINE 的內建瀏覽器可能將頁面保留在記憶體中（bfcache）。
+  // 當員工第二次掃碼時，LINE 只是把舊頁面帶回前景（不重新載入），
+  // 導致 useEffect 不重新執行、打卡請求不發出。
+  // pageshow 事件在頁面從 bfcache 恢復時 persisted=true，強制重載修正此問題。
+  useEffect(() => {
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) {
+        window.location.reload();
+      }
+    };
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
   }, []);
 
   useEffect(() => {
@@ -90,6 +107,10 @@ export default function ClockInPage() {
               return;
             }
 
+            // 在 LIFF init 完成後、發出任何 API 請求前立即捕捉時間，
+            // 避免後續 LINE 驗證 API 往返造成打卡時間偏慢
+            const capturedAt = liff.isInClient() ? new Date().toISOString() : undefined;
+
             const accessToken = liff.getAccessToken();
             if (accessToken) {
               const authRes = await apiRequest('POST', '/api/line/liff-auth', { accessToken });
@@ -108,7 +129,7 @@ export default function ClockInPage() {
                   setEmployeeName(authData.employeeName ?? '');
                   if (liff.isInClient()) {
                     // 在 LINE app 內掃碼開啟 → 直接自動打卡
-                    await performClockIn(temp.lineUserId);
+                    await performClockIn(temp.lineUserId, capturedAt);
                   } else {
                     // 在外部瀏覽器開啟 LIFF → 顯示打卡按鈕（測試用）
                     setState('ready');
@@ -183,8 +204,8 @@ export default function ClockInPage() {
   }, [lineData, performClockIn]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-green-50 to-green-100 p-4 sm:p-6">
-      <Card className="w-full max-w-md rounded-2xl border-green-100 shadow-lg">
+    <div className="min-h-screen bg-gradient-to-br from-green-50 to-green-100 flex items-center justify-center p-4">
+      <Card className="w-full max-w-sm shadow-lg">
         <CardHeader className="text-center pb-2">
           <CardTitle className="text-xl text-green-700">員工打卡系統</CardTitle>
           <CardDescription>使用 LINE 帳號快速打卡</CardDescription>
@@ -296,7 +317,7 @@ export default function ClockInPage() {
               </div>
 
               <Button
-                className="h-14 w-full bg-[#06C755] text-lg text-white hover:bg-[#05b34d]"
+                className="w-full bg-[#06C755] hover:bg-[#05b34d] text-white h-14 text-lg"
                 onClick={handleClockIn}
               >
                 確認打卡

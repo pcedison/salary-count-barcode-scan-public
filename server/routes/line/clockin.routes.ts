@@ -33,7 +33,19 @@ export function registerLineClockInRoutes(app: Express): void {
         });
       }
 
-      const { dateKey, time, timestamp } = getTaiwanDateTimeParts();
+      // Use client-captured timestamp when available to avoid recording delay
+      // caused by liff.init() + LINE API round-trips. Validate: not in future,
+      // within 5 minutes of server time (handles network delay + LIFF init).
+      const { clientTimestamp } = req.body as { clientTimestamp?: string };
+      let clockBase = new Date();
+      if (clientTimestamp) {
+        const clientTime = new Date(clientTimestamp);
+        const diffMs = clockBase.getTime() - clientTime.getTime();
+        if (!Number.isNaN(clientTime.getTime()) && diffMs >= 0 && diffMs <= 5 * 60 * 1000) {
+          clockBase = clientTime;
+        }
+      }
+      const { dateKey, time, timestamp } = getTaiwanDateTimeParts(clockBase);
       const todayRecords = await storage.getTemporaryAttendanceByEmployeeAndDate(employee.id, dateKey);
       const normalizedDateKey = normalizeDateToSlash(dateKey);
       const todayFiltered = todayRecords.filter(
