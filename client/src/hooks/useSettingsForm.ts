@@ -191,12 +191,12 @@ export function useSettingsForm() {
   }, [isSuperAdmin]);
 
   // --- Salary handlers ---
-  const handleSaveSettings = async () => {
-    if (!isAdmin) return;
+  const handleSaveSettings = async (): Promise<boolean> => {
+    if (!isAdmin) return false;
     const totalAllowances = allowances.reduce((sum, item) => sum + item.amount, 0);
     setIsSaving(true);
     try {
-      await updateSettings({
+      const saved = await updateSettings({
         baseHourlyRate,
         baseMonthSalary,
         welfareAllowance: totalAllowances,
@@ -206,11 +206,16 @@ export function useSettingsForm() {
         allowances,
         barcodeEnabled
       });
+      if (!saved) {
+        return false;
+      }
       setHasUnsavedChanges(false);
       toast({ title: '設定已儲存', description: '系統設定已成功更新。' });
+      return true;
     } catch (error) {
       console.error('Failed to save settings:', error);
       toast({ title: '儲存失敗', description: '設定更新失敗，請稍後再試。', variant: 'destructive' });
+      return false;
     } finally {
       setIsSaving(false);
     }
@@ -317,9 +322,14 @@ export function useSettingsForm() {
         description: newHolidayDescription || ''
       });
       if (addedHoliday) {
-        await handleSaveSettings();
+        const settingsSaved = await handleSaveSettings();
         const selectedEmployee = employees?.find((emp) => emp.id === selectedEmployeeId);
-        toast({ title: '新增成功', description: `已為員工 ${selectedEmployee?.name} 新增假日並自動儲存` });
+        toast({
+          title: '新增成功',
+          description: settingsSaved
+            ? `已為員工 ${selectedEmployee?.name} 新增假日並自動儲存`
+            : `已為員工 ${selectedEmployee?.name} 新增假日；薪資設定未自動儲存`
+        });
         setNewHolidayDate('');
         setNewHolidayDescription('');
         setSelectedEmployeeId(null);

@@ -90,8 +90,13 @@ export function registerSettingsRoutes(app: Express): void {
   app.post("/api/settings", requireAdmin(), async (req, res) => {
     try {
       setNoStore(res);
-      const validatedData = insertSettingsSchema.parse(req.body);
       const requestedAdminPinChange = typeof req.body?.adminPin === "string" && req.body.adminPin.trim().length > 0;
+      const currentSettings = await ensureSettings();
+
+      const validatedData = insertSettingsSchema.parse({
+        ...req.body,
+        adminPin: requestedAdminPinChange ? req.body.adminPin : currentSettings.adminPin,
+      });
 
       if (requestedAdminPinChange && !hasAdminSession(req, PermissionLevel.SUPER)) {
         return res.status(403).json({
@@ -100,7 +105,6 @@ export function registerSettingsRoutes(app: Express): void {
         });
       }
 
-      const currentSettings = await storage.getSettings();
       const isDisablingBarcode =
         currentSettings?.barcodeEnabled !== false &&
         validatedData.barcodeEnabled === false;

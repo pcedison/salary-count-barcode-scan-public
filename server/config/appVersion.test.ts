@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { pathToFileURL } from "url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -27,9 +28,11 @@ describe("appVersion", () => {
   });
 
   it("includes a one-level-up package.json candidate for bundled dist output", () => {
-    const candidates = resolvePackageJsonPathCandidates("file:///app/dist/index.js");
+    const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "app-version-candidates-"));
+    const modulePath = path.join(appRoot, "dist", "index.js");
+    const candidates = resolvePackageJsonPathCandidates(pathToFileURL(modulePath).href);
 
-    expect(candidates).toContain("/app/package.json");
+    expect(candidates).toContain(path.join(appRoot, "package.json"));
   });
 
   it("reads package.json successfully from a bundled dist layout", () => {
@@ -43,7 +46,7 @@ describe("appVersion", () => {
 
     const version = getAppVersion({
       env: {} as NodeJS.ProcessEnv,
-      moduleUrl: new URL(`file://${path.join(distDir, "index.js")}`).href
+      moduleUrl: pathToFileURL(path.join(distDir, "index.js")).href
     });
 
     expect(version).toBe("9.8.7");
