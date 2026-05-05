@@ -81,6 +81,20 @@ interface SalaryResult {
   };
 }
 
+function toMonthKey(dateValue: string): string | null {
+  if (!dateValue) return null;
+
+  const [yearValue, monthValue] = dateValue.replace(/-/g, "/").split("/");
+  const year = Number(yearValue);
+  const month = Number(monthValue);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return null;
+  }
+
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
 export function useAttendanceData() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -93,7 +107,7 @@ export function useAttendanceData() {
   );
 
   // Fetch attendance data.
-  const attendanceQueryKey = isAdmin ? '/api/attendance' : '/api/attendance/today';
+  const attendanceQueryKey = isAdmin ? '/api/attendance?limit=1000' : '/api/attendance/today';
   const attendanceQueryFn = useMemo(
     () =>
       getQueryFn<AttendanceRecordLike[] | PaginatedPayload<AttendanceRecordLike> | null>({
@@ -233,14 +247,20 @@ export function useAttendanceData() {
     return enhancedRecords;
   }, [attendanceData, employees]);
 
-  // Sort attendance data by date
+  // Show the newest attendance records first in the registration table.
   const sortedAttendanceData = useMemo(() => {
     if (enhancedAttendanceData.length === 0) return [];
 
     return [...enhancedAttendanceData].sort((a, b) => {
       const dateA = new Date(a.date.replace(/\//g, '-'));
       const dateB = new Date(b.date.replace(/\//g, '-'));
-      return dateA.getTime() - dateB.getTime();
+      const dateDiff = dateB.getTime() - dateA.getTime();
+
+      if (dateDiff !== 0) {
+        return dateDiff;
+      }
+
+      return b.id - a.id;
     });
   }, [enhancedAttendanceData]);
 
@@ -491,7 +511,13 @@ export function useAttendanceData() {
         dayOfWeek: new Date(day.date).getDay()
       })));
 
-      const employeeHolidays = Array.isArray(holidays) ? holidays.filter((h: any) => !h.employeeId || h.employeeId === employeeId) : [];
+      const salaryMonthKey = `${salaryYear}-${String(salaryMonth).padStart(2, '0')}`;
+      const employeeHolidays = Array.isArray(holidays)
+        ? holidays.filter((h: any) =>
+            (!h.employeeId || h.employeeId === employeeId) &&
+            toMonthKey(h.date) === salaryMonthKey
+          )
+        : [];
       debugLog("employeeHolidays", employeeHolidays.map((h: any) => ({ date: h.date, name: h.name })));
 
       const actualHolidayWork = sortedData.filter((day) => {
@@ -607,7 +633,7 @@ export function useAttendanceData() {
       return null;
     }
   };
-  const finalizeAndSave = async () => {
+  const finalizeAndSave = async (recordsToFinalize?: AttendanceRecord[]) => {
     if (!salaryResult) {
       toast({
         title: "No salary result",
@@ -618,117 +644,84 @@ export function useAttendanceData() {
     }
 
     try {
-      const allAttendanceData = attendanceData as AttendanceRecord[];
+      const sourceAttendanceData =
+        recordsToFinalize && recordsToFinalize.length > 0
+          ? recordsToFinalize
+          : salaryResult.attendanceData;
 
-      const isSingleEmployeeMode = salaryResult.attendanceData &&
-                                 salaryResult.attendanceData.length > 0 &&
-                                 salaryResult.attendanceData.every(record =>
-                                   record.employeeId === salaryResult.attendanceData[0].employeeId);
+      if (!sourceAttendanceData || sourceAttendanceData.length === 0) {
+        toast({
+          title: "Salary save failed",
+          description: "No attendance records were found for the selected month.",
+          variant: "destructive"
+        });
+        return false;
+      }
 
-      if (isSingleEmployeeMode) {
-        const singleRecord: any = { ...salaryResult };
+      const employeeMap: Record<number, AttendanceRecord[]> = {};
 
-        if (singleRecord.attendanceData && singleRecord.attendanceData.length > 0) {
-          const employeeData = singleRecord.attendanceData[0];
-          singleRecord.employeeId = employeeData.employeeId;
-          singleRecord.employeeName = employeeData._employeeName || `Employee ID: ${employeeData.employeeId}`;
+      sourceAttendanceData.forEach((record: AttendanceRecord) => {
+        if (record.employeeId) {
+          const employeeId = record.employeeId;
+          if (!employeeMap[employeeId]) {
+            employeeMap[employeeId] = [];
+          }
+          employeeMap[employeeId].push(record);
+        }
+      });
+
+      const employeeIds = Object.keys(employeeMap).map(Number);
+
+      if (employeeIds.length === 0) {
+        toast({
+          title: "Salary save failed",
+          description: "No employee attendance records were found.",
+          variant: "destructive"
+        });
+        return false;
+      }
+
+      debugLog("employeeIds", employeeIds.length);
+
+      const finalizedRecordIds: number[] = [];
+
+      for (const employeeId of employeeIds) {
+        const employeeAttendance = employeeMap[employeeId];
+
+        if (employeeAttendance.length === 0) continue;
+
+        const employeeResult =
+          employeeIds.length === 1 ? salaryResult : calculateSalary(employeeAttendance);
+
+        if (employeeResult) {
+          const recordToSave: any = { ...employeeResult };
+          recordToSave.employeeId = employeeId;
+          recordToSave.employeeName = employeeAttendance[0]._employeeName || `Employee ID: ${employeeId}`;
+          recordToSave.attendanceData = employeeAttendance;
 
           const specialLeaveInfo = getSpecialLeaveInfoForMonth(
-            employeeData.employeeId,
-            singleRecord.salaryYear,
-            singleRecord.salaryMonth
+            employeeId,
+            recordToSave.salaryYear,
+            recordToSave.salaryMonth
           );
           if (specialLeaveInfo) {
-            singleRecord.specialLeaveInfo = specialLeaveInfo;
+            recordToSave.specialLeaveInfo = specialLeaveInfo;
             debugLog("specialLeaveInfo", specialLeaveInfo);
           }
 
-          debugLog("singleEmployeeSalary", {
-            employeeName: singleRecord.employeeName,
-            employeeId: singleRecord.employeeId
+          debugLog("employeeSalaryRecord", {
+            employeeName: recordToSave.employeeName,
+            employeeId: recordToSave.employeeId
           });
-          await createSalaryRecordMutation.mutateAsync(singleRecord);
 
-          if (singleRecord.employeeId) {
-            await deleteFilteredAttendanceMutation.mutateAsync({ employeeId: singleRecord.employeeId });
-            debugLog("deletedAttendanceForEmployee", {
-              employeeName: singleRecord.employeeName,
-              employeeId: singleRecord.employeeId
-            });
-          }
-        } else {
-          await createSalaryRecordMutation.mutateAsync(singleRecord);
+          await createSalaryRecordMutation.mutateAsync(recordToSave);
+          finalizedRecordIds.push(...employeeAttendance.map((record) => record.id));
         }
       }
-      else {
-        const employeeMap: Record<number, any[]> = {};
 
-        allAttendanceData.forEach((record: AttendanceRecord) => {
-          if (record.employeeId) {
-            const employeeId = record.employeeId;
-            if (!employeeMap[employeeId]) {
-              employeeMap[employeeId] = [];
-            }
-            employeeMap[employeeId].push(record);
-          }
-        });
-
-        const employeeIds = Object.keys(employeeMap).map(Number);
-
-        if (employeeIds.length === 0) {
-          toast({
-            title: "Salary save failed",
-            description: "No employee attendance records were found.",
-            variant: "destructive"
-          });
-          return false;
-        }
-
-        debugLog("employeeIds", employeeIds.length);
-
-        for (const employeeId of employeeIds) {
-          const employeeAttendance = employeeMap[employeeId];
-
-          if (employeeAttendance.length === 0) continue;
-
-          const employeeResult = calculateSalary(employeeAttendance);
-
-          if (employeeResult) {
-            const recordToSave: any = { ...employeeResult };
-            recordToSave.employeeId = employeeId;
-            recordToSave.employeeName = employeeAttendance[0]._employeeName || `Employee ID: ${employeeId}`;
-
-            const specialLeaveInfo = getSpecialLeaveInfoForMonth(
-              employeeId,
-              recordToSave.salaryYear,
-              recordToSave.salaryMonth
-            );
-            if (specialLeaveInfo) {
-              recordToSave.specialLeaveInfo = specialLeaveInfo;
-              debugLog("specialLeaveInfo", specialLeaveInfo);
-            }
-
-            debugLog("employeeSalaryRecord", {
-              employeeName: recordToSave.employeeName,
-              employeeId: recordToSave.employeeId
-            });
-
-            await createSalaryRecordMutation.mutateAsync(recordToSave);
-          }
-        }
-
-        await deleteFilteredAttendanceMutation.mutateAsync({});
-        debugLog("attendanceCleared");
-      }
-
-      try {
-        const response = await apiRequest('DELETE', '/api/holidays');
-        if (response.ok) {
-          debugLog('holiday cache cleared after salary finalization');
-          queryClient.invalidateQueries({ queryKey: ['/api/holidays'] });
-        }
-      } catch (error) {
-        console.error('Failed to clear holidays after salary finalization:', error);
+      if (finalizedRecordIds.length > 0) {
+        await deleteFilteredAttendanceMutation.mutateAsync({ ids: finalizedRecordIds });
+        debugLog("attendanceCleared", finalizedRecordIds.length);
       }
 
       setSalaryResult(null);

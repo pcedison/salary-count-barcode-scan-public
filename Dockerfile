@@ -7,13 +7,20 @@ ENV NODE_ENV=development \
     NPM_CONFIG_INCLUDE=dev \
     npm_config_include=dev \
     NPM_CONFIG_OMIT= \
-    npm_config_omit=
+    npm_config_omit= \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_FACTOR=2 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
+    NPM_CONFIG_FETCH_TIMEOUT=120000 \
+    NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false
 
 COPY package.json package-lock.json .npmrc ./
-RUN npm ci --include=dev \
+RUN npm ci --include=dev --include=optional \
     && test -x node_modules/.bin/vite \
     && test -x node_modules/.bin/esbuild \
-    && npm install --no-save @rollup/rollup-linux-x64-gnu@4.60.0
+    && node -e "require.resolve('@rollup/rollup-linux-x64-gnu/package.json')"
 
 COPY . .
 RUN npm run build
@@ -22,10 +29,17 @@ FROM node:20-bookworm-slim AS runtime
 
 WORKDIR /app
 ENV NODE_ENV=production \
-    PORT=8080
+    PORT=8080 \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_FACTOR=2 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
+    NPM_CONFIG_FETCH_TIMEOUT=120000 \
+    NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --omit=optional
 
 COPY --from=builder /app/dist ./dist
 

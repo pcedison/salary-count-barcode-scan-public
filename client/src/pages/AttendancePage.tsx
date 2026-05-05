@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { useAttendanceData } from "@/hooks/useAttendanceData";
 import { useSettings } from "@/hooks/useSettings";
@@ -12,7 +12,14 @@ import ConfirmationModal from "@/components/ConfirmationModal";
 import AdminLoginDialog from "@/components/AdminLoginDialog";
 import { DateTimePicker } from "@/components/ui/date-time-picker";
 import { Button } from "@/components/ui/button";
-import { Lock, Shield, UserCheck } from "lucide-react";
+import {
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Lock,
+  Shield,
+  UserCheck,
+} from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -25,6 +32,43 @@ import { getAttendanceSyncBadge } from "@/lib/attendanceSyncStatus";
 import { debugLog, debugWarn } from "@/lib/debug";
 import { getCurrentYearMonth, getMonthName, getTodayDate } from "@/lib/utils";
 import { eventBus, EventNames } from "@/lib/eventBus";
+
+function toMonthKey(dateValue: string): string | null {
+  if (!dateValue) return null;
+
+  const [yearValue, monthValue] = dateValue.replace(/-/g, "/").split("/");
+  const year = Number(yearValue);
+  const month = Number(monthValue);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return null;
+  }
+
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+function toMonthLabel(monthKey: string): string {
+  const [yearValue, monthValue] = monthKey.split("-");
+  const year = Number(yearValue);
+  const month = Number(monthValue);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    return monthKey;
+  }
+
+  return `${year}年${getMonthName(month)}`;
+}
+
+function shiftMonthKey(monthKey: string, offset: number): string {
+  const [yearValue, monthValue] = monthKey.split("-");
+  const date = new Date(Number(yearValue), Number(monthValue) - 1 + offset, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthSortValue(monthKey: string): number {
+  const [yearValue, monthValue] = monthKey.split("-");
+  return Number(yearValue) * 12 + Number(monthValue);
+}
 
 export default function AttendancePage() {
   const { toast } = useToast();
@@ -66,6 +110,9 @@ export default function AttendancePage() {
   const [date, setDate] = useState<string>(getTodayDate());
   const [clockIn, setClockIn] = useState<string>("09:00");
   const [clockOut, setClockOut] = useState<string>("18:00");
+  const [selectedMonthKey, setSelectedMonthKey] = useState<string>(
+    toMonthKey(getTodayDate()) || "",
+  );
   const [showSalaryResult, setShowSalaryResult] = useState<boolean>(false);
   const [showConfirmationModal, setShowConfirmationModal] =
     useState<boolean>(false);
@@ -76,24 +123,95 @@ export default function AttendancePage() {
     null,
   );
 
-  // 過濾特定員工的考勤記錄
-  const filteredAttendanceData =
-    selectedEmployeeId && selectedEmployeeId !== "all"
-      ? attendanceData.filter(
+  const attendanceMonthOptions = useMemo(() => {
+    const summaries = new Map<
+      string,
+      {
+        value: string;
+        label: string;
+        recordCount: number;
+        employeeIds: Set<number>;
+      }
+    >();
+
+    const ensureSummary = (monthKey: string) => {
+      if (!summaries.has(monthKey)) {
+        summaries.set(monthKey, {
+          value: monthKey,
+          label: toMonthLabel(monthKey),
+          recordCount: 0,
+          employeeIds: new Set<number>(),
+        });
+      }
+
+      return summaries.get(monthKey)!;
+    };
+
+    attendanceData.forEach((record) => {
+      const monthKey = toMonthKey(record.date);
+      if (!monthKey) return;
+
+      const summary = ensureSummary(monthKey);
+      summary.recordCount += 1;
+
+      if (record.employeeId) {
+        summary.employeeIds.add(record.employeeId);
+      }
+    });
+
+    [selectedMonthKey, toMonthKey(getTodayDate()), toMonthKey(date)]
+      .filter((monthKey): monthKey is string => Boolean(monthKey))
+      .forEach(ensureSummary);
+
+    return Array.from(summaries.values())
+      .sort((a, b) => monthSortValue(b.value) - monthSortValue(a.value))
+      .map((summary) => ({
+        value: summary.value,
+        label: summary.label,
+        recordCount: summary.recordCount,
+        employeeCount: summary.employeeIds.size,
+      }));
+  }, [attendanceData, date, selectedMonthKey]);
+
+  const selectedMonthAttendanceData = useMemo(
+    () =>
+      attendanceData.filter(
+        (record) => toMonthKey(record.date) === selectedMonthKey,
+      ),
+    [attendanceData, selectedMonthKey],
+  );
+
+  const selectedMonthSummary = attendanceMonthOptions.find(
+    (option) => option.value === selectedMonthKey,
+  );
+  const selectedMonthLabel = selectedMonthSummary?.label || toMonthLabel(selectedMonthKey);
+  const hiddenOtherMonthRecordCount =
+    attendanceData.length - selectedMonthAttendanceData.length;
+
+  // 先依月份切分，再過濾特定員工的考勤記錄
+  const filteredAttendanceData = useMemo(
+    () =>
+      selectedEmployeeId && selectedEmployeeId !== "all"
+        ? selectedMonthAttendanceData.filter(
           (record) =>
             record.employeeId === parseInt(selectedEmployeeId) ||
             (record._employeeName &&
               selectedEmployee &&
               record._employeeName === selectedEmployee.name),
         )
-      : attendanceData;
+        : selectedMonthAttendanceData,
+    [selectedEmployee, selectedEmployeeId, selectedMonthAttendanceData],
+  );
 
   const { year, month } = getCurrentYearMonth();
   const syncBadge = getAttendanceSyncBadge(syncStatus);
-  const attendanceHeading =
-    attendanceData.length > 0
-      ? `${attendanceData[0].date.split("/")[0]}年${getMonthName(parseInt(attendanceData[0].date.split("/")[1]))}考勤打卡`
-      : `${year}年${getMonthName(month)}考勤打卡`;
+  const attendanceHeading = selectedMonthKey
+    ? `${selectedMonthLabel}考勤打卡`
+    : `${year}年${getMonthName(month)}考勤打卡`;
+
+  useEffect(() => {
+    setShowSalaryResult(false);
+  }, [selectedEmployeeId, selectedMonthKey]);
 
   // 處理員工選擇變更
   const handleEmployeeChange = (employeeId: string) => {
@@ -130,6 +248,11 @@ export default function AttendancePage() {
 
         // 立即刷新考勤數據
         invalidateAttendanceQueries(queryClient);
+
+        const scannedRecordMonth = toMonthKey(data.attendance?.date || "");
+        if (scannedRecordMonth) {
+          setSelectedMonthKey(scannedRecordMonth);
+        }
 
         // 如果有員工姓名，嘗試自動切換到該員工的考勤資料
         if (data.employeeName) {
@@ -174,10 +297,10 @@ export default function AttendancePage() {
   // Calculate and show salary result - 改進版，支持單一員工或多員工模式
   const handleCalculateSalary = () => {
     // 檢查是否有考勤數據可供計算
-    if (attendanceData.length === 0) {
+    if (filteredAttendanceData.length === 0) {
       toast({
         title: "無法計算",
-        description: "沒有任何考勤記錄，請先新增考勤資料。",
+        description: `${selectedMonthLabel}沒有可結算的考勤記錄。`,
         variant: "destructive",
       });
       return;
@@ -205,7 +328,11 @@ export default function AttendancePage() {
     else {
       // 分組員工ID
       const employeeIds = Array.from(
-        new Set(attendanceData.map((record) => record.employeeId)),
+        new Set(
+          filteredAttendanceData
+            .map((record) => record.employeeId)
+            .filter((employeeId): employeeId is number => Boolean(employeeId)),
+        ),
       );
 
       if (employeeIds.length === 0) {
@@ -221,7 +348,7 @@ export default function AttendancePage() {
         // 多員工模式 - 提示用戶將一次性計算多個員工的薪資
         toast({
           title: "多員工模式",
-          description: `將計算 ${employeeIds.length} 名員工的薪資，每位員工會產生獨立的薪資記錄。`,
+          description: `${selectedMonthLabel}將計算 ${employeeIds.length} 名員工的薪資，每位員工會產生獨立的薪資記錄。`,
         });
       }
 
@@ -234,7 +361,7 @@ export default function AttendancePage() {
           throw new Error("無法獲取有效的員工ID");
         }
 
-        const firstEmployeeData = attendanceData.filter(
+        const firstEmployeeData = filteredAttendanceData.filter(
           (record) => record.employeeId === firstEmployeeId,
         );
 
@@ -295,6 +422,11 @@ export default function AttendancePage() {
     setClockIn("09:00");
     setClockOut("18:00");
 
+    const newRecordMonth = toMonthKey(date);
+    if (newRecordMonth) {
+      setSelectedMonthKey(newRecordMonth);
+    }
+
     toast({
       title: "已新增",
       description: "考勤記錄已成功新增。",
@@ -317,13 +449,13 @@ export default function AttendancePage() {
     setShowConfirmationModal(false);
 
     // 等待結算完成並獲取結果
-    const success = await finalizeAndSave();
+    const success = await finalizeAndSave(filteredAttendanceData);
 
     if (success) {
       setShowSalaryResult(false);
       toast({
         title: "結算完成",
-        description: "考勤資料已結算並儲存至歷史紀錄。",
+        description: `${selectedMonthLabel}考勤資料已結算並儲存至歷史紀錄。`,
       });
     }
     // 失敗的情況在 finalizeAndSave 內部已經處理了 toast
@@ -384,6 +516,74 @@ export default function AttendancePage() {
                 計算薪資
               </Button>
             )}
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-col gap-3 border-t border-slate-200 pt-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-primary shadow-sm">
+              <CalendarDays className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-slate-500">顯示月份</div>
+              <div className="truncate text-base font-semibold text-slate-900">
+                {selectedMonthLabel}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center lg:min-w-[34rem]">
+            <div className="grid grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                title="上一個月"
+                aria-label="上一個月"
+                onClick={() => setSelectedMonthKey((current) => shiftMonthKey(current, -1))}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+
+              <Select value={selectedMonthKey} onValueChange={setSelectedMonthKey}>
+                <SelectTrigger className="w-full bg-white">
+                  <SelectValue placeholder="選擇月份" />
+                </SelectTrigger>
+                <SelectContent>
+                  {attendanceMonthOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                      {option.recordCount > 0 ? ` (${option.recordCount} 筆)` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                title="下一個月"
+                aria-label="下一個月"
+                onClick={() => setSelectedMonthKey((current) => shiftMonthKey(current, 1))}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap gap-2 text-xs font-medium text-slate-600 sm:justify-end">
+              <span className="rounded-full bg-white px-3 py-1 shadow-sm">
+                {selectedMonthSummary?.recordCount || 0} 筆紀錄
+              </span>
+              <span className="rounded-full bg-white px-3 py-1 shadow-sm">
+                {selectedMonthSummary?.employeeCount || 0} 名員工
+              </span>
+              {hiddenOtherMonthRecordCount > 0 && (
+                <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700 shadow-sm">
+                  其他月份 {hiddenOtherMonthRecordCount} 筆
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </section>
@@ -564,7 +764,7 @@ export default function AttendancePage() {
         onClose={() => setShowConfirmationModal(false)}
         onConfirm={handleFinalize}
         title="確認操作"
-        message="您確定要結算並清除所有考勤紀錄嗎？此操作無法復原。"
+        message={`您確定要結算並清除 ${selectedMonthLabel} 的考勤紀錄嗎？其他月份的未結算紀錄會保留。此操作無法復原。`}
       />
 
       {/* Admin Login Dialog */}
