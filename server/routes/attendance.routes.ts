@@ -16,7 +16,7 @@ const log = createLogger('attendance');
 
 function parseBoundedPagination(queryPage: unknown, queryLimit: unknown) {
   const page = Math.max(1, parseInt(String(queryPage ?? '1'), 10) || 1);
-  const limit = Math.min(200, Math.max(1, parseInt(String(queryLimit ?? '50'), 10) || 50));
+  const limit = Math.min(1000, Math.max(1, parseInt(String(queryLimit ?? '50'), 10) || 50));
 
   return { page, limit };
 }
