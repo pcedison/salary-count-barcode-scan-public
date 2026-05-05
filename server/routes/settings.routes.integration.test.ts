@@ -213,6 +213,65 @@ describe("settings routes integration", () => {
     }
   });
 
+  it("preserves the current admin pin when regular settings updates omit adminPin", async () => {
+    const existingAdminPin = "abcdef:600000:123456";
+    settingsState.settings = {
+      id: 1,
+      baseHourlyRate: 119,
+      ot1Multiplier: 1.34,
+      ot2Multiplier: 1.67,
+      baseMonthSalary: 28590,
+      welfareAllowance: 0,
+      deductions: [],
+      allowances: [],
+      adminPin: existingAdminPin,
+      barcodeEnabled: true,
+      updatedAt: new Date("2026-03-12T00:00:00.000Z"),
+    };
+
+    const server = await createJsonTestServer(registerSettingsRoutes, {
+      setupApp: async (app) => {
+        setupTestAdminSession(app);
+      },
+    });
+
+    try {
+      const result = await jsonRequest<Record<string, any>>(server.baseUrl, "/api/settings", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [TEST_ADMIN_HEADER]: "true",
+        },
+        body: JSON.stringify({
+          baseHourlyRate: 125,
+          ot1Multiplier: 1.34,
+          ot2Multiplier: 1.67,
+          baseMonthSalary: 30000,
+          welfareAllowance: 500,
+          deductions: [],
+          allowances: [{ name: "福利金", amount: 500, description: "員工福利津貼" }],
+          barcodeEnabled: true,
+        }),
+      });
+
+      expect(result.response.status).toBe(200);
+      expect(settingsState.savedSettings).toMatchObject({
+        baseHourlyRate: 125,
+        baseMonthSalary: 30000,
+        welfareAllowance: 500,
+        adminPin: existingAdminPin,
+      });
+      expect(result.body).toMatchObject({
+        baseHourlyRate: 125,
+        baseMonthSalary: 30000,
+        welfareAllowance: 500,
+      });
+      expect(result.body?.adminPin).toBeUndefined();
+    } finally {
+      await server.close();
+    }
+  });
+
   it("requires admin authorization for infrastructure status endpoints", async () => {
     const server = await createJsonTestServer(registerSettingsRoutes, {
       setupApp: async (app) => {
