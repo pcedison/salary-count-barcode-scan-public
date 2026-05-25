@@ -118,6 +118,41 @@ describe('attendance routes integration', () => {
     }
   });
 
+  it('passes attendance pagination filters to storage when query params are provided', async () => {
+    const server = await createJsonTestServer(registerAttendanceRoutes, {
+      setupApp: async (app) => {
+        setupTestAdminSession(app);
+      }
+    });
+
+    try {
+      const result = await jsonRequest<{
+        data: Array<Record<string, unknown>>;
+        pagination: { page: number; limit: number; total: number; pages: number };
+      }>(server.baseUrl, '/api/attendance?page=2&limit=25&employeeId=5&month=2026-04&search=08', {
+        headers: {
+          [TEST_ADMIN_HEADER]: 'true'
+        }
+      });
+
+      expect(result.response.status).toBe(200);
+      expect(result.body?.pagination).toEqual({
+        page: 2,
+        limit: 25,
+        total: 1,
+        pages: 1
+      });
+      expect(storageMock.getTemporaryAttendancePage).toHaveBeenCalledWith(2, 25, {
+        employeeId: 5,
+        date: undefined,
+        month: '2026-04',
+        search: '08'
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('requires a kiosk/admin session in production and returns sanitized records without employee ids', async () => {
     process.env.NODE_ENV = 'production';
     process.env.SESSION_SECRET = 'attendance-session-secret-1234567890123456';

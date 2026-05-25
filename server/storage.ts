@@ -1,4 +1,4 @@
-﻿import { eq, and, desc, or, isNull, isNotNull, lte, sql as drizzleSql } from "drizzle-orm";
+﻿import { eq, and, desc, or, isNull, isNotNull, lte, ilike, type SQL, sql as drizzleSql } from "drizzle-orm";
 import { normalizeDateToDash, normalizeDateToSlash } from "../shared/utils/specialLeaveSync";
 import { createLogger } from "./utils/logger";
 import {
@@ -22,6 +22,178 @@ import { DatabaseEmployeeRepository } from './repositories/employeeRepository';
 
 const log = createLogger('storage');
 
+export type AttendanceScanAction = 'clockIn' | 'clockOut';
+
+export interface AttendanceScanUpsertInput {
+  employeeId: number;
+  dateKey: string;
+  time: string;
+  isHoliday: boolean;
+  expectedAction: AttendanceScanAction;
+}
+
+export interface TemporaryAttendancePageFilters {
+  employeeId?: number;
+  date?: string;
+  month?: string;
+  search?: string;
+}
+
+export interface SalaryRecordPageFilters {
+  employeeId?: number;
+  salaryYear?: number;
+  salaryMonth?: number;
+  search?: string;
+}
+
+export type AttendanceScanUpsertResult =
+  | {
+      duplicate: false;
+      action: AttendanceScanAction;
+      attendance: TemporaryAttendance;
+    }
+  | {
+      duplicate: true;
+      action: AttendanceScanAction;
+      attendance?: TemporaryAttendance;
+    };
+
+function getAttendanceEventTime(record: TemporaryAttendance): string {
+  const clockOut = record.clockOut?.trim();
+  return clockOut ? clockOut : record.clockIn;
+}
+
+function parseTimeToMinutes(time: string): number {
+  const [hours = '0', minutes = '0'] = time.split(':');
+  const parsedHours = Number.parseInt(hours, 10);
+  const parsedMinutes = Number.parseInt(minutes, 10);
+
+  if (Number.isNaN(parsedHours) || Number.isNaN(parsedMinutes)) {
+    return -1;
+  }
+
+  return parsedHours * 60 + parsedMinutes;
+}
+
+function compareAttendanceByLatestEvent(
+  left: TemporaryAttendance,
+  right: TemporaryAttendance
+): number {
+  const eventDifference =
+    parseTimeToMinutes(getAttendanceEventTime(right)) -
+    parseTimeToMinutes(getAttendanceEventTime(left));
+
+  if (eventDifference !== 0) {
+    return eventDifference;
+  }
+
+  const createdAtDifference =
+    new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime();
+
+  if (createdAtDifference !== 0) {
+    return createdAtDifference;
+  }
+
+  return (right.id ?? 0) - (left.id ?? 0);
+}
+
+function getLatestIncompleteAttendanceRecord(
+  records: TemporaryAttendance[]
+): TemporaryAttendance | undefined {
+  return [...records]
+    .filter(record => !record.clockOut || record.clockOut.trim() === '')
+    .sort(compareAttendanceByLatestEvent)[0];
+}
+
+function toLikePattern(value: string): string {
+  return `%${value.trim()}%`;
+}
+
+function buildTemporaryAttendancePageWhere(filters?: TemporaryAttendancePageFilters): SQL | undefined {
+  if (!filters) {
+    return undefined;
+  }
+
+  const conditions: SQL[] = [];
+
+  if (filters.employeeId !== undefined) {
+    conditions.push(eq(temporaryAttendance.employeeId, filters.employeeId));
+  }
+
+  if (filters.date) {
+    const slashDate = normalizeDateToSlash(filters.date);
+    const dashDate = normalizeDateToDash(filters.date);
+    conditions.push(
+      or(
+        eq(temporaryAttendance.date, slashDate),
+        eq(temporaryAttendance.date, dashDate)
+      )!
+    );
+  }
+
+  if (filters.month) {
+    const normalizedMonth = filters.month.replace(/\//g, '-');
+    const [yearValue, monthValue] = normalizedMonth.split('-');
+    const year = Number.parseInt(yearValue ?? '', 10);
+    const month = Number.parseInt(monthValue ?? '', 10);
+
+    if (Number.isFinite(year) && Number.isFinite(month) && month >= 1 && month <= 12) {
+      const paddedMonth = String(month).padStart(2, '0');
+      const slashPrefix = `${year}/${paddedMonth}/%`;
+      const dashPrefix = `${year}-${paddedMonth}-%`;
+      conditions.push(
+        drizzleSql`(${temporaryAttendance.date} like ${slashPrefix} or ${temporaryAttendance.date} like ${dashPrefix})`
+      );
+    }
+  }
+
+  if (filters.search?.trim()) {
+    const pattern = toLikePattern(filters.search);
+    conditions.push(
+      or(
+        ilike(temporaryAttendance.date, pattern),
+        ilike(temporaryAttendance.clockIn, pattern),
+        ilike(temporaryAttendance.clockOut, pattern)
+      )!
+    );
+  }
+
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+function buildSalaryRecordPageWhere(filters?: SalaryRecordPageFilters): SQL | undefined {
+  if (!filters) {
+    return undefined;
+  }
+
+  const conditions: SQL[] = [];
+
+  if (filters.employeeId !== undefined) {
+    conditions.push(eq(salaryRecords.employeeId, filters.employeeId));
+  }
+
+  if (filters.salaryYear !== undefined) {
+    conditions.push(eq(salaryRecords.salaryYear, filters.salaryYear));
+  }
+
+  if (filters.salaryMonth !== undefined) {
+    conditions.push(eq(salaryRecords.salaryMonth, filters.salaryMonth));
+  }
+
+  if (filters.search?.trim()) {
+    const pattern = toLikePattern(filters.search);
+    conditions.push(
+      or(
+        ilike(salaryRecords.employeeName, pattern),
+        drizzleSql`${salaryRecords.salaryYear}::text like ${pattern}`,
+        drizzleSql`${salaryRecords.salaryMonth}::text like ${pattern}`
+      )!
+    );
+  }
+
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
 export interface IStorage {
   // Employee methods - for barcode scanning
   getAllEmployees(): Promise<Employee[]>;
@@ -40,11 +212,12 @@ export interface IStorage {
 
   // Temporary attendance methods
   getTemporaryAttendance(): Promise<TemporaryAttendance[]>;
-  getTemporaryAttendancePage(page: number, limit: number): Promise<{ rows: TemporaryAttendance[]; total: number }>;
+  getTemporaryAttendancePage(page: number, limit: number, filters?: TemporaryAttendancePageFilters): Promise<{ rows: TemporaryAttendance[]; total: number }>;
   getTemporaryAttendanceById(id: number): Promise<TemporaryAttendance | undefined>;
   getTemporaryAttendanceByDate(date: string): Promise<TemporaryAttendance[]>; // 查詢特定日期的所有考勤記錄
   getTemporaryAttendanceByEmployeeAndDate(employeeId: number, date: string): Promise<TemporaryAttendance[]>; // 查詢特定員工特定日期的考勤記錄
   getTemporaryAttendanceByEmployeeAndMonth(employeeId: number, year: number, month: number): Promise<TemporaryAttendance[]>;
+  upsertTemporaryAttendanceScan(input: AttendanceScanUpsertInput): Promise<AttendanceScanUpsertResult>;
   createTemporaryAttendance(attendance: InsertTemporaryAttendance): Promise<TemporaryAttendance>;
   updateTemporaryAttendance(id: number, attendance: Partial<InsertTemporaryAttendance>): Promise<TemporaryAttendance | undefined>;
   deleteTemporaryAttendance(id: number): Promise<boolean>;
@@ -57,9 +230,11 @@ export interface IStorage {
 
   // Salary record methods
   getAllSalaryRecords(): Promise<SalaryRecord[]>;
-  getAllSalaryRecordsPage(page: number, limit: number): Promise<{ rows: SalaryRecord[]; total: number }>;
+  getAllSalaryRecordsPage(page: number, limit: number, filters?: SalaryRecordPageFilters): Promise<{ rows: SalaryRecord[]; total: number }>;
   getSalaryRecordById(id: number): Promise<SalaryRecord | undefined>;
   getSalaryRecordByYearMonth(year: number, month: number): Promise<SalaryRecord | undefined>;
+  getSalaryRecordsByYearMonth(year: number, month: number): Promise<SalaryRecord[]>;
+  getSalaryRecordByYearMonthEmployee(year: number, month: number, employeeId: number): Promise<SalaryRecord | undefined>;
   createSalaryRecord(record: InsertSalaryRecord): Promise<SalaryRecord>;
   updateSalaryRecord(id: number, record: Partial<InsertSalaryRecord>): Promise<SalaryRecord | undefined>;
   deleteSalaryRecord(id: number): Promise<boolean>;
@@ -178,8 +353,27 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(temporaryAttendance);
   }
 
-  async getTemporaryAttendancePage(page: number, limit: number): Promise<{ rows: TemporaryAttendance[]; total: number }> {
+  async getTemporaryAttendancePage(page: number, limit: number, filters?: TemporaryAttendancePageFilters): Promise<{ rows: TemporaryAttendance[]; total: number }> {
     const offset = (page - 1) * limit;
+    const whereClause = buildTemporaryAttendancePageWhere(filters);
+
+    if (whereClause) {
+      const [rows, [{ count }]] = await Promise.all([
+        db
+          .select()
+          .from(temporaryAttendance)
+          .where(whereClause)
+          .orderBy(desc(temporaryAttendance.id))
+          .limit(limit)
+          .offset(offset),
+        db
+          .select({ count: drizzleSql<number>`count(*)::int` })
+          .from(temporaryAttendance)
+          .where(whereClause)
+      ]);
+      return { rows, total: count };
+    }
+
     const [rows, [{ count }]] = await Promise.all([
       db.select().from(temporaryAttendance).orderBy(desc(temporaryAttendance.id)).limit(limit).offset(offset),
       db.select({ count: drizzleSql<number>`count(*)::int` }).from(temporaryAttendance)
@@ -254,6 +448,79 @@ export class DatabaseStorage implements IStorage {
       );
   }
 
+  async upsertTemporaryAttendanceScan(input: AttendanceScanUpsertInput): Promise<AttendanceScanUpsertResult> {
+    const slashDate = normalizeDateToSlash(input.dateKey);
+    const dashDate = normalizeDateToDash(input.dateKey);
+
+    return db.transaction(async (tx) => {
+      await tx.execute(drizzleSql`select pg_advisory_xact_lock(918273, ${input.employeeId})`);
+
+      const existingRecords = await tx
+        .select()
+        .from(temporaryAttendance)
+        .where(
+          and(
+            eq(temporaryAttendance.employeeId, input.employeeId),
+            or(
+              eq(temporaryAttendance.date, slashDate),
+              eq(temporaryAttendance.date, dashDate)
+            )
+          )
+        );
+
+      const latestIncompleteRecord = getLatestIncompleteAttendanceRecord(existingRecords);
+      const action: AttendanceScanAction = latestIncompleteRecord ? 'clockOut' : 'clockIn';
+
+      if (action !== input.expectedAction) {
+        return {
+          duplicate: true,
+          action,
+          attendance: latestIncompleteRecord
+        };
+      }
+
+      if (latestIncompleteRecord) {
+        const [updatedAttendance] = await tx
+          .update(temporaryAttendance)
+          .set({ clockOut: input.time })
+          .where(eq(temporaryAttendance.id, latestIncompleteRecord.id))
+          .returning();
+
+        if (!updatedAttendance) {
+          throw new Error('Unable to persist scan attendance record');
+        }
+
+        return {
+          duplicate: false,
+          action,
+          attendance: updatedAttendance
+        };
+      }
+
+      const [newAttendance] = await tx
+        .insert(temporaryAttendance)
+        .values({
+          employeeId: input.employeeId,
+          date: input.dateKey,
+          clockIn: input.time,
+          clockOut: '',
+          isHoliday: input.isHoliday,
+          isBarcodeScanned: true
+        })
+        .returning();
+
+      if (!newAttendance) {
+        throw new Error('Unable to persist scan attendance record');
+      }
+
+      return {
+        duplicate: false,
+        action,
+        attendance: newAttendance
+      };
+    });
+  }
+
   async createTemporaryAttendance(attendance: InsertTemporaryAttendance): Promise<TemporaryAttendance> {
     const [newAttendance] = await db.insert(temporaryAttendance).values(attendance).returning();
     return newAttendance;
@@ -324,11 +591,24 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(salaryRecords.salaryYear), desc(salaryRecords.salaryMonth));
   }
 
-  async getAllSalaryRecordsPage(page: number, limit: number): Promise<{ rows: SalaryRecord[]; total: number }> {
+  async getAllSalaryRecordsPage(page: number, limit: number, filters?: SalaryRecordPageFilters): Promise<{ rows: SalaryRecord[]; total: number }> {
     const offset = (page - 1) * limit;
+    const whereClause = buildSalaryRecordPageWhere(filters);
+
+    if (whereClause) {
+      const [rows, [{ count }]] = await Promise.all([
+        db.select().from(salaryRecords)
+          .where(whereClause)
+          .orderBy(desc(salaryRecords.salaryYear), desc(salaryRecords.salaryMonth), desc(salaryRecords.id))
+          .limit(limit).offset(offset),
+        db.select({ count: drizzleSql<number>`count(*)::int` }).from(salaryRecords).where(whereClause)
+      ]);
+      return { rows, total: count };
+    }
+
     const [rows, [{ count }]] = await Promise.all([
       db.select().from(salaryRecords)
-        .orderBy(desc(salaryRecords.salaryYear), desc(salaryRecords.salaryMonth))
+        .orderBy(desc(salaryRecords.salaryYear), desc(salaryRecords.salaryMonth), desc(salaryRecords.id))
         .limit(limit).offset(offset),
       db.select({ count: drizzleSql<number>`count(*)::int` }).from(salaryRecords)
     ]);
@@ -348,6 +628,33 @@ export class DatabaseStorage implements IStorage {
         and(
           eq(salaryRecords.salaryYear, year),
           eq(salaryRecords.salaryMonth, month)
+        )
+      );
+    return record;
+  }
+
+  async getSalaryRecordsByYearMonth(year: number, month: number): Promise<SalaryRecord[]> {
+    return db
+      .select()
+      .from(salaryRecords)
+      .where(
+        and(
+          eq(salaryRecords.salaryYear, year),
+          eq(salaryRecords.salaryMonth, month)
+        )
+      )
+      .orderBy(desc(salaryRecords.id));
+  }
+
+  async getSalaryRecordByYearMonthEmployee(year: number, month: number, employeeId: number): Promise<SalaryRecord | undefined> {
+    const [record] = await db
+      .select()
+      .from(salaryRecords)
+      .where(
+        and(
+          eq(salaryRecords.salaryYear, year),
+          eq(salaryRecords.salaryMonth, month),
+          eq(salaryRecords.employeeId, employeeId)
         )
       );
     return record;

@@ -24,8 +24,18 @@ import { debugLog } from "@/lib/debug";
 export default function HistoryPage() {
   const { toast } = useToast();
   const { isAdmin } = useAdmin();
+  const [searchTerm, setSearchTerm] = useState<string>("");
+  const [yearFilter, setYearFilter] = useState<string>("all");
+  const [employeeFilter, setEmployeeFilter] = useState<string>("all");
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const recordsPerPage = 10;
+  const selectedSalaryYear =
+    yearFilter === "all" ? undefined : Number.parseInt(yearFilter, 10);
+  const selectedEmployeeId =
+    employeeFilter === "all" ? undefined : Number.parseInt(employeeFilter, 10);
   const {
     salaryRecords,
+    salaryPagination,
     isLoading,
     refetch,
     deleteSalaryRecord,
@@ -33,14 +43,16 @@ export default function HistoryPage() {
     exportSalaryRecordAsCsv,
     isDeletingRecord,
     isUpdatingRecord,
-  } = useHistoryData();
+  } = useHistoryData({
+    page: currentPage,
+    limit: recordsPerPage,
+    search: searchTerm,
+    salaryYear: Number.isFinite(selectedSalaryYear) ? selectedSalaryYear : undefined,
+    employeeId: Number.isFinite(selectedEmployeeId) ? selectedEmployeeId : undefined,
+  });
 
   const { activeEmployees, isLoading: isLoadingEmployees } = useEmployees();
 
-  const [searchTerm, setSearchTerm] = useState<string>("");
-  const [yearFilter, setYearFilter] = useState<string>("all");
-  const [employeeFilter, setEmployeeFilter] = useState<string>("all");
-  const [currentPage, setCurrentPage] = useState<number>(1);
   const [recordToDelete, setRecordToDelete] = useState<number | null>(null);
   const [recordToEdit, setRecordToEdit] = useState<any>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState<boolean>(false);
@@ -52,65 +64,23 @@ export default function HistoryPage() {
 
   // Available years for filtering
   const availableYears = Array.from(
-    new Set(salaryRecords.map((record) => record.salaryYear)),
+    new Set([
+      ...salaryRecords.map((record) => record.salaryYear),
+      ...(Number.isFinite(selectedSalaryYear) ? [selectedSalaryYear as number] : []),
+    ]),
   ).sort((a, b) => b - a);
 
-  // 從考勤數據中提取員工ID
-  const getEmployeeIdsFromAttendanceData = (
-    attendanceData: any[],
-  ): number[] => {
-    if (!attendanceData || !Array.isArray(attendanceData)) return [];
-
-    // 從考勤數據中提取所有員工ID
-    return Array.from(
-      new Set(
-        attendanceData
-          .map((entry) => entry.employeeId)
-          .filter((id) => id !== undefined),
-      ),
-    );
-  };
-
-  // Filter records based on search term, year, and employee
-  const filteredRecords = salaryRecords.filter((record) => {
-    const matchesSearch =
-      searchTerm === "" ||
-      `${record.salaryYear}年${record.salaryMonth}月`.includes(searchTerm);
-
-    const matchesYear =
-      yearFilter === "all" || record.salaryYear.toString() === yearFilter;
-
-    // 員工篩選邏輯 - 改進以處理直接在薪資記錄上的員工ID
-    const matchesEmployee =
-      employeeFilter === "all" ||
-      // 檢查薪資記錄是否直接包含員工ID
-      (record as any).employeeId === parseInt(employeeFilter) ||
-      // 如果沒有，則檢查考勤數據中的員工ID
-      (record.attendanceData &&
-        Array.isArray(record.attendanceData) &&
-        getEmployeeIdsFromAttendanceData(record.attendanceData).includes(
-          parseInt(employeeFilter),
-        ));
-
-    return matchesSearch && matchesYear && matchesEmployee;
-  });
-
-  // Pagination
-  const recordsPerPage = 10;
-  const totalPages = Math.max(
-    1,
-    Math.ceil(filteredRecords.length / recordsPerPage),
-  );
+  // Pagination is handled by the salary records API so filtered datasets are not truncated to the first page.
+  const filteredRecords = salaryRecords;
+  const totalRecordCount = salaryPagination.total;
+  const totalPages = Math.max(1, salaryPagination.pages || 1);
   const effectiveCurrentPage = Math.min(currentPage, totalPages);
   const startIndex = (effectiveCurrentPage - 1) * recordsPerPage;
-  const paginatedRecords = filteredRecords.slice(
-    startIndex,
-    startIndex + recordsPerPage,
-  );
-  const hasFilteredRecords = filteredRecords.length > 0;
+  const paginatedRecords = filteredRecords;
+  const hasFilteredRecords = totalRecordCount > 0;
   const visibleStart = hasFilteredRecords ? startIndex + 1 : 0;
   const visibleEnd = hasFilteredRecords
-    ? Math.min(startIndex + recordsPerPage, filteredRecords.length)
+    ? Math.min(startIndex + paginatedRecords.length, totalRecordCount)
     : 0;
   const pageWindowStart = Math.max(
     1,
@@ -124,6 +94,10 @@ export default function HistoryPage() {
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, yearFilter, employeeFilter]);
+
+  useEffect(() => {
+    setSelectedRecordIds([]);
+  }, [currentPage, searchTerm, yearFilter, employeeFilter]);
 
   useEffect(() => {
     setCurrentPage((prev) => Math.min(prev, totalPages));
@@ -270,8 +244,8 @@ export default function HistoryPage() {
             "日期,上班時間,下班時間,工作小時,第一階段加班,第二階段加班,加班費\n";
 
           // 詳細薪資資料CSV (完整版)
-          let fullRecordCsvContent = `薪資年份,薪資月份,基本底薪,住宿津貼,福利津貼,加班總時數OT1,加班總時數OT2,加班總費用,假日天數,假日單日薪資,假日總薪資,總薪資,總扣除額,實領金額\n`;
-          fullRecordCsvContent += `${record.salaryYear},${record.salaryMonth},${record.baseSalary},${record.housingAllowance || 0},${record.welfareAllowance || 0},${record.totalOT1Hours},${record.totalOT2Hours},${record.totalOvertimePay},${record.holidayDays},${record.holidayDailySalary},${record.totalHolidayPay},${record.grossSalary},${record.totalDeductions},${record.netSalary}\n\n`;
+          let fullRecordCsvContent = `員工ID,員工姓名,薪資年份,薪資月份,基本底薪,住宿津貼,福利津貼,加班總時數OT1,加班總時數OT2,加班總費用,假日天數,假日單日薪資,假日總薪資,總薪資,總扣除額,實領金額\n`;
+          fullRecordCsvContent += `${record.employeeId || ""},${record.employeeName || ""},${record.salaryYear},${record.salaryMonth},${record.baseSalary},${record.housingAllowance || 0},${record.welfareAllowance || 0},${record.totalOT1Hours},${record.totalOT2Hours},${record.totalOvertimePay},${record.holidayDays},${record.holidayDailySalary},${record.totalHolidayPay},${record.grossSalary},${record.totalDeductions},${record.netSalary}\n\n`;
 
           // 添加扣除項
           fullRecordCsvContent += "扣除項目,金額\n";
@@ -436,7 +410,7 @@ export default function HistoryPage() {
           <div className="page-header-copy">
             <h2 className="page-title">歷史薪資紀錄</h2>
             <p className="page-subtitle">
-              目前共有 {filteredRecords.length} 筆符合條件的薪資紀錄。
+              目前共有 {totalRecordCount} 筆符合條件的薪資紀錄。
             </p>
           </div>
 
@@ -595,7 +569,7 @@ export default function HistoryPage() {
       <section className="page-panel-muted">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm text-gray-500">
-            顯示 {visibleStart} 至 {visibleEnd} 筆，共 {filteredRecords.length}{" "}
+            顯示 {visibleStart} 至 {visibleEnd} 筆，共 {totalRecordCount}{" "}
             筆紀錄
           </div>
 

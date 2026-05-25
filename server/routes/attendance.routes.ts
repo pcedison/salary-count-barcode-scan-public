@@ -21,6 +21,35 @@ function parseBoundedPagination(queryPage: unknown, queryLimit: unknown) {
   return { page, limit };
 }
 
+function parseOptionalPositiveInteger(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '' || value === 'all') {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function parseOptionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed !== 'all' ? trimmed : undefined;
+}
+
+function parseAttendanceFilters(query: Record<string, unknown>) {
+  const filters = {
+    employeeId: parseOptionalPositiveInteger(query.employeeId),
+    date: parseOptionalString(query.date),
+    month: parseOptionalString(query.month),
+    search: parseOptionalString(query.search)
+  };
+
+  return Object.values(filters).some(value => value !== undefined) ? filters : undefined;
+}
+
 function toPublicTodayAttendanceRecord(
   record: Awaited<ReturnType<typeof storage.getTemporaryAttendanceByDate>>[number],
   employeeDirectory: Map<number, { name: string; department: string | null }>
@@ -45,7 +74,10 @@ export function registerAttendanceRoutes(app: Express): void {
 
     try {
       const { page, limit } = parseBoundedPagination(req.query.page, req.query.limit);
-      const { rows, total } = await storage.getTemporaryAttendancePage(page, limit);
+      const filters = parseAttendanceFilters(req.query);
+      const { rows, total } = filters
+        ? await storage.getTemporaryAttendancePage(page, limit, filters)
+        : await storage.getTemporaryAttendancePage(page, limit);
       return res.json({ data: rows, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
     } catch (err) {
       log.error('Failed to load attendance records', err);

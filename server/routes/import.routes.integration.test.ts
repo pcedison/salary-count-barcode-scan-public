@@ -5,7 +5,8 @@ import { TEST_ADMIN_HEADER, setupTestAdminSession } from '../test-utils/admin-te
 
 const importState = vi.hoisted(() => ({
   attendanceInserts: [] as Array<Record<string, unknown>>,
-  existingSalaryRecord: null as null | { id: number },
+  existingSalaryRecord: null as null | { id: number; employeeId?: number; employeeName?: string },
+  existingSalaryRecords: [] as Array<{ id: number; employeeId?: number; employeeName?: string }>,
   updatedSalaryPayload: null as null | Record<string, unknown>,
   createdSalaryPayload: null as null | Record<string, unknown>
 }));
@@ -20,6 +21,22 @@ const storageMock = vi.hoisted(() => ({
     };
   }),
   getSalaryRecordByYearMonth: vi.fn(async () => importState.existingSalaryRecord),
+  getSalaryRecordsByYearMonth: vi.fn(async () =>
+    importState.existingSalaryRecords.length > 0
+      ? importState.existingSalaryRecords
+      : importState.existingSalaryRecord
+        ? [importState.existingSalaryRecord]
+        : []
+  ),
+  getSalaryRecordByYearMonthEmployee: vi.fn(async (_year: number, _month: number, employeeId: number) =>
+    importState.existingSalaryRecords.find((record) => record.employeeId === employeeId) ||
+    (
+      importState.existingSalaryRecord &&
+      importState.existingSalaryRecord.employeeId === employeeId
+        ? importState.existingSalaryRecord
+        : undefined
+    )
+  ),
   updateSalaryRecord: vi.fn(async (id: number, payload: Record<string, unknown>) => {
     importState.updatedSalaryPayload = payload;
     return {
@@ -68,6 +85,7 @@ beforeAll(async () => {
 beforeEach(() => {
   importState.attendanceInserts = [];
   importState.existingSalaryRecord = null;
+  importState.existingSalaryRecords = [];
   importState.updatedSalaryPayload = null;
   importState.createdSalaryPayload = null;
   vi.clearAllMocks();
@@ -215,6 +233,100 @@ describe('import routes integration', () => {
           }
         ]
       });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('matches salary imports by employee id when the same month has multiple employees', async () => {
+    importState.existingSalaryRecords = [
+      { id: 7, employeeId: 5, employeeName: 'Employee Alpha' },
+      { id: 8, employeeId: 9, employeeName: 'Employee Beta' }
+    ];
+    const server = await createJsonTestServer(registerImportRoutes, {
+      setupApp: async (app) => {
+        setupTestAdminSession(app);
+      }
+    });
+
+    try {
+      const result = await jsonRequest<{
+        success: boolean;
+        record: { id: number; employeeId: number };
+      }>(server.baseUrl, '/api/admin/import/salary-record', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          [TEST_ADMIN_HEADER]: 'true'
+        },
+        body: JSON.stringify({
+          csvContent: [
+            '員工ID,員工姓名,薪資年份,薪資月份,基本底薪,福利津貼,加班總時數OT1,加班總時數OT2,加班總費用,假日天數,假日總薪資,總薪資,總扣除額,實領金額',
+            '9,Employee Beta,2026,3,30000,500,10,5,2500,2,2000,35000,1200,33800',
+            '扣除項目',
+            '勞保費,300',
+            '考勤詳細記錄',
+            '日期,上班時間,下班時間,是否假日',
+            '2026-03-01,08:00,17:00,false'
+          ].join('\n')
+        })
+      });
+
+      expect(result.response.status).toBe(200);
+      expect(storageMock.getSalaryRecordByYearMonthEmployee).toHaveBeenCalledWith(2026, 3, 9);
+      expect(storageMock.updateSalaryRecord).toHaveBeenCalledWith(
+        8,
+        expect.objectContaining({
+          employeeId: 9,
+          employeeName: 'Employee Beta'
+        })
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects ambiguous salary imports when employee identity is missing for a shared month', async () => {
+    importState.existingSalaryRecords = [
+      { id: 7, employeeId: 5, employeeName: 'Employee Alpha' },
+      { id: 8, employeeId: 9, employeeName: 'Employee Beta' }
+    ];
+    const server = await createJsonTestServer(registerImportRoutes, {
+      setupApp: async (app) => {
+        setupTestAdminSession(app);
+      }
+    });
+
+    try {
+      const result = await jsonRequest<{
+        success: boolean;
+        code: string;
+      }>(server.baseUrl, '/api/admin/import/salary-record', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          [TEST_ADMIN_HEADER]: 'true'
+        },
+        body: JSON.stringify({
+          csvContent: [
+            '薪資年份,薪資月份,基本底薪,福利津貼,加班總時數OT1,加班總時數OT2,加班總費用,假日天數,假日總薪資,總薪資,總扣除額,實領金額',
+            '2026,3,30000,500,10,5,2500,2,2000,35000,1200,33800',
+            '扣除項目',
+            '勞保費,300',
+            '考勤詳細記錄',
+            '日期,上班時間,下班時間,是否假日',
+            '2026-03-01,08:00,17:00,false'
+          ].join('\n')
+        })
+      });
+
+      expect(result.response.status).toBe(409);
+      expect(result.body).toMatchObject({
+        success: false,
+        code: 'AMBIGUOUS_SALARY_IMPORT'
+      });
+      expect(storageMock.updateSalaryRecord).not.toHaveBeenCalled();
+      expect(storageMock.createSalaryRecord).not.toHaveBeenCalled();
     } finally {
       await server.close();
     }

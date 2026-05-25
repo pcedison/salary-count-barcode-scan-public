@@ -81,6 +81,56 @@ interface SalaryResult {
   };
 }
 
+const ATTENDANCE_PAGE_LIMIT = 1000;
+
+async function fetchAttendanceJson(path: string) {
+  const response = await fetch(path, {
+    credentials: 'include'
+  });
+
+  if (!response.ok) {
+    const text = (await response.text()) || response.statusText;
+    throw new Error(`${response.status}: ${text}`);
+  }
+
+  return response.json();
+}
+
+async function fetchAllAttendancePages(): Promise<PaginatedPayload<AttendanceRecordLike>> {
+  const records: AttendanceRecordLike[] = [];
+  let page = 1;
+  let total = 0;
+  let pages = 1;
+
+  do {
+    const payload = (await fetchAttendanceJson(
+      `/api/attendance?page=${page}&limit=${ATTENDANCE_PAGE_LIMIT}`
+    )) as AttendanceRecordLike[] | PaginatedPayload<AttendanceRecordLike>;
+    const pageRecords = extractListData(payload);
+    records.push(...pageRecords);
+
+    if (!Array.isArray(payload) && payload.pagination) {
+      total = payload.pagination.total;
+      pages = payload.pagination.pages;
+    } else {
+      total = records.length;
+      pages = 1;
+    }
+
+    page += 1;
+  } while (page <= pages);
+
+  return {
+    data: records,
+    pagination: {
+      page: 1,
+      limit: records.length || ATTENDANCE_PAGE_LIMIT,
+      total,
+      pages: records.length > 0 ? 1 : 0
+    }
+  };
+}
+
 function toMonthKey(dateValue: string): string | null {
   if (!dateValue) return null;
 
@@ -107,12 +157,14 @@ export function useAttendanceData() {
   );
 
   // Fetch attendance data.
-  const attendanceQueryKey = isAdmin ? '/api/attendance?limit=1000' : '/api/attendance/today';
+  const attendanceQueryKey = isAdmin ? '/api/attendance?allPages=true' : '/api/attendance/today';
   const attendanceQueryFn = useMemo(
     () =>
-      getQueryFn<AttendanceRecordLike[] | PaginatedPayload<AttendanceRecordLike> | null>({
-        on401: isAdmin ? 'throw' : 'returnNull',
-      }),
+      isAdmin
+        ? async () => fetchAllAttendancePages()
+        : getQueryFn<AttendanceRecordLike[] | PaginatedPayload<AttendanceRecordLike> | null>({
+            on401: 'returnNull',
+          }),
     [isAdmin]
   );
 

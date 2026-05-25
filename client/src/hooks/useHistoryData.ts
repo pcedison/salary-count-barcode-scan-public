@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -39,6 +39,15 @@ interface SalaryRecord {
   createdAt: string;
 }
 
+interface UseHistoryDataOptions {
+  page?: number;
+  limit?: number;
+  search?: string;
+  salaryYear?: number;
+  salaryMonth?: number;
+  employeeId?: number;
+}
+
 function safeNumber(value: unknown): number {
   if (value === null || value === undefined) {
     return 0;
@@ -48,11 +57,53 @@ function safeNumber(value: unknown): number {
   return Number.isNaN(numericValue) ? 0 : numericValue;
 }
 
-export function useHistoryData() {
+function buildSalaryRecordsPath(options: UseHistoryDataOptions): string {
+  const params = new URLSearchParams();
+
+  if (options.page) params.set('page', String(options.page));
+  if (options.limit) params.set('limit', String(options.limit));
+  if (options.salaryYear) params.set('salaryYear', String(options.salaryYear));
+  if (options.salaryMonth) params.set('salaryMonth', String(options.salaryMonth));
+  if (options.employeeId) params.set('employeeId', String(options.employeeId));
+  if (options.search?.trim()) params.set('search', options.search.trim());
+
+  const queryString = params.toString();
+  return queryString ? `/api/salary-records?${queryString}` : '/api/salary-records';
+}
+
+function getSalaryRecordPagination(payload: SalaryRecord[] | PaginatedPayload<SalaryRecord> | undefined) {
+  if (payload && !Array.isArray(payload) && payload.pagination) {
+    return payload.pagination;
+  }
+
+  const total = Array.isArray(payload) ? payload.length : 0;
+  return {
+    page: 1,
+    limit: total || 50,
+    total,
+    pages: total > 0 ? 1 : 0
+  };
+}
+
+function invalidateSalaryRecordQueries(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({
+    predicate: (query) => String(query.queryKey[0] ?? '').startsWith('/api/salary-records')
+  });
+}
+
+export function useHistoryData(options: UseHistoryDataOptions = {}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { isAdmin } = useAdmin();
   const { settings } = useSettings();
+  const salaryRecordsPath = useMemo(() => buildSalaryRecordsPath(options), [
+    options.employeeId,
+    options.limit,
+    options.page,
+    options.salaryMonth,
+    options.salaryYear,
+    options.search
+  ]);
 
   const {
     data: rawSalaryRecords = [],
@@ -60,11 +111,12 @@ export function useHistoryData() {
     error,
     refetch
   } = useQuery<SalaryRecord[] | PaginatedPayload<SalaryRecord>>({
-    queryKey: ['/api/salary-records'],
+    queryKey: [salaryRecordsPath],
     enabled: isAdmin
   });
 
   const salaryRecords = extractListData(rawSalaryRecords);
+  const salaryPagination = getSalaryRecordPagination(rawSalaryRecords);
 
   const deleteSalaryRecordMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -72,7 +124,7 @@ export function useHistoryData() {
       return id;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/salary-records'] });
+      invalidateSalaryRecordQueries(queryClient);
       toast({
         title: 'Delete successful',
         description: 'The salary record was deleted.',
@@ -113,7 +165,7 @@ export function useHistoryData() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/salary-records'] });
+      invalidateSalaryRecordQueries(queryClient);
       debugLog('Salary record updated');
     },
     onError: (mutationError) => {
@@ -224,6 +276,7 @@ export function useHistoryData() {
 
   return {
     salaryRecords,
+    salaryPagination,
     isLoading,
     refetch,
     getSalaryRecordById,

@@ -257,6 +257,45 @@ describe('salary routes integration', () => {
     }
   });
 
+  it('passes salary record filters to storage for server-side pagination', async () => {
+    const server = await createJsonTestServer(registerSalaryRoutes, {
+      setupApp: async (app) => {
+        setupTestAdminSession(app);
+      }
+    });
+
+    try {
+      const headers = {
+        [TEST_ADMIN_HEADER]: 'true'
+      };
+
+      const result = await jsonRequest<{
+        data: Array<Record<string, unknown>>;
+        pagination: { page: number; limit: number; total: number; pages: number };
+      }>(
+        server.baseUrl,
+        '/api/salary-records?page=2&limit=25&salaryYear=2026&salaryMonth=3&employeeId=5&search=Alpha',
+        { headers }
+      );
+
+      expect(result.response.status).toBe(200);
+      expect(result.body?.pagination).toEqual({
+        page: 2,
+        limit: 25,
+        total: 1,
+        pages: 1
+      });
+      expect(storageMock.getAllSalaryRecordsPage).toHaveBeenCalledWith(2, 25, {
+        employeeId: 5,
+        salaryYear: 2026,
+        salaryMonth: 3,
+        search: 'Alpha'
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('does not expose the salary calculation debug route in production mode', async () => {
     const originalNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';

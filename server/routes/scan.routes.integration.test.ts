@@ -34,6 +34,73 @@ const storageMock = vi.hoisted(() => ({
         normalizeDateToSlash(record.date) === normalizeDateToSlash(date)
     )
   ),
+  upsertTemporaryAttendanceScan: vi.fn(async ({
+    employeeId,
+    dateKey,
+    time,
+    isHoliday,
+    expectedAction
+  }: {
+    employeeId: number;
+    dateKey: string;
+    time: string;
+    isHoliday: boolean;
+    expectedAction: 'clockIn' | 'clockOut';
+  }) => {
+    const latestIncompleteRecord = scanState.attendanceRecords
+      .filter(
+        (record) =>
+          record.employeeId === employeeId &&
+          normalizeDateToSlash(record.date) === normalizeDateToSlash(dateKey) &&
+          (!record.clockOut || String(record.clockOut).trim() === '')
+      )
+      .sort((left, right) => right.id - left.id)[0];
+    const action = latestIncompleteRecord ? 'clockOut' : 'clockIn';
+
+    if (action !== expectedAction) {
+      return {
+        duplicate: true,
+        action,
+        attendance: latestIncompleteRecord
+      };
+    }
+
+    if (latestIncompleteRecord) {
+      const index = scanState.attendanceRecords.findIndex((record) => record.id === latestIncompleteRecord.id);
+      scanState.attendanceRecords[index] = {
+        ...scanState.attendanceRecords[index],
+        clockOut: time
+      };
+
+      return {
+        duplicate: false,
+        action,
+        attendance: scanState.attendanceRecords[index]
+      };
+    }
+
+    const record = {
+      id: scanState.nextAttendanceId,
+      employeeId,
+      date: dateKey,
+      clockIn: time,
+      clockOut: '',
+      isHoliday,
+      isBarcodeScanned: true,
+      holidayId: null,
+      holidayType: null,
+      createdAt: new Date(scanState.currentTimestamp)
+    };
+
+    scanState.nextAttendanceId += 1;
+    scanState.attendanceRecords.push(record);
+
+    return {
+      duplicate: false,
+      action,
+      attendance: record
+    };
+  }),
   updateTemporaryAttendance: vi.fn(async (id: number, updates: Record<string, unknown>) => {
     const index = scanState.attendanceRecords.findIndex((record) => record.id === id);
     if (index === -1) {
@@ -199,6 +266,40 @@ describe('scan routes integration', () => {
         employeeId: 5,
         clockIn: '08:30',
         clockOut: '17:45'
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('returns duplicate_scan when the locked persistence layer detects a concurrent state change', async () => {
+    storageMock.upsertTemporaryAttendanceScan.mockResolvedValueOnce({
+      duplicate: true,
+      action: 'clockOut',
+      attendance: undefined
+    });
+
+    const server = await createJsonTestServer(registerScanRoutes);
+
+    try {
+      const result = await jsonRequest<{
+        error: string;
+        code: string;
+        message: string;
+      }>(server.baseUrl, '/api/barcode-scan', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          idNumber: 'A123456789'
+        })
+      });
+
+      expect(result.response.status).toBe(429);
+      expect(result.body).toMatchObject({
+        error: 'duplicate_scan',
+        code: 'DUPLICATE_SCAN'
       });
     } finally {
       await server.close();
