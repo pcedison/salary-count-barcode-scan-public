@@ -1,8 +1,8 @@
 # Legacy Scripts
 
-These scripts were moved out of the repository root during the public-repo cleanup pass.
+Executable legacy deployment and push scripts were removed during the production hardening pass.
 
-They are retained only for historical or manual-reference purposes and are not part of the current documented deployment or release workflow.
+This directory is retained only as a historical marker. Do not reintroduce token-bearing push scripts, ad hoc deploy scripts, or local environment mutation scripts here.
 
 Active release and deployment guidance now lives in:
 

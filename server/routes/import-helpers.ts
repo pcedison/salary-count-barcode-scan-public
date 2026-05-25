@@ -20,6 +20,8 @@ export interface AttendanceImportRow {
 export interface SalaryRecordImportPayload {
   salaryYear: number;
   salaryMonth: number;
+  employeeId?: number;
+  employeeName?: string;
   baseSalary: number;
   housingAllowance: number;
   welfareAllowance: number;
@@ -146,6 +148,10 @@ function findRequiredColumnIndex(headers: string[], fieldName: string): number {
   return index;
 }
 
+function findOptionalColumnIndex(headers: string[], fieldNames: string[]): number {
+  return headers.findIndex(header => fieldNames.includes(header));
+}
+
 export function parseAttendanceImportCsv(csvContent: string): {
   rows: AttendanceImportRow[];
   result: Required<Pick<ImportResult, 'success' | 'totalRecords' | 'successCount' | 'failCount' | 'errors'>>;
@@ -223,9 +229,27 @@ export function parseSalaryImportCsv(csvContent: string): SalaryRecordImportPayl
   const yearIndex = findRequiredColumnIndex(headers, '薪資年份');
   const monthIndex = findRequiredColumnIndex(headers, '薪資月份');
   const baseSalaryIndex = findRequiredColumnIndex(headers, '基本底薪');
+  const employeeIdIndex = findOptionalColumnIndex(headers, [
+    '員工ID',
+    '員工編號',
+    'employeeId',
+    'employee_id',
+    'Employee ID'
+  ]);
+  const employeeNameIndex = findOptionalColumnIndex(headers, [
+    '員工姓名',
+    '員工',
+    'employeeName',
+    'employee_name',
+    'Employee'
+  ]);
 
   const year = parseRequiredInteger(dataRow[yearIndex], '薪資年份');
   const month = parseRequiredInteger(dataRow[monthIndex], '薪資月份');
+  const parsedEmployeeId =
+    employeeIdIndex !== -1 ? parseOptionalInteger(dataRow[employeeIdIndex]) : 0;
+  const parsedEmployeeName =
+    employeeNameIndex !== -1 ? dataRow[employeeNameIndex]?.trim() : undefined;
 
   let attendanceHeaderIndex = -1;
   for (let index = 0; index < lines.length; index += 1) {
@@ -322,6 +346,8 @@ export function parseSalaryImportCsv(csvContent: string): SalaryRecordImportPayl
   return {
     salaryYear: year,
     salaryMonth: month,
+    ...(parsedEmployeeId > 0 ? { employeeId: parsedEmployeeId } : {}),
+    ...(parsedEmployeeName ? { employeeName: parsedEmployeeName } : {}),
     baseSalary: parseOptionalInteger(dataRow[baseSalaryIndex]),
     housingAllowance:
       housingAllowanceIndex !== -1 ? parseOptionalInteger(dataRow[housingAllowanceIndex]) : 0,

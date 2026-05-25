@@ -13,7 +13,7 @@ import {
   hasActiveScanAccessSession,
   hasAdminSession
 } from '../session';
-import { storage } from '../storage';
+import { storage, type AttendanceScanAction } from '../storage';
 import { maskEmployeeIdentityForLog, normalizeEmployeeIdentity } from '../utils/employeeIdentity';
 import { createLogger } from '../utils/logger';
 
@@ -52,6 +52,13 @@ type ScanUnlockTokenPayload = {
   nonce: string;
   kioskChallenge: string;
 };
+
+class DuplicateScanStateError extends Error {
+  constructor() {
+    super('Scan state changed while another scan was being persisted.');
+    this.name = 'DuplicateScanStateError';
+  }
+}
 
 const usedScanUnlockTokenNonces = new Map<string, number>();
 
@@ -256,6 +263,14 @@ function respondEmployeeInactive(res: Response) {
   });
 }
 
+function respondDuplicateScan(res: Response) {
+  return res.status(429).json({
+    error: 'duplicate_scan',
+    code: 'DUPLICATE_SCAN',
+    message: 'Too soon after last scan'
+  });
+}
+
 export function registerScanRoutes(app: Express): void {
   // Per-server dedup map: keeps rapid double-scan protection scoped to each server instance
   // (ensures test isolation when registerScanRoutes is called multiple times in tests)
@@ -333,14 +348,8 @@ export function registerScanRoutes(app: Express): void {
     return buildScanSuccessResult(employee, latestRecord, new Date().toISOString());
   }
 
-  // NOTE: rapid double-scan protection missing — advisory lock should be added here.
-  // The upsert below (check existing → create/update) is not atomic across concurrent
-  // requests for the same employee.  To prevent duplicate records from a fast double-scan
-  // each call should acquire a per-employee advisory lock before the read-then-write:
-  //   await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${employee.id}::text))`);
-  // This requires wrapping the body in a db.transaction() call.
   /** Look up the pending scan action without performing the scan. Used to key the dedup check. */
-  async function getPendingAction(employeeId: number): Promise<{ action: 'clockIn' | 'clockOut'; latestIncompleteRecord: TemporaryAttendance | undefined }> {
+  async function getPendingAction(employeeId: number): Promise<{ action: AttendanceScanAction; latestIncompleteRecord: TemporaryAttendance | undefined }> {
     const { dateKey } = getTaiwanDateTimeParts();
     const existingRecords = filterAttendanceByDate(
       await storage.getTemporaryAttendanceByEmployeeAndDate(employeeId, dateKey),
@@ -352,42 +361,24 @@ export function registerScanRoutes(app: Express): void {
 
   async function upsertAttendanceScan(
     employee: Employee,
-    prefetched?: { latestIncompleteRecord: TemporaryAttendance | undefined }
+    expectedAction: AttendanceScanAction
   ): Promise<ScanSuccessResult> {
     const { dateKey, time, timestamp } = getTaiwanDateTimeParts();
     const isHolidayRecord = await isHoliday(dateKey);
 
-    let latestIncompleteRecord: TemporaryAttendance | undefined;
-    if (prefetched !== undefined) {
-      latestIncompleteRecord = prefetched.latestIncompleteRecord;
-    } else {
-      const existingRecords = filterAttendanceByDate(
-        await storage.getTemporaryAttendanceByEmployeeAndDate(employee.id, dateKey),
-        dateKey
-      );
-      latestIncompleteRecord = getLatestIncompleteAttendanceRecord(existingRecords);
+    const upsertResult = await storage.upsertTemporaryAttendanceScan({
+      employeeId: employee.id,
+      dateKey,
+      time,
+      isHoliday: isHolidayRecord,
+      expectedAction
+    });
+
+    if (upsertResult.duplicate) {
+      throw new DuplicateScanStateError();
     }
 
-    let attendanceRecord: TemporaryAttendance | undefined;
-
-    if (latestIncompleteRecord) {
-      attendanceRecord = await storage.updateTemporaryAttendance(latestIncompleteRecord.id, {
-        clockOut: time
-      });
-    } else {
-      attendanceRecord = await storage.createTemporaryAttendance({
-        employeeId: employee.id,
-        date: dateKey,
-        clockIn: time,
-        clockOut: '',
-        isHoliday: isHolidayRecord,
-        isBarcodeScanned: true
-      });
-    }
-
-    if (!attendanceRecord) {
-      throw new Error('Unable to persist scan attendance record');
-    }
+    const attendanceRecord = upsertResult.attendance;
 
     const result = buildScanSuccessResult(employee, attendanceRecord, timestamp);
     lastScanResult = result;
@@ -559,11 +550,11 @@ export function registerScanRoutes(app: Express): void {
 
       // Determine pending action (clockIn/clockOut) to key the dedup check correctly.
       // This ensures clock-in → clock-out transitions are not blocked by the dedup window.
-      const { action: pendingAction, latestIncompleteRecord } = await getPendingAction(employee.id);
+      const { action: pendingAction } = await getPendingAction(employee.id);
       const scanKey = `${employee.id}-${pendingAction}`;
       const lastScan = recentScans.get(scanKey);
       if (lastScan && Date.now() - lastScan < SCAN_DEDUP_WINDOW_MS) {
-        return res.status(429).json({ error: 'duplicate_scan', message: 'Too soon after last scan' });
+        return respondDuplicateScan(res);
       }
       recentScans.set(scanKey, Date.now());
       // Clean up entries older than the dedup window to prevent unbounded growth
@@ -573,9 +564,12 @@ export function registerScanRoutes(app: Express): void {
         }
       }
 
-      const result = await upsertAttendanceScan(employee, { latestIncompleteRecord });
+      const result = await upsertAttendanceScan(employee, pendingAction);
       return res.json(result);
     } catch (err) {
+      if (err instanceof DuplicateScanStateError) {
+        return respondDuplicateScan(res);
+      }
       log.error('Barcode scan request failed:', err);
       return handleRouteError(err, res);
     }
@@ -618,11 +612,11 @@ export function registerScanRoutes(app: Express): void {
         return respondEmployeeInactive(res);
       }
 
-      const { action: pendingActionRpi, latestIncompleteRecord: latestRpi } = await getPendingAction(employee.id);
+      const { action: pendingActionRpi } = await getPendingAction(employee.id);
       const scanKeyRpi = `${employee.id}-${pendingActionRpi}`;
       const lastScanRpi = recentScans.get(scanKeyRpi);
       if (lastScanRpi && Date.now() - lastScanRpi < SCAN_DEDUP_WINDOW_MS) {
-        return res.status(429).json({ error: 'duplicate_scan', message: 'Too soon after last scan' });
+        return respondDuplicateScan(res);
       }
       recentScans.set(scanKeyRpi, Date.now());
       // Clean up entries older than the dedup window to prevent unbounded growth
@@ -632,7 +626,7 @@ export function registerScanRoutes(app: Express): void {
         }
       }
 
-      const result = await upsertAttendanceScan(employee, { latestIncompleteRecord: latestRpi });
+      const result = await upsertAttendanceScan(employee, pendingActionRpi);
       return res.json({
         success: true,
         code: 'SUCCESS',
@@ -643,6 +637,9 @@ export function registerScanRoutes(app: Express): void {
         isHoliday: result.attendance.isHoliday ?? false
       });
     } catch (err) {
+      if (err instanceof DuplicateScanStateError) {
+        return respondDuplicateScan(res);
+      }
       log.error('Raspberry Pi scan request failed:', err);
       return handleRouteError(err, res);
     }

@@ -8,11 +8,60 @@ import { createLogger } from '../utils/logger';
 import {
   parseAttendanceImportCsv,
   parseSalaryImportCsv,
+  type SalaryRecordImportPayload,
   toImportedHistoryAttendanceData
 } from './import-helpers';
 import { handleRouteError } from './route-helpers';
 
 const log = createLogger('import');
+
+class AmbiguousSalaryImportError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AmbiguousSalaryImportError';
+  }
+}
+
+async function findExistingSalaryImportRecord(salaryRecord: SalaryRecordImportPayload) {
+  if (salaryRecord.employeeId) {
+    return storage.getSalaryRecordByYearMonthEmployee(
+      salaryRecord.salaryYear,
+      salaryRecord.salaryMonth,
+      salaryRecord.employeeId
+    );
+  }
+
+  const recordsForMonth = await storage.getSalaryRecordsByYearMonth(
+    salaryRecord.salaryYear,
+    salaryRecord.salaryMonth
+  );
+
+  if (salaryRecord.employeeName) {
+    const matchingRecords = recordsForMonth.filter(
+      record => record.employeeName?.trim() === salaryRecord.employeeName
+    );
+
+    if (matchingRecords.length === 1) {
+      return matchingRecords[0];
+    }
+
+    if (matchingRecords.length > 1) {
+      throw new AmbiguousSalaryImportError(
+        '找到多筆相同員工姓名的薪資記錄，請在 CSV 加入唯一員工ID後再匯入。'
+      );
+    }
+
+    return undefined;
+  }
+
+  if (recordsForMonth.length > 1) {
+    throw new AmbiguousSalaryImportError(
+      '同年月存在多位員工的薪資記錄，請在 CSV 加入員工ID或唯一員工姓名後再匯入。'
+    );
+  }
+
+  return recordsForMonth[0];
+}
 
 export function registerImportRoutes(app: Express): void {
   app.post('/api/admin/import/attendance', strictLimiter, requireAdmin(), async (req, res) => {
@@ -51,10 +100,7 @@ export function registerImportRoutes(app: Express): void {
         ...salaryRecord,
         attendanceData: historicalAttendanceData
       };
-      const existingRecord = await storage.getSalaryRecordByYearMonth(
-        salaryRecord.salaryYear,
-        salaryRecord.salaryMonth
-      );
+      const existingRecord = await findExistingSalaryImportRecord(salaryRecord);
 
       if (existingRecord) {
         const updatedRecord = await storage.updateSalaryRecord(existingRecord.id, salaryRecordPayload);
@@ -72,6 +118,14 @@ export function registerImportRoutes(app: Express): void {
         record: createdRecord
       });
     } catch (err) {
+      if (err instanceof AmbiguousSalaryImportError) {
+        return res.status(409).json({
+          success: false,
+          code: 'AMBIGUOUS_SALARY_IMPORT',
+          message: err.message
+        });
+      }
+
       log.error('匯入薪資記錄時出錯:', err);
       return handleRouteError(err, res);
     }
