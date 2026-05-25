@@ -1,26 +1,36 @@
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 
-const DEFAULT_BASE_URL = "https://barcode-scan.zeabur.app";
 const DEFAULT_TIMEOUT_MS = 15_000;
 
-function parseArgs(argv) {
+export function parseArgs(argv, env = process.env) {
   const options = {
-    baseUrl: process.env.BASE_URL || DEFAULT_BASE_URL,
-    reportPath: process.env.SMOKE_REPORT_PATH || null
+    baseUrl: env.BASE_URL || null,
+    reportPath: env.SMOKE_REPORT_PATH || null
   };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
 
     if (arg === "--base-url") {
-      options.baseUrl = argv[index + 1] ?? options.baseUrl;
+      const nextValue = argv[index + 1];
+      if (!nextValue || nextValue.startsWith("--")) {
+        throw new Error("--base-url requires a URL value");
+      }
+
+      options.baseUrl = nextValue;
       index += 1;
       continue;
     }
 
     if (arg === "--report") {
-      options.reportPath = argv[index + 1] ?? options.reportPath;
+      const nextValue = argv[index + 1];
+      if (!nextValue || nextValue.startsWith("--")) {
+        throw new Error("--report requires a file path value");
+      }
+
+      options.reportPath = nextValue;
       index += 1;
     }
   }
@@ -28,8 +38,26 @@ function parseArgs(argv) {
   return options;
 }
 
-function sanitizeBaseUrl(baseUrl) {
-  return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+export function resolveBaseUrl(baseUrl) {
+  const trimmed = baseUrl?.trim();
+  if (!trimmed) {
+    throw new Error(
+      "Live smoke requires an explicit target. Set BASE_URL or pass --base-url."
+    );
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(`Invalid live smoke base URL: ${trimmed}`);
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error("Live smoke base URL must use http or https.");
+  }
+
+  return trimmed.replace(/\/+$/, "");
 }
 
 function toTimestampSlug(date = new Date()) {
@@ -130,9 +158,20 @@ function summarize(result) {
   };
 }
 
-async function runChecks() {
-  const options = parseArgs(process.argv.slice(2));
-  const baseUrl = sanitizeBaseUrl(options.baseUrl);
+export async function runChecks(argv = process.argv.slice(2), env = process.env) {
+  let options;
+  let baseUrl;
+
+  try {
+    options = parseArgs(argv, env);
+    baseUrl = resolveBaseUrl(options.baseUrl);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    console.error("Usage: npm run smoke:live -- --base-url https://your-app.example.com");
+    process.exitCode = 1;
+    return;
+  }
+
   const reportPath = ensureReportPath(options.reportPath);
   const cookieJar = new CookieJar();
   const results = [];
@@ -499,4 +538,6 @@ async function runChecks() {
   }
 }
 
-await runChecks();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await runChecks();
+}
