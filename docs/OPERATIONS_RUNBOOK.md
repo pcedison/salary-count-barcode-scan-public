@@ -68,7 +68,7 @@ npm run test:real-db
 Backup readiness:
 
 ```bash
-npm run restore:check
+npm run restore:check:required
 npm run restore:rehearse
 ```
 
@@ -88,7 +88,7 @@ Preferred workflow:
 
 1. create a manual backup from the dashboard
 2. record the backup ID in the operator log
-3. run `npm run restore:check`
+3. run `npm run restore:check:required`
 4. keep the backup ID available before any risky change or rollout
 
 Backup handling rules:
