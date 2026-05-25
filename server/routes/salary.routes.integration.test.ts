@@ -72,6 +72,10 @@ const storageMock = vi.hoisted(() => ({
     page,
     limit
   })),
+  getSalaryRecordYears: vi.fn(async () =>
+    Array.from(new Set(salaryState.records.map((record) => Number(record.salaryYear))))
+      .sort((a, b) => b - a)
+  ),
   getSalaryRecordById: vi.fn(async (id: number) =>
     salaryState.records.find((record) => record.id === id)
   ),
@@ -167,6 +171,7 @@ describe('salary routes integration', () => {
     try {
       const endpoints = [
         { path: '/api/salary-records', method: 'GET' },
+        { path: '/api/salary-records/years', method: 'GET' },
         { path: '/api/salary-records/7', method: 'GET' },
         { path: '/api/salary-records/7/pdf', method: 'GET' },
         { path: '/api/test-salary-calculation', method: 'GET' }
@@ -289,6 +294,40 @@ describe('salary routes integration', () => {
         employeeId: 5,
         salaryYear: 2026,
         salaryMonth: 3,
+        search: 'Alpha'
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('returns salary year filter options independent of the current salary year page filter', async () => {
+    salaryState.records = [
+      { ...salaryState.records[0], id: 7, salaryYear: 2026, employeeName: 'Employee Alpha' },
+      { ...salaryState.records[0], id: 8, salaryYear: 2025, employeeName: 'Employee Alpha' },
+      { ...salaryState.records[0], id: 9, salaryYear: 2026, employeeName: 'Employee Beta' }
+    ];
+    const server = await createJsonTestServer(registerSalaryRoutes, {
+      setupApp: async (app) => {
+        setupTestAdminSession(app);
+      }
+    });
+
+    try {
+      const result = await jsonRequest<{ years: number[] }>(
+        server.baseUrl,
+        '/api/salary-records/years?employeeId=5&salaryYear=2026&search=Alpha',
+        {
+          headers: {
+            [TEST_ADMIN_HEADER]: 'true'
+          }
+        }
+      );
+
+      expect(result.response.status).toBe(200);
+      expect(result.body).toEqual({ years: [2026, 2025] });
+      expect(storageMock.getSalaryRecordYears).toHaveBeenCalledWith({
+        employeeId: 5,
         search: 'Alpha'
       });
     } finally {

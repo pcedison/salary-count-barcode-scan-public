@@ -35,6 +35,7 @@ export default function HistoryPage() {
     employeeFilter === "all" ? undefined : Number.parseInt(employeeFilter, 10);
   const {
     salaryRecords,
+    salaryRecordYears,
     salaryPagination,
     isLoading,
     refetch,
@@ -65,7 +66,7 @@ export default function HistoryPage() {
   // Available years for filtering
   const availableYears = Array.from(
     new Set([
-      ...salaryRecords.map((record) => record.salaryYear),
+      ...salaryRecordYears,
       ...(Number.isFinite(selectedSalaryYear) ? [selectedSalaryYear as number] : []),
     ]),
   ).sort((a, b) => b - a);

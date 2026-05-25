@@ -286,6 +286,52 @@ describe('import routes integration', () => {
     }
   });
 
+  it('creates a new salary record when the provided employee name does not match the month record', async () => {
+    importState.existingSalaryRecord = { id: 7, employeeId: 5, employeeName: 'Employee Alpha' };
+    const server = await createJsonTestServer(registerImportRoutes, {
+      setupApp: async (app) => {
+        setupTestAdminSession(app);
+      }
+    });
+
+    try {
+      const result = await jsonRequest<{
+        success: boolean;
+        record: { id: number; employeeName: string };
+      }>(server.baseUrl, '/api/admin/import/salary-record', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          [TEST_ADMIN_HEADER]: 'true'
+        },
+        body: JSON.stringify({
+          csvContent: [
+            '員工姓名,薪資年份,薪資月份,基本底薪,福利津貼,加班總時數OT1,加班總時數OT2,加班總費用,假日天數,假日總薪資,總薪資,總扣除額,實領金額',
+            'Employee Beta,2026,3,30000,500,10,5,2500,2,2000,35000,1200,33800',
+            '扣除項目',
+            '勞保費,300',
+            '考勤詳細記錄',
+            '日期,上班時間,下班時間,是否假日',
+            '2026-03-01,08:00,17:00,false'
+          ].join('\n')
+        })
+      });
+
+      expect(result.response.status).toBe(200);
+      expect(result.body?.success).toBe(true);
+      expect(storageMock.updateSalaryRecord).not.toHaveBeenCalled();
+      expect(storageMock.createSalaryRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          employeeName: 'Employee Beta',
+          salaryYear: 2026,
+          salaryMonth: 3
+        })
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects ambiguous salary imports when employee identity is missing for a shared month', async () => {
     importState.existingSalaryRecords = [
       { id: 7, employeeId: 5, employeeName: 'Employee Alpha' },

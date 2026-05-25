@@ -48,6 +48,10 @@ interface UseHistoryDataOptions {
   employeeId?: number;
 }
 
+interface SalaryRecordYearsPayload {
+  years: number[];
+}
+
 function safeNumber(value: unknown): number {
   if (value === null || value === undefined) {
     return 0;
@@ -69,6 +73,17 @@ function buildSalaryRecordsPath(options: UseHistoryDataOptions): string {
 
   const queryString = params.toString();
   return queryString ? `/api/salary-records?${queryString}` : '/api/salary-records';
+}
+
+function buildSalaryRecordYearsPath(options: UseHistoryDataOptions): string {
+  const params = new URLSearchParams();
+
+  if (options.salaryMonth) params.set('salaryMonth', String(options.salaryMonth));
+  if (options.employeeId) params.set('employeeId', String(options.employeeId));
+  if (options.search?.trim()) params.set('search', options.search.trim());
+
+  const queryString = params.toString();
+  return queryString ? `/api/salary-records/years?${queryString}` : '/api/salary-records/years';
 }
 
 function getSalaryRecordPagination(payload: SalaryRecord[] | PaginatedPayload<SalaryRecord> | undefined) {
@@ -104,6 +119,11 @@ export function useHistoryData(options: UseHistoryDataOptions = {}) {
     options.salaryYear,
     options.search
   ]);
+  const salaryRecordYearsPath = useMemo(() => buildSalaryRecordYearsPath(options), [
+    options.employeeId,
+    options.salaryMonth,
+    options.search
+  ]);
 
   const {
     data: rawSalaryRecords = [],
@@ -117,6 +137,13 @@ export function useHistoryData(options: UseHistoryDataOptions = {}) {
 
   const salaryRecords = extractListData(rawSalaryRecords);
   const salaryPagination = getSalaryRecordPagination(rawSalaryRecords);
+  const {
+    data: rawSalaryRecordYears = { years: [] }
+  } = useQuery<SalaryRecordYearsPayload>({
+    queryKey: [salaryRecordYearsPath],
+    enabled: isAdmin
+  });
+  const salaryRecordYears = rawSalaryRecordYears.years;
 
   const deleteSalaryRecordMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -276,6 +303,7 @@ export function useHistoryData(options: UseHistoryDataOptions = {}) {
 
   return {
     salaryRecords,
+    salaryRecordYears,
     salaryPagination,
     isLoading,
     refetch,

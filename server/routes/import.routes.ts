@@ -50,6 +50,8 @@ async function findExistingSalaryImportRecord(salaryRecord: SalaryRecordImportPa
         '找到多筆相同員工姓名的薪資記錄，請在 CSV 加入唯一員工ID後再匯入。'
       );
     }
+
+    return undefined;
   }
 
   if (recordsForMonth.length > 1) {

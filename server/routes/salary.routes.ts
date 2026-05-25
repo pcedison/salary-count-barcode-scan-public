@@ -55,6 +55,16 @@ function parseSalaryRecordFilters(query: Record<string, unknown>) {
   return Object.values(filters).some(value => value !== undefined) ? filters : undefined;
 }
 
+function parseSalaryRecordYearFilters(query: Record<string, unknown>) {
+  const filters = {
+    employeeId: parseOptionalPositiveInteger(query.employeeId),
+    salaryMonth: parseOptionalPositiveInteger(query.salaryMonth ?? query.month),
+    search: parseOptionalString(query.search)
+  };
+
+  return Object.values(filters).some(value => value !== undefined) ? filters : undefined;
+}
+
 async function loadSalaryCalculator() {
   return import('../utils/salaryCalculator');
 }
@@ -218,6 +228,18 @@ export function registerSalaryRoutes(app: Express): void {
       return handleRouteError(err, res);
     } finally {
       recordLatency('api.salary-records.list', Date.now() - startedAt);
+    }
+  });
+
+  app.get('/api/salary-records/years', requireAdmin(), async (req, res) => {
+    try {
+      const filters = parseSalaryRecordYearFilters(req.query);
+      const years = filters
+        ? await storage.getSalaryRecordYears(filters)
+        : await storage.getSalaryRecordYears();
+      return res.json({ years });
+    } catch (err) {
+      return handleRouteError(err, res);
     }
   });
 

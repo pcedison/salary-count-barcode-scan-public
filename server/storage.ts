@@ -46,6 +46,8 @@ export interface SalaryRecordPageFilters {
   search?: string;
 }
 
+export type SalaryRecordYearFilters = Omit<SalaryRecordPageFilters, 'salaryYear'>;
+
 export type AttendanceScanUpsertResult =
   | {
       duplicate: false;
@@ -231,6 +233,7 @@ export interface IStorage {
   // Salary record methods
   getAllSalaryRecords(): Promise<SalaryRecord[]>;
   getAllSalaryRecordsPage(page: number, limit: number, filters?: SalaryRecordPageFilters): Promise<{ rows: SalaryRecord[]; total: number }>;
+  getSalaryRecordYears(filters?: SalaryRecordYearFilters): Promise<number[]>;
   getSalaryRecordById(id: number): Promise<SalaryRecord | undefined>;
   getSalaryRecordByYearMonth(year: number, month: number): Promise<SalaryRecord | undefined>;
   getSalaryRecordsByYearMonth(year: number, month: number): Promise<SalaryRecord[]>;
@@ -613,6 +616,22 @@ export class DatabaseStorage implements IStorage {
       db.select({ count: drizzleSql<number>`count(*)::int` }).from(salaryRecords)
     ]);
     return { rows, total: count };
+  }
+
+  async getSalaryRecordYears(filters?: SalaryRecordYearFilters): Promise<number[]> {
+    const whereClause = buildSalaryRecordPageWhere(filters);
+    const rows = whereClause
+      ? await db
+          .selectDistinct({ salaryYear: salaryRecords.salaryYear })
+          .from(salaryRecords)
+          .where(whereClause)
+          .orderBy(desc(salaryRecords.salaryYear))
+      : await db
+          .selectDistinct({ salaryYear: salaryRecords.salaryYear })
+          .from(salaryRecords)
+          .orderBy(desc(salaryRecords.salaryYear));
+
+    return rows.map((row) => row.salaryYear);
   }
 
   async getSalaryRecordById(id: number): Promise<SalaryRecord | undefined> {
