@@ -45,10 +45,10 @@ export interface ImportedHistoryAttendanceRow {
   clockOut: string;
   isHoliday: boolean;
   isBarcodeScanned: boolean;
-  employeeId?: number;
-  holidayId?: number;
-  holidayType?: string;
-  createdAt?: Date;
+  employeeId: number | null;
+  holidayId: number | null;
+  holidayType: string | null;
+  createdAt: Date | null;
 }
 
 const DATE_PATTERN = /^\d{4}[-/](0?[1-9]|1[012])[-/](0?[1-9]|[12][0-9]|3[01])$/;
@@ -379,6 +379,10 @@ export function toImportedHistoryAttendanceData(
     clockIn: row.clockIn,
     clockOut: row.clockOut,
     isHoliday: row.isHoliday,
-    isBarcodeScanned: false
+    isBarcodeScanned: false,
+    employeeId: null,
+    holidayId: null,
+    holidayType: null,
+    createdAt: null
   }));
 }

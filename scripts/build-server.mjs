@@ -10,7 +10,7 @@ await build({
   bundle: true,
   format: 'esm',
   outdir: 'dist',
-  target: 'node20',
+  target: 'node24',
   define: {
     'process.env.NODE_ENV': JSON.stringify('production'),
     'process.env.APP_VERSION': JSON.stringify(packageJson.version),

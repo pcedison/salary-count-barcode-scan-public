@@ -6,8 +6,8 @@ This guide covers the deployment path for a release candidate that is intended t
 
 Recommended runtime model:
 
-- Node.js 20.x
-- npm 10.x
+- Node.js 24.x
+- npm 11.x
 - PostgreSQL
 - deployment platform secrets instead of a workspace `.env`
 - runtime data outside the repository workspace

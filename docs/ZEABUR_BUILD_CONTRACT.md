@@ -36,13 +36,13 @@ This means:
 
 ## Why The Dockerfile Stays On Debian Slim
 
-The current image uses `node:20-bookworm-slim` instead of Alpine on purpose.
+The current image uses `node:24.16.0-bookworm-slim` instead of Alpine on purpose.
 
 Reasons:
 
 - native dependencies such as Rollup and esbuild are typically more predictable on glibc-based images
 - it reduces surprise around Linux binary selection
-- it matches the pinned runtime contract in `package.json`
+- it matches the pinned Node 24 LTS runtime contract in `package.json`
 
 Alpine can work, but it is a higher-variance choice for this project because of native build tooling.
 

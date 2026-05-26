@@ -4,10 +4,10 @@
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": "20.x",
-    "npm": "10.x"
+    "node": "24.x",
+    "npm": "11.x"
   },
-  "packageManager": "npm@10.8.2",
+  "packageManager": "npm@11.13.0",
   "scripts": {
     "dev": "tsx server/index.ts",
     "build": "node scripts/ensure-rollup-native.mjs && vite build && node scripts/build-server.mjs && node scripts/verify-runtime-bundle.mjs",
@@ -32,6 +32,7 @@
     "aes:rollback": "node scripts/migrate-to-aes.mjs --rollback",
     "secrets:generate": "node scripts/generate-secrets.mjs",
     "super-pin:hash": "node scripts/hash-super-admin-pin.mjs",
+    "runtime:update:audit": "node scripts/runtime-update-audit.mjs",
     "version:preview": "node scripts/version-auto.mjs",
     "version:auto": "node scripts/version-auto.mjs --apply",
     "smoke:live": "node scripts/live-smoke.mjs",
@@ -122,7 +123,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "4.17.21",
     "@types/express-session": "^1.18.0",
-    "@types/node": "20.16.11",
+    "@types/node": "24.12.4",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
