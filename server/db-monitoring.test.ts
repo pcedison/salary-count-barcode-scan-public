@@ -184,6 +184,7 @@ describe('db-monitoring scheduler guards', () => {
     });
     unlinkMock.mockResolvedValue(undefined);
     writtenBackupContents.clear();
+    delete process.env.AUTO_BACKUP_STARTUP_DELAY_MS;
     delete process.env.ENCRYPTION_KEY;
     delete process.env.BACKUP_ENCRYPTION_KEY;
     stopMonitoring();
@@ -345,6 +346,43 @@ describe('db-monitoring scheduler guards', () => {
 
     expect(setupResult).toBe(timer);
     expect(getAllEmployeesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('delays the bootstrap daily backup in production to avoid startup memory pressure', async () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+
+    try {
+      process.env.NODE_ENV = 'production';
+
+      const timer = { kind: 'backup-timer-delayed' } as unknown as NodeJS.Timeout;
+      const startupTimer = {
+        kind: 'startup-backup-delay',
+        unref: vi.fn()
+      } as unknown as NodeJS.Timeout;
+      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval').mockReturnValue(timer);
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockReturnValue(startupTimer);
+
+      const setupResult = setupAutomaticBackups();
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(setupResult).toBe(timer);
+      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 10 * 60 * 1000);
+      expect(getAllEmployeesMock).not.toHaveBeenCalled();
+
+      const delayedBackupCallback = setTimeoutSpy.mock.calls[0]?.[0];
+      expect(typeof delayedBackupCallback).toBe('function');
+      (delayedBackupCallback as () => void)();
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(getAllEmployeesMock).toHaveBeenCalledTimes(1);
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
   });
 
   it('allows monitoring and backup schedulers to restart after stop', async () => {

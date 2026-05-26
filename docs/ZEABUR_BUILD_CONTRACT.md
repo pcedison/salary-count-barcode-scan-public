@@ -100,6 +100,12 @@ To fix this, generate a hash locally and paste the resulting value into the Zeab
 npm run super-pin:hash -- --raw <your-pin>
 ```
 
+Another operational risk is container eviction during rollout when the platform node is under memory pressure. The app delays its startup daily backup in production by default so that `/live` and `/ready` can stabilize before a full backup runs. Override the delay only when needed:
+
+```text
+AUTO_BACKUP_STARTUP_DELAY_MS=600000
+```
+
 ## When A Build Fails Again
 
 Collect these four facts before changing code:
