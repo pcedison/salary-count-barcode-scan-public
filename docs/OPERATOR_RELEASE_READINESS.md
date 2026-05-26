@@ -65,6 +65,7 @@ Before pushing a public release:
 ```bash
 npm run verify:release
 npm run test:real-db
+npm run restore:check:required
 git diff --check
 ```
 
@@ -74,7 +75,7 @@ git diff --check
 - `SESSION_SECRET` is production-grade
 - backup and log paths are outside the workspace
 - any LINE secrets are complete and current
-- the latest backup passes `npm run restore:check`
+- the latest backup passes `npm run restore:check:required`
 
 3. Review:
 

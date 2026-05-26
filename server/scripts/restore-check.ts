@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import '../test-utils/load-env';
 import { getBackupRootDir } from '../config/runtimePaths';
@@ -9,8 +10,30 @@ const log = createLogger('restore-check');
 
 const BACKUP_SUBDIRECTORIES = ['daily', 'weekly', 'monthly', 'manual'] as const;
 
-function hasAnyBackupFiles(): boolean {
-  const backupRootDir = getBackupRootDir();
+interface RestoreCheckOptions {
+  requireBackup: boolean;
+}
+
+type SkipReason = 'missing-backup-files' | 'missing-database-url';
+
+interface SkipDecision {
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  exitCode: 0 | 1;
+}
+
+export function parseRestoreCheckOptions(
+  argv = process.argv.slice(2),
+  env: NodeJS.ProcessEnv = process.env
+): RestoreCheckOptions {
+  return {
+    requireBackup:
+      argv.includes('--require-backup') ||
+      env.RESTORE_CHECK_REQUIRE_BACKUP?.trim().toLowerCase() === 'true'
+  };
+}
+
+export function hasAnyBackupFiles(backupRootDir = getBackupRootDir()): boolean {
 
   return BACKUP_SUBDIRECTORIES.some((directory) => {
     const candidateDir = path.join(backupRootDir, directory);
@@ -22,14 +45,57 @@ function hasAnyBackupFiles(): boolean {
   });
 }
 
+export function getRestoreSkipDecision(
+  reason: SkipReason,
+  options: RestoreCheckOptions
+): SkipDecision {
+  if (reason === 'missing-backup-files') {
+    return options.requireBackup
+      ? {
+          level: 'error',
+          message:
+            'No backup files found. Restore validation requires a backup artifact.',
+          exitCode: 1
+        }
+      : {
+          level: 'info',
+          message: 'No backup files found. Skipping restore validation.',
+          exitCode: 0
+        };
+  }
+
+  return options.requireBackup
+    ? {
+        level: 'error',
+        message:
+          'DATABASE_URL is not configured. Restore validation requires live database counts.',
+        exitCode: 1
+      }
+    : {
+        level: 'warn',
+        message:
+          'DATABASE_URL is not configured. Skipping restore validation because live database counts are unavailable.',
+        exitCode: 0
+      };
+}
+
+function applySkipDecision(decision: SkipDecision) {
+  log[decision.level](decision.message);
+  if (decision.exitCode !== 0) {
+    process.exitCode = decision.exitCode;
+  }
+}
+
 async function main() {
+  const options = parseRestoreCheckOptions();
+
   if (!hasAnyBackupFiles()) {
-    log.info('No backup files found. Skipping restore validation.');
+    applySkipDecision(getRestoreSkipDecision('missing-backup-files', options));
     return;
   }
 
   if (!process.env.DATABASE_URL) {
-    log.warn('DATABASE_URL is not configured. Skipping restore validation because live database counts are unavailable.');
+    applySkipDecision(getRestoreSkipDecision('missing-database-url', options));
     return;
   }
 
@@ -87,8 +153,10 @@ async function main() {
   await sql.end({ timeout: 1 });
 }
 
-main()
-  .catch((error) => {
-    log.error('Failed:', error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  });
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main()
+    .catch((error) => {
+      log.error('Failed:', error instanceof Error ? error.message : error);
+      process.exitCode = 1;
+    });
+}

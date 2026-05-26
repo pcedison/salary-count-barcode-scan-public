@@ -20,6 +20,7 @@
     "test:real-db:retention": "vitest run --config vitest.real-db.config.ts server/storage.retention.real-db.test.ts",
     "test:real-db:rehearsal": "vitest run --config vitest.real-db.config.ts server/rehearsal.real-db.test.ts",
     "restore:check": "tsx server/scripts/restore-check.ts",
+    "restore:check:required": "tsx server/scripts/restore-check.ts --require-backup",
     "restore:rehearse": "tsx server/scripts/restore-rehearsal.ts",
     "aes:inspect": "node scripts/inspect-employees.mjs",
     "aes:report": "node scripts/migrate-to-aes.mjs",
