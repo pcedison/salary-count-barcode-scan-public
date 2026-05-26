@@ -19,7 +19,7 @@ Recommendation:
 
 ## Validated Baseline
 
-Latest verified baseline for this release candidate:
+Latest verified baseline for this release candidate on Node.js 24.16.0 / npm 11.13.0:
 
 - `npm run verify:release`
 - `npm run test:real-db`
@@ -27,8 +27,8 @@ Latest verified baseline for this release candidate:
 
 Latest known results:
 
-- `npm test`: `52` files and `241` tests passed
-- `npm run test:smoke`: `17` files and `94` tests passed
+- `npm test`: `57` files and `273` tests passed
+- `npm run test:smoke`: `17` files and `105` tests passed
 - `npm run test:real-db`: `2` files and `7` tests passed
 
 ## Go Or No-Go Matrix
@@ -38,6 +38,7 @@ Latest known results:
 | Code verification | Pass | Keep `verify:release` green before publish. |
 | Real database verification | Pass | Keep `test:real-db` green before publish. |
 | Runtime path policy | Pass | Confirm backups and logs stay outside the workspace. |
+| Runtime/dependency freshness | Required | Review Dependabot PRs and run `npm run runtime:update:audit` before release. |
 | Backup readiness | Pass | Create a fresh manual backup before widening traffic. |
 | Operator observability | Pass | Monitor `/api/dashboard/operational-metrics` during canary. |
 | Production secret rotation | Required | Rotate secrets in the deployment platform. |
@@ -65,6 +66,7 @@ Before pushing a public release:
 ```bash
 npm run verify:release
 npm run test:real-db
+npm run runtime:update:audit
 npm run restore:check:required
 git diff --check
 ```
@@ -74,6 +76,7 @@ git diff --check
 - `DATABASE_URL` points to the intended production database
 - `SESSION_SECRET` is production-grade
 - backup and log paths are outside the workspace
+- runtime contract audit has no unexpected failures
 - any LINE secrets are complete and current
 - the latest backup passes `npm run restore:check:required`
 

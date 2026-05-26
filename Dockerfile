@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim AS builder
+FROM node:24.16.0-bookworm-slim AS builder
 
 WORKDIR /app
 ENV NODE_ENV=development \
@@ -25,7 +25,7 @@ RUN npm ci --include=dev --include=optional \
 COPY . .
 RUN npm run build
 
-FROM node:20-bookworm-slim AS runtime
+FROM node:24.16.0-bookworm-slim AS runtime
 
 WORKDIR /app
 ENV NODE_ENV=production \

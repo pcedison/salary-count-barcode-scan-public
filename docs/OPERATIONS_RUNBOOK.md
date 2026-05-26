@@ -51,7 +51,29 @@ Interpretation guidance:
 - stale webhook events may indicate replay-window or system-clock problems
 - list latency regressions usually point to database stress, query regressions, or infrastructure contention
 
-## 3. Verification Commands
+## 3. Dependency And Runtime Monitoring
+
+Review update signals weekly:
+
+```bash
+npm run runtime:update:audit
+npm outdated
+npm audit --omit=dev
+```
+
+Then check:
+
+- open Dependabot PRs for npm, Docker, and GitHub Actions
+- GitHub security alerts
+- GitHub Actions deprecation notices
+- Zeabur build or runtime deprecation notices
+- Node.js LTS and EOL status
+
+Runtime updates must be tested locally before GitHub or Zeabur is changed. Follow
+[DEPENDENCY_UPDATE_POLICY.md](DEPENDENCY_UPDATE_POLICY.md) for the required order.
+The current deployment contract is Node.js 24.x and npm 11.x.
+
+## 4. Verification Commands
 
 Core release verification:
 
@@ -82,7 +104,7 @@ npm run aes:rehearse
 npm run aes:ready
 ```
 
-## 4. Backup Operations
+## 5. Backup Operations
 
 Preferred workflow:
 
@@ -97,7 +119,7 @@ Backup handling rules:
 - do not delete the most recent known-good backup during an active incident
 - treat backup encryption keys as production secrets
 
-## 5. Restore Procedure
+## 6. Restore Procedure
 
 Before restoring:
 
@@ -133,7 +155,7 @@ npm run restore:check
 - timestamp
 - post-restore validation result
 
-## 6. Incident Response
+## 7. Incident Response
 
 Use this escalation order:
 
@@ -151,7 +173,7 @@ Evidence to capture:
 - recent audit logs
 - relevant deployment identifiers
 
-## 7. LINE-Specific Checks
+## 8. LINE-Specific Checks
 
 If LINE integration is enabled, verify after any secret or callback change:
 
@@ -161,16 +183,17 @@ If LINE integration is enabled, verify after any secret or callback change:
 - invalid signatures are counted but do not crash the route
 - stale events are ignored as expected
 
-## 8. Access And Change Control
+## 9. Access And Change Control
 
 - SUPER admin access should be limited to trusted operators
 - production secret changes should be traceable to a named operator
 - release windows should always have a rollback owner
 - direct `main` pushes should stay disabled unless an incident procedure explicitly allows them
 
-## 9. Source Documents
+## 10. Source Documents
 
 - [OPERATOR_RELEASE_READINESS.md](OPERATOR_RELEASE_READINESS.md)
 - [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)
 - [CONFIGURATION.md](CONFIGURATION.md)
+- [DEPENDENCY_UPDATE_POLICY.md](DEPENDENCY_UPDATE_POLICY.md)
 - [PUBLIC_RELEASE_CHECKLIST.md](PUBLIC_RELEASE_CHECKLIST.md)
