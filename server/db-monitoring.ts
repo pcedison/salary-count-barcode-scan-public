@@ -196,6 +196,7 @@ const AUTO_WEEKLY_BACKUP_INTERVAL = 7 * 24 * 60 * 60 * 1000; // 1 week
 const AUTO_MONTHLY_BACKUP_INTERVAL = 30 * 24 * 60 * 60 * 1000; // ~1 month
 const MAX_BACKUPS_PER_CATEGORY = 7; // Keep a small retention window.
 const AUTO_BACKUP_CHECK_INTERVAL = 60 * 60 * 1000; // 1 hour
+const DEFAULT_PRODUCTION_STARTUP_BACKUP_DELAY_MS = 10 * 60 * 1000; // 10 minutes
 
 interface ConnectionStatus {
   isConnected: boolean;
@@ -210,6 +211,7 @@ const NOTIFICATION_INTERVAL = 5 * 60 * 1000; // 5 minutes
 let monitoringTimer: NodeJS.Timeout | null = null;
 let monitoringIntervalMs: number | null = null;
 let automaticBackupTimer: NodeJS.Timeout | null = null;
+let automaticBackupStartupTimer: NodeJS.Timeout | null = null;
 
 type BackupTimestamps = {
   daily: number;
@@ -1406,6 +1408,41 @@ async function runInitialDailyBackup(lastBackup: BackupTimestamps): Promise<void
   }
 }
 
+function getStartupBackupDelayMs(): number {
+  const configured = process.env.AUTO_BACKUP_STARTUP_DELAY_MS?.trim();
+
+  if (configured) {
+    const parsed = Number.parseInt(configured, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+
+    log.warn(
+      `Ignoring invalid AUTO_BACKUP_STARTUP_DELAY_MS value: ${configured}`
+    );
+  }
+
+  return process.env.NODE_ENV === 'production'
+    ? DEFAULT_PRODUCTION_STARTUP_BACKUP_DELAY_MS
+    : 0;
+}
+
+function scheduleInitialDailyBackup(lastBackup: BackupTimestamps): void {
+  const startupDelayMs = getStartupBackupDelayMs();
+
+  if (startupDelayMs <= 0) {
+    void runInitialDailyBackup(lastBackup);
+    return;
+  }
+
+  log.info(`Delaying startup daily backup by ${startupDelayMs} ms`);
+  automaticBackupStartupTimer = setTimeout(() => {
+    automaticBackupStartupTimer = null;
+    void runInitialDailyBackup(lastBackup);
+  }, startupDelayMs);
+  automaticBackupStartupTimer.unref?.();
+}
+
 /**
  * Backup types.
  */
@@ -1654,7 +1691,7 @@ export function setupAutomaticBackups(): NodeJS.Timeout {
     void runAutomaticBackupCycle(automaticBackupTimestamps);
   }, AUTO_BACKUP_CHECK_INTERVAL);
 
-  void runInitialDailyBackup(automaticBackupTimestamps);
+  scheduleInitialDailyBackup(automaticBackupTimestamps);
 
   return automaticBackupTimer;
 }
@@ -1667,6 +1704,11 @@ export function stopAutomaticBackups(timerId?: NodeJS.Timeout): void {
   }
 
   clearInterval(targetTimer);
+
+  if (automaticBackupStartupTimer) {
+    clearTimeout(automaticBackupStartupTimer);
+    automaticBackupStartupTimer = null;
+  }
 
   if (!timerId || targetTimer === automaticBackupTimer) {
     automaticBackupTimer = null;

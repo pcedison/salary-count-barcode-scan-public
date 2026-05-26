@@ -31,6 +31,7 @@
 | `SCAN_DEVICE_TOKEN` | Enables protected scan device flows |
 | `USE_AES_ENCRYPTION` | Set `true` only when AES mode is intentionally enabled |
 | `ENCRYPTION_SALT` | Explicit AES salt |
+| `AUTO_BACKUP_STARTUP_DELAY_MS` | Production defaults to `600000` so startup health checks can stabilize before the first daily backup |
 | `ALLOW_DOTENV_IN_PRODUCTION` | Emergency override only; bypasses the production `.env` guard |
 | `PGSSLREJECT_UNAUTHORIZED` | Keep default secure behavior unless a known self-signed pooler host requires `false` |
 
