@@ -60,7 +60,7 @@ export function DateTimePicker({
               }
               setIsOpen(false);
             }}
-            initialFocus
+            autoFocus
           />
         </PopoverContent>
       </Popover>

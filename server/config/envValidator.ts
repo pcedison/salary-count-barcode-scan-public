@@ -21,7 +21,7 @@ const envSchema = z.object({
     .string()
     .regex(/^\d+$/)
     .transform(Number)
-    .default('5000'),
+    .default(5000),
   SESSION_TIMEOUT: z
     .string()
     .regex(/^\d+$/, 'SESSION_TIMEOUT must be a numeric number of minutes')
