@@ -10,6 +10,7 @@ import { registerHealthRoutes } from './routes/health.routes';
 import { registerHolidayRoutes } from './routes/holidays.routes';
 import { registerImportRoutes } from './routes/import.routes';
 import { registerLineRoutes } from './routes/line.routes';
+import { registerSalaryAutomationRoutes } from './routes/salaryAutomation.routes';
 import { registerSalaryRoutes } from './routes/salary.routes';
 import { registerScanRoutes } from './routes/scan.routes';
 import { registerSettingsRoutes } from './routes/settings.routes';
@@ -35,6 +36,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerSettingsRoutes(app);
   registerTaiwanHolidaysRoutes(app);
   registerLineRoutes(app);
+  registerSalaryAutomationRoutes(app);
 
   if (isLineConfigured()) {
     log.info('LINE routes enabled');

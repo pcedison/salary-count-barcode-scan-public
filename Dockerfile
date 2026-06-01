@@ -30,6 +30,7 @@ FROM node:24.16.0-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     PORT=8080 \
+    CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium \
     NPM_CONFIG_FETCH_RETRIES=5 \
     NPM_CONFIG_FETCH_RETRY_FACTOR=2 \
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
@@ -37,6 +38,12 @@ ENV NODE_ENV=production \
     NPM_CONFIG_FETCH_TIMEOUT=120000 \
     NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends chromium fonts-noto-cjk ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --omit=optional

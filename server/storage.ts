@@ -9,6 +9,7 @@ import {
   temporaryAttendance, type TemporaryAttendance, type InsertTemporaryAttendance,
   settings, type Settings, type InsertSettings,
   salaryRecords, type SalaryRecord, type InsertSalaryRecord,
+  monthlySalaryRuns, type MonthlySalaryRun, type InsertMonthlySalaryRun,
   holidays, type Holiday, type InsertHoliday,
   employees, type Employee, type InsertEmployee,
   pendingBindings, type PendingBinding, type InsertPendingBinding,
@@ -241,6 +242,15 @@ export interface IStorage {
   createSalaryRecord(record: InsertSalaryRecord): Promise<SalaryRecord>;
   updateSalaryRecord(id: number, record: Partial<InsertSalaryRecord>): Promise<SalaryRecord | undefined>;
   deleteSalaryRecord(id: number): Promise<boolean>;
+
+  // Monthly salary automation methods
+  getMonthlySalaryRun(year: number, month: number): Promise<MonthlySalaryRun | undefined>;
+  getRecentMonthlySalaryRuns(limit?: number): Promise<MonthlySalaryRun[]>;
+  createMonthlySalaryRun(run: InsertMonthlySalaryRun): Promise<MonthlySalaryRun>;
+  updateMonthlySalaryRun(id: number, run: Partial<InsertMonthlySalaryRun> & {
+    completedAt?: Date | null;
+    emailSentAt?: Date | null;
+  }): Promise<MonthlySalaryRun | undefined>;
 
   // Holiday methods
   getAllHolidays(): Promise<Holiday[]>;
@@ -701,6 +711,47 @@ export class DatabaseStorage implements IStorage {
       .where(eq(salaryRecords.id, id))
       .returning();
     return !!deleted;
+  }
+
+  async getMonthlySalaryRun(year: number, month: number): Promise<MonthlySalaryRun | undefined> {
+    const [run] = await db
+      .select()
+      .from(monthlySalaryRuns)
+      .where(
+        and(
+          eq(monthlySalaryRuns.salaryYear, year),
+          eq(monthlySalaryRuns.salaryMonth, month)
+        )
+      );
+    return run;
+  }
+
+  async getRecentMonthlySalaryRuns(limit = 12): Promise<MonthlySalaryRun[]> {
+    return db
+      .select()
+      .from(monthlySalaryRuns)
+      .orderBy(desc(monthlySalaryRuns.startedAt))
+      .limit(limit);
+  }
+
+  async createMonthlySalaryRun(run: InsertMonthlySalaryRun): Promise<MonthlySalaryRun> {
+    const [createdRun] = await db.insert(monthlySalaryRuns).values(run).returning();
+    return createdRun;
+  }
+
+  async updateMonthlySalaryRun(
+    id: number,
+    run: Partial<InsertMonthlySalaryRun> & {
+      completedAt?: Date | null;
+      emailSentAt?: Date | null;
+    }
+  ): Promise<MonthlySalaryRun | undefined> {
+    const [updatedRun] = await db
+      .update(monthlySalaryRuns)
+      .set(run as typeof monthlySalaryRuns.$inferInsert)
+      .where(eq(monthlySalaryRuns.id, id))
+      .returning();
+    return updatedRun;
   }
 
   // Holiday methods
