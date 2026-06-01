@@ -50,7 +50,22 @@ const envSchema = z.object({
   LINE_LOGIN_CHANNEL_SECRET: z.string().optional(),
   LINE_LOGIN_CALLBACK_URL: z.string().url('LINE_LOGIN_CALLBACK_URL must be a valid URL').optional(),
   LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: z.string().optional(),
-  LINE_MESSAGING_CHANNEL_SECRET: z.string().optional()
+  LINE_MESSAGING_CHANNEL_SECRET: z.string().optional(),
+  SALARY_AUTOMATION_ENABLED: z.enum(['true', 'false']).optional(),
+  SALARY_AUTOMATION_TIMEZONE: z.string().optional(),
+  SALARY_AUTOMATION_RUN_HOUR: z.string().regex(/^\d+$/).optional(),
+  SALARY_AUTOMATION_RUN_MINUTE: z.string().regex(/^\d+$/).optional(),
+  SALARY_AUTOMATION_INTERVAL_MS: z.string().regex(/^\d+$/).optional(),
+  SALARY_AUTOMATION_EMAIL_TO: z.string().optional(),
+  SALARY_AUTOMATION_PUBLIC_BASE_URL: z.string().url('SALARY_AUTOMATION_PUBLIC_BASE_URL must be a valid URL').optional(),
+  SALARY_PRINT_TOKEN_SECRET: optionalSecret('SALARY_PRINT_TOKEN_SECRET'),
+  CHROMIUM_EXECUTABLE_PATH: z.string().optional(),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.string().regex(/^\d+$/).optional(),
+  SMTP_SECURE: z.enum(['true', 'false']).optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().optional()
 });
 
 export type ValidatedEnv = z.infer<typeof envSchema>;
@@ -154,6 +169,16 @@ export function validateEnv(): ValidatedEnv {
   }
   if (lineSetCount === 0) {
     log.warn('LINE integration is not configured; LINE features remain disabled');
+  }
+
+  if (validated.SALARY_AUTOMATION_ENABLED === 'true') {
+    if (!validated.SALARY_AUTOMATION_EMAIL_TO) {
+      throw new Error('SALARY_AUTOMATION_EMAIL_TO is required when salary automation is enabled');
+    }
+
+    if (!validated.SMTP_HOST || !validated.SMTP_FROM) {
+      throw new Error('SMTP_HOST and SMTP_FROM are required when salary automation is enabled');
+    }
   }
 
   return validated;

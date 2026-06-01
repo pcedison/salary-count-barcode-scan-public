@@ -5,6 +5,10 @@ import { insertSalaryRecordSchema, type InsertSalaryRecord, type Settings } from
 import { recordLatency } from '../observability/runtimeMetrics';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { storage } from '../storage';
+import {
+  normalizeSalaryPrintRecordIds,
+  verifySalaryPrintToken,
+} from '../services/salaryPrintToken';
 import { createLogger } from '../utils/logger';
 import type { OvertimeHours } from '../utils/salaryCalculator';
 
@@ -63,6 +67,14 @@ function parseSalaryRecordYearFilters(query: Record<string, unknown>) {
   };
 
   return Object.values(filters).some(value => value !== undefined) ? filters : undefined;
+}
+
+function parsePrintRecordIds(rawIds: unknown): number[] {
+  if (Array.isArray(rawIds)) {
+    return normalizeSalaryPrintRecordIds(rawIds.flatMap((value) => String(value).split(',')));
+  }
+
+  return normalizeSalaryPrintRecordIds(String(rawIds ?? '').split(','));
 }
 
 async function loadSalaryCalculator() {
@@ -130,7 +142,7 @@ function logHolidayAdjustmentSummary(
   );
 }
 
-async function buildCalculatedSalaryRecord(
+export async function buildCalculatedSalaryRecord(
   draft: InsertSalaryRecord,
   settings: Settings,
   options?: {
@@ -238,6 +250,32 @@ export function registerSalaryRoutes(app: Express): void {
         ? await storage.getSalaryRecordYears(filters)
         : await storage.getSalaryRecordYears();
       return res.json({ years });
+    } catch (err) {
+      return handleRouteError(err, res);
+    }
+  });
+
+  app.get('/api/salary-records/print-batch', async (req, res) => {
+    try {
+      const ids = parsePrintRecordIds(req.query.ids);
+      if (ids.length === 0) {
+        return res.status(400).json({ message: 'No salary record IDs provided' });
+      }
+
+      if (!verifySalaryPrintToken(ids, req.query.token)) {
+        return res.status(401).json({ message: 'Invalid or expired salary print token' });
+      }
+
+      const records = [];
+      for (const id of ids) {
+        const record = await storage.getSalaryRecordById(id);
+        if (!record) {
+          return res.status(404).json({ message: `Salary record ${id} not found` });
+        }
+        records.push(record);
+      }
+
+      return res.json({ records });
     } catch (err) {
       return handleRouteError(err, res);
     }

@@ -15,6 +15,7 @@ const loadAttendancePage = () => import("@/pages/AttendancePage");
 const loadHistoryPage = () => import("@/pages/HistoryPage");
 const loadSettingsPage = () => import("@/pages/SettingsPage");
 const loadPrintSalaryPage = () => import("@/pages/PrintSalaryPage");
+const loadPrintMonthlySalaryPage = () => import("@/pages/PrintMonthlySalaryPage");
 const loadBarcodeScanPage = () => import("@/pages/BarcodeScanPage");
 const loadEmployeesPage = () => import("@/pages/EmployeesPage");
 const loadNotFoundPage = () => import("@/pages/not-found");
@@ -25,6 +26,7 @@ const AttendancePage = lazy(loadAttendancePage);
 const HistoryPage = lazy(loadHistoryPage);
 const SettingsPage = lazy(loadSettingsPage);
 const PrintSalaryPage = lazy(loadPrintSalaryPage);
+const PrintMonthlySalaryPage = lazy(loadPrintMonthlySalaryPage);
 const BarcodeScanPage = lazy(loadBarcodeScanPage);
 const EmployeesPage = lazy(loadEmployeesPage);
 const NotFound = lazy(loadNotFoundPage);
@@ -102,6 +104,7 @@ function Router() {
           />
         ))}
         <Route path="/print-salary" component={PrintSalaryPage} />
+        <Route path="/print-monthly-salary" component={PrintMonthlySalaryPage} />
         <Route path="/clock-in" component={ClockInPage} />
         <Route path="/qrcode" component={QRCodePage} />
         <Route component={NotFound} />

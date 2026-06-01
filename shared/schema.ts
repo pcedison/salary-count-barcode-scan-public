@@ -147,6 +147,34 @@ export const insertSalaryRecordSchema = createInsertSchema(salaryRecords)
 export type InsertSalaryRecord = z.infer<typeof insertSalaryRecordSchema>;
 export type SalaryRecord = typeof salaryRecords.$inferSelect;
 
+// Monthly automated salary calculation runs.
+export const monthlySalaryRuns = pgTable("monthly_salary_runs", {
+  id: serial("id").primaryKey(),
+  runKey: varchar("run_key", { length: 20 }).notNull().unique(),
+  salaryYear: integer("salary_year").notNull(),
+  salaryMonth: integer("salary_month").notNull(),
+  status: text("status", {
+    enum: ["running", "succeeded", "failed", "skipped"]
+  }).notNull().default("running"),
+  recordCount: integer("record_count").default(0),
+  skippedCount: integer("skipped_count").default(0),
+  pdfPath: text("pdf_path"),
+  emailTo: json("email_to").$type<string[]>().default([]),
+  emailSentAt: timestamp("email_sent_at", { withTimezone: true }),
+  errorMessage: text("error_message"),
+  startedAt: timestamp("started_at", { withTimezone: true }).defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+}, (table) => ({
+  salaryRunMonthIdx: index("monthly_salary_runs_year_month_idx").on(table.salaryYear, table.salaryMonth),
+  salaryRunMonthUniq: unique("monthly_salary_runs_year_month_uniq").on(table.salaryYear, table.salaryMonth),
+}));
+
+export const insertMonthlySalaryRunSchema = createInsertSchema(monthlySalaryRuns)
+  .omit({ id: true, startedAt: true, completedAt: true });
+
+export type InsertMonthlySalaryRun = typeof monthlySalaryRuns.$inferInsert;
+export type MonthlySalaryRun = typeof monthlySalaryRuns.$inferSelect;
+
 // Holiday settings.
 export const holidays = pgTable("holidays", {
   id: serial("id").primaryKey(),

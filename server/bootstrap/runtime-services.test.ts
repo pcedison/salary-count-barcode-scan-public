@@ -11,6 +11,8 @@ const stopEmployeeRetentionScheduler = vi.fn();
 const loadCalculationRulesFromDb = vi.fn();
 const lineCleanupStop = vi.fn();
 const startLineOAuthCleanup = vi.fn(() => ({ stop: lineCleanupStop }));
+const monthlySalaryStop = vi.fn();
+const startMonthlySalaryScheduler = vi.fn(() => ({ stop: monthlySalaryStop }));
 
 vi.mock('../db-monitoring', () => ({
   startMonitoring,
@@ -32,6 +34,10 @@ vi.mock('../runtime/line-oauth-cleanup', () => ({
   startLineOAuthCleanup,
 }));
 
+vi.mock('../runtime/monthly-salary-scheduler', () => ({
+  startMonthlySalaryScheduler,
+}));
+
 describe('startRuntimeServices', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -47,6 +53,7 @@ describe('startRuntimeServices', () => {
     expect(setupAutomaticBackups).toHaveBeenCalledTimes(1);
     expect(startEmployeeRetentionScheduler).toHaveBeenCalledTimes(1);
     expect(startLineOAuthCleanup).toHaveBeenCalledTimes(1);
+    expect(startMonthlySalaryScheduler).toHaveBeenCalledTimes(1);
 
     runtimeServices.stop();
 
@@ -54,6 +61,7 @@ describe('startRuntimeServices', () => {
     expect(stopAutomaticBackups).toHaveBeenCalledWith(expect.objectContaining({ kind: 'backup' }));
     expect(stopEmployeeRetentionScheduler).toHaveBeenCalledWith(expect.objectContaining({ kind: 'retention' }));
     expect(lineCleanupStop).toHaveBeenCalledTimes(1);
+    expect(monthlySalaryStop).toHaveBeenCalledTimes(1);
   });
 
   it('makes stop idempotent', async () => {
@@ -68,5 +76,6 @@ describe('startRuntimeServices', () => {
     expect(stopAutomaticBackups).toHaveBeenCalledTimes(1);
     expect(stopEmployeeRetentionScheduler).toHaveBeenCalledTimes(1);
     expect(lineCleanupStop).toHaveBeenCalledTimes(1);
+    expect(monthlySalaryStop).toHaveBeenCalledTimes(1);
   });
 });
