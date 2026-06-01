@@ -23,20 +23,33 @@ export interface SendSalaryAutomationTestEmailOptions {
   now?: Date;
 }
 
-function formatMonth(target: SalaryReportTarget): string {
-  return `${target.year}-${String(target.month).padStart(2, '0')}`;
+function formatMonthLabel(target: SalaryReportTarget): string {
+  return `${target.year}年${target.month}月`;
+}
+
+function formatDateTime(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('zh-TW', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).format(date);
 }
 
 function buildEmailText(target: SalaryReportTarget, records: SalaryRecord[]): string {
   const totalNetSalary = records.reduce((sum, record) => sum + (record.netSalary || 0), 0);
 
   return [
-    `${formatMonth(target)} monthly salary calculation is complete.`,
+    `${formatMonthLabel(target)}薪資已完成自動結算。`,
     '',
-    `Salary records: ${records.length}`,
-    `Total net salary: ${totalNetSalary.toLocaleString('zh-TW')}`,
+    `薪資紀錄：${records.length} 筆`,
+    `實領總額：${totalNetSalary.toLocaleString('zh-TW')} 元`,
     '',
-    'The PDF salary report is attached.',
+    'PDF 薪資報表已隨信附上。',
   ].join('\n');
 }
 
@@ -82,11 +95,11 @@ export async function sendMonthlySalaryEmail({
   }
 
   const transporter = await createSalaryTransporter(config);
-  const monthLabel = formatMonth(target);
+  const monthLabel = formatMonthLabel(target);
   const info = await transporter.sendMail({
     from: config.smtpFrom,
     to: config.emailRecipients,
-    subject: `${monthLabel} salary report`,
+    subject: `${monthLabel}薪資結算報告`,
     text: buildEmailText(target, records),
     attachments: [
       {
@@ -114,17 +127,17 @@ export async function sendSalaryAutomationTestEmail({
   }
 
   const transporter = await createSalaryTransporter(config);
-  const timestamp = now.toISOString();
+  const timestamp = formatDateTime(now, config.timeZone);
   const info = await transporter.sendMail({
     from: config.smtpFrom,
     to: recipients,
-    subject: 'Salary automation SMTP test',
+    subject: '薪資自動化 SMTP 測試',
     text: [
-      'This is a salary automation SMTP test email.',
+      '這是一封薪資自動化 SMTP 測試信。',
       '',
-      `Sent at: ${timestamp}`,
+      `寄送時間：${timestamp}`,
       '',
-      'No salary records were created or modified by this test.',
+      '此測試不會新增或修改任何薪資紀錄。',
     ].join('\n'),
   });
 
