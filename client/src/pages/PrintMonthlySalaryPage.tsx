@@ -25,7 +25,7 @@ interface SalaryRecordForPrint {
     clockIn: string;
     clockOut: string;
     isHoliday: boolean;
-    holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'special_leave' | null;
+    holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'special_leave' | 'special_leave_cash' | null;
   }> | null;
   specialLeaveInfo?: {
     usedDays: number;

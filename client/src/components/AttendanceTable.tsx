@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { calculateOvertime, cn } from '@/lib/utils';
-import { Loader2 } from 'lucide-react';
+import { Loader2, XCircle } from 'lucide-react';
 
 interface AttendanceTableProps {
   data: Array<{
@@ -25,8 +25,13 @@ interface AttendanceTableProps {
     _employeeDepartment?: string;
     _isLeaveRecord?: boolean;
     _isNoClockType?: boolean;
+    _displayDate?: string;
     _holidayType?: string;
     _holidayName?: string;
+    _isSpecialLeaveCashRecord?: boolean;
+    _specialLeaveCashDays?: number;
+    _specialLeaveCashAmount?: number;
+    _specialLeaveCashNotes?: string | null;
   }>;
   isLoading: boolean;
   canEdit?: boolean;
@@ -79,6 +84,8 @@ const getHolidayTypeStyle = (holidayType?: string) => {
       return 'bg-orange-100 text-orange-800';
     case 'special_leave':
       return 'bg-teal-100 text-teal-800';
+    case 'special_leave_cash':
+      return 'bg-amber-100 text-amber-800';
     case 'typhoon_leave':
       return 'bg-purple-100 text-purple-800';
     case 'worked':
@@ -92,6 +99,14 @@ const getHolidayTypeLabel = (holidayType?: string) => {
   if (!holidayType) return '正常出勤';
   return holidayTypeOptions.find((option) => option.value === holidayType)?.label || holidayType;
 };
+
+const hasCompletedClockTimes = (record: { clockIn?: string; clockOut?: string }) =>
+  Boolean(
+    record.clockIn &&
+      record.clockOut &&
+      record.clockIn !== '--:--' &&
+      record.clockOut !== '--:--'
+  );
 
 export default function AttendanceTable({
   data,
@@ -119,11 +134,23 @@ export default function AttendanceTable({
   const handleSaveEdit = async () => {
     if (!editingId || !editingRecord) return;
 
+    const normalizedClockIn = editClockIn.trim();
+    const normalizedClockOut = editClockOut.trim();
+
+    if (!normalizedClockIn) {
+      toast({
+        title: "上班時間未填",
+        description: "請保留上班時間；尚未下班時只需要清空下班時間。",
+        variant: "destructive"
+      });
+      return;
+    }
+
     try {
       await onUpdateAttendance(editingId, {
         date: editDate,
-        clockIn: editClockIn || '08:00',
-        clockOut: editClockOut || '17:00'
+        clockIn: normalizedClockIn,
+        clockOut: normalizedClockOut
       });
 
       toast({
@@ -197,7 +224,10 @@ export default function AttendanceTable({
     const isNoClockType = record._isNoClockType === true;
     const holidayType = record._holidayType;
     const isFlexibleHolidayType = ['sick_leave', 'personal_leave', 'worked'].includes(holidayType || '');
-    const { ot1, ot2 } = isNoClockType ? { ot1: 0, ot2: 0 } : calculateOvertime(record.clockIn, record.clockOut);
+    const isCompleteAttendance = hasCompletedClockTimes(record);
+    const { ot1, ot2 } = isNoClockType || !isCompleteAttendance
+      ? { ot1: 0, ot2: 0 }
+      : calculateOvertime(record.clockIn, record.clockOut);
     const isEditing = editingId === record.id;
 
     const actualWorkHours = isFlexibleHolidayType
@@ -214,8 +244,8 @@ export default function AttendanceTable({
       stickyBg: isHolidayRecord ? 'bg-gray-100' : (index % 2 === 1 ? 'bg-gray-50' : 'bg-white'),
       employeeName: record._employeeName || (record.employeeId ? `員工 ID: ${record.employeeId}` : '手動輸入'),
       departmentName: record._employeeDepartment || '未指定部門',
-      workHours: isNoClockType ? '0' : isFlexibleHolidayType ? `${actualWorkHours}` : '8',
-      overtimeHours: isNoClockType ? '0.0' : (ot1 + ot2).toFixed(1),
+      workHours: isNoClockType || !isCompleteAttendance ? '0' : isFlexibleHolidayType ? `${actualWorkHours}` : '8',
+      overtimeHours: isNoClockType || !isCompleteAttendance ? '0.0' : (ot1 + ot2).toFixed(1),
       clockOutDisplay: record.clockOut ? record.clockOut : '尚未下班',
     };
   });
@@ -447,7 +477,7 @@ export default function AttendanceTable({
 
               <div className="text-right">
                 <div className="font-['Roboto_Mono'] text-sm font-medium text-gray-900">
-                  {row.record.date}
+                  {row.record._displayDate || row.record.date}
                 </div>
                 <div className="mt-1">{renderRecordBadge(row)}</div>
               </div>
@@ -477,12 +507,26 @@ export default function AttendanceTable({
                     </div>
                     <div>
                       <div className="mb-1 text-xs font-medium text-gray-500">下班時間</div>
-                      <DateTimePicker
-                        mode="time"
-                        value={editClockOut}
-                        onChange={setEditClockOut}
-                        className="w-full"
-                      />
+                      <div className="flex items-center gap-2">
+                        <DateTimePicker
+                          mode="time"
+                          value={editClockOut}
+                          onChange={setEditClockOut}
+                          className="w-full"
+                        />
+                        {editClockOut && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-9 w-9 shrink-0 px-0 text-amber-600 hover:text-amber-700"
+                            onClick={() => setEditClockOut('')}
+                            title="清空下班時間"
+                          >
+                            <XCircle className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -570,7 +614,7 @@ export default function AttendanceTable({
                     />
                   ) : (
                     <div className="flex items-center gap-2">
-                      {row.record.date}
+                    {row.record._displayDate || row.record.date}
                       {renderRecordBadge(row)}
                     </div>
                   )}
@@ -593,12 +637,26 @@ export default function AttendanceTable({
                   {row.isNoClockType ? (
                     <span className="text-gray-400">--:--</span>
                   ) : row.isEditing ? (
-                    <DateTimePicker
-                      mode="time"
-                      value={editClockOut}
-                      onChange={setEditClockOut}
-                      className="w-full"
-                    />
+                    <div className="flex min-w-[13rem] items-center gap-2">
+                      <DateTimePicker
+                        mode="time"
+                        value={editClockOut}
+                        onChange={setEditClockOut}
+                        className="w-full"
+                      />
+                      {editClockOut && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-9 w-9 shrink-0 px-0 text-amber-600 hover:text-amber-700"
+                          onClick={() => setEditClockOut('')}
+                          title="清空下班時間"
+                        >
+                          <XCircle className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
                   ) : row.record.clockOut ? (
                     row.record.clockOut
                   ) : (

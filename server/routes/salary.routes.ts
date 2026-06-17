@@ -193,6 +193,8 @@ export async function buildCalculatedSalaryRecord(
     previousWorkedHolidayPay,
   });
   const totalHolidayPay = holidayPayBase + (holidayAdjustments.workedHolidayPay || 0);
+  const specialLeaveCashAmount =
+    typeof draft.specialLeaveInfo?.cashAmount === 'number' ? draft.specialLeaveInfo.cashAmount : 0;
 
   const salaryResult = calculateSalary(
     draft.salaryYear,
@@ -219,9 +221,9 @@ export async function buildCalculatedSalaryRecord(
     totalOT2Hours: salaryResult.totalOT2Hours,
     totalOvertimePay: salaryResult.totalOvertimePay,
     totalHolidayPay,
-    grossSalary: salaryResult.grossSalary,
+    grossSalary: salaryResult.grossSalary + specialLeaveCashAmount,
     totalDeductions,
-    netSalary: salaryResult.netSalary,
+    netSalary: salaryResult.netSalary + specialLeaveCashAmount,
   };
 }
 

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useAdmin } from "@/hooks/useAdmin";
 import { useToast } from "@/hooks/use-toast";
+import { invalidateAttendanceQueries } from "@/lib/attendanceRecords";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import {
   DEFAULT_ADMIN_SETTINGS,
@@ -86,6 +87,7 @@ export function useSettings(options: UseSettingsOptions = {}) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/holidays"] });
+      invalidateAttendanceQueries(queryClient);
     },
     onError: (error) => {
       console.error("Error adding holiday:", error);

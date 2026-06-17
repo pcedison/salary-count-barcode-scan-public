@@ -23,6 +23,14 @@ interface SalaryResultTableProps {
     deductions: Array<{ name: string; amount: number }>;
     totalDeductions: number;
     netSalary: number;
+    specialLeaveInfo?: {
+      usedDays: number;
+      usedDates: string[];
+      cashDays: number;
+      cashAmount: number;
+      cashMonth?: string;
+      notes?: string;
+    };
   };
   settings: any;
   onFinalize: () => void;
@@ -105,6 +113,14 @@ export default function SalaryResultTable({ result, settings, onFinalize }: Sala
       amount: formatCurrency(result.totalHolidayPay),
       tone: 'muted',
     },
+    ...(result.specialLeaveInfo && result.specialLeaveInfo.cashDays > 0
+      ? [{
+          label: '特休折現',
+          detail: `${result.specialLeaveInfo.cashDays}天`,
+          amount: formatCurrency(result.specialLeaveInfo.cashAmount),
+          tone: 'muted' as const,
+        }]
+      : []),
     ...result.deductions.map((deduction) => ({
       label: deduction.name,
       detail: '-',

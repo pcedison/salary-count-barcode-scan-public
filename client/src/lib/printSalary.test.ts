@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseSalaryRecordId } from './printSalary';
+import { parseSalaryRecordId, parseSalaryRecordIds } from './printSalary';
 
 describe('print salary helpers', () => {
   it('accepts positive integer record ids from query strings', () => {
@@ -16,5 +16,17 @@ describe('print salary helpers', () => {
     expect(parseSalaryRecordId('?id=7abc')).toBeNull();
     expect(parseSalaryRecordId('?id=-1')).toBeNull();
     expect(parseSalaryRecordId('?id=0')).toBeNull();
+  });
+
+  it('parses batch salary record ids for monthly printing', () => {
+    expect(parseSalaryRecordIds('?ids=11,12,12,003')).toEqual([11, 12, 3]);
+    expect(parseSalaryRecordIds('?token=x&ids=4%2C5')).toEqual([4, 5]);
+  });
+
+  it('rejects malformed batch salary record ids', () => {
+    expect(parseSalaryRecordIds('')).toEqual([]);
+    expect(parseSalaryRecordIds('?ids=')).toEqual([]);
+    expect(parseSalaryRecordIds('?ids=1,abc')).toEqual([]);
+    expect(parseSalaryRecordIds('?ids=-1,2')).toEqual([]);
   });
 });

@@ -96,6 +96,10 @@ function Router() {
   return (
     <Suspense fallback={<LoadingFallback fullScreen />}>
       <Switch>
+        <Route
+          path="/attendance"
+          component={() => <MainRoute tab="attendance" barcodeEnabled={barcodeEnabled} />}
+        />
         {routeItems.map((item) => (
           <Route
             key={item.path}

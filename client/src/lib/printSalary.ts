@@ -11,14 +11,21 @@ export function parseSalaryRecordId(search: string): number | null {
 
 export function parseSalaryRecordIds(search: string): number[] {
   const rawIds = new URLSearchParams(search).get('ids');
+
   if (!rawIds) {
     return [];
   }
 
-  const ids = rawIds
-    .split(',')
-    .map((rawId) => Number.parseInt(rawId, 10))
-    .filter((id) => Number.isInteger(id) && id > 0);
+  const ids = rawIds.split(',').map((rawId) => rawId.trim());
+  if (ids.length === 0 || ids.some((rawId) => !/^\d+$/.test(rawId))) {
+    return [];
+  }
 
-  return Array.from(new Set(ids));
+  return Array.from(
+    new Set(
+      ids
+        .map((rawId) => Number.parseInt(rawId, 10))
+        .filter((recordId) => Number.isInteger(recordId) && recordId > 0)
+    )
+  );
 }
