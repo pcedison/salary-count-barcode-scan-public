@@ -116,6 +116,7 @@ export const salaryRecords = pgTable("salary_records", {
     usedDates: string[];
     cashDays: number;
     cashAmount: number;
+    cashMonth?: string;
     notes?: string;
   }>(),
   anonymizedAt: timestamp("anonymized_at", { withTimezone: true }),

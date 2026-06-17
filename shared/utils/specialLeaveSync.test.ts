@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   diffSpecialLeaveDates,
+  matchesYearMonth,
   normalizeDateToDash,
   normalizeDateToSlash,
+  parseYearMonthKey,
   removeSpecialLeaveDate
 } from './specialLeaveSync';
 
@@ -37,5 +39,14 @@ describe('specialLeaveSync', () => {
         '2025-03-12'
       )
     ).toEqual(['2025/03/10', '2025/03/15']);
+  });
+
+  it('matches special leave cash months across common month formats', () => {
+    expect(parseYearMonthKey('2026年6月')).toBe('2026-06');
+    expect(parseYearMonthKey('2026-06')).toBe('2026-06');
+    expect(parseYearMonthKey('2026/6')).toBe('2026-06');
+    expect(parseYearMonthKey('202606')).toBe('2026-06');
+    expect(matchesYearMonth('2026年6月', 2026, 6)).toBe(true);
+    expect(matchesYearMonth('2026年7月', 2026, 6)).toBe(false);
   });
 });

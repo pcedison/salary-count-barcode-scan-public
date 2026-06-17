@@ -24,7 +24,7 @@ interface PrintableSalarySheetProps {
       clockIn: string;
       clockOut: string;
       isHoliday: boolean;
-      holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'special_leave';
+      holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'special_leave' | 'special_leave_cash';
     }>;
     specialLeaveInfo?: {
       usedDays: number;
@@ -67,6 +67,8 @@ const getHolidayLabel = (holidayType?: string): string => {
       return '颱風假';
     case 'special_leave':
       return '特別休假';
+    case 'special_leave_cash':
+      return '特休折現';
     default:
       return '假日';
   }
@@ -93,7 +95,7 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
   };
 
   // 按日期排序考勤記錄
-  const sortedAttendance = [...result.attendanceData].sort((a, b) => {
+  const sortedAttendance = result.attendanceData.filter(record => record.holidayType !== 'special_leave_cash').sort((a, b) => {
     return new Date(a.date.replace(/\//g, '-')).getTime() - new Date(b.date.replace(/\//g, '-')).getTime();
   });
 
@@ -119,6 +121,7 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
   const totalOT2 = safeNumber(attendanceWithOT.reduce((sum, record) => sum + safeNumber(record.ot2), 0));
   // 總加班費
   const totalOTPay = safeNumber(attendanceWithOT.reduce((sum, record) => sum + safeNumber(record.pay), 0));
+  const specialLeaveCashAmount = safeNumber(result.specialLeaveInfo?.cashAmount);
 
   // 檢查日期是否為特別假
   const isSpecialLeaveDate = (date: string): boolean => {
@@ -429,6 +432,12 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
               <td colSpan={5}>假日給薪總計：</td>
               <td className="amount-cell">{result.holidayDays > 0 ? safeNumber(result.totalHolidayPay) : '0'}</td>
             </tr>
+            {specialLeaveCashAmount > 0 && (
+              <tr className="summary-size-row special-leave-cash-row">
+                <td colSpan={5}>特休折現：</td>
+                <td className="amount-cell">{specialLeaveCashAmount}</td>
+              </tr>
+            )}
             <tr className="base-salary-row">
               <td colSpan={5}>基本底薪：</td>
               <td className="amount-cell">{safeNumber(result.baseSalary)}</td>

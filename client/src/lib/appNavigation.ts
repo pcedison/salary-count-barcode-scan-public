@@ -26,6 +26,10 @@ export function normalizeMainPath(pathname: string): string {
 
 export function getMainTabForPath(pathname: string): MainTab | null {
   const normalizedPath = normalizeMainPath(pathname);
+  if (normalizedPath === '/attendance') {
+    return 'attendance';
+  }
+
   const matchedItem = MAIN_NAV_ITEMS.find((item) => item.path === normalizedPath);
 
   return matchedItem?.tab ?? null;

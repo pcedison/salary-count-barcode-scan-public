@@ -7,6 +7,7 @@ import type {
   TemporaryAttendance,
 } from '@shared/schema';
 import { calculateDailyOvertimeSummary } from '@shared/utils/salaryMath';
+import { matchesYearMonth } from '@shared/utils/specialLeaveSync';
 
 import {
   getSalaryAutomationConfig,
@@ -133,9 +134,7 @@ function getSpecialLeaveInfoForMonth(employee: Employee, settings: Settings, tar
     .filter((date) => date.startsWith(monthPrefix));
 
   const cashMonth = employee.specialLeaveCashMonth || '';
-  const isCashMonth =
-    cashMonth === `${target.year}年${target.month}月` ||
-    cashMonth === `${target.year}-${String(target.month).padStart(2, '0')}`;
+  const isCashMonth = matchesYearMonth(cashMonth, target.year, target.month);
   const cashDays = isCashMonth ? employee.specialLeaveCashDays || 0 : 0;
   const cashAmount = cashDays * Math.round(settings.baseMonthSalary / 30);
 
@@ -148,6 +147,7 @@ function getSpecialLeaveInfoForMonth(employee: Employee, settings: Settings, tar
     usedDates: monthlyUsedDates,
     cashDays,
     cashAmount,
+    cashMonth: isCashMonth && cashDays > 0 ? cashMonth : undefined,
     notes: employee.specialLeaveNotes || undefined,
   };
 }

@@ -26,6 +26,11 @@ import {
   calculateNetSalary,
   normalizeSalarySettings
 } from '@shared/utils/salaryMath';
+import {
+  formatYearMonthKey,
+  matchesYearMonth,
+  parseYearMonthKey
+} from '@shared/utils/specialLeaveSync';
 
 interface AttendanceRecord {
   id: number;
@@ -39,6 +44,15 @@ interface AttendanceRecord {
   holidayId?: number;
   holidayType?: string;
   isBarcodeScanned?: boolean;
+  _isLeaveRecord?: boolean;
+  _isNoClockType?: boolean;
+  _displayDate?: string;
+  _holidayType?: string;
+  _holidayName?: string;
+  _isSpecialLeaveCashRecord?: boolean;
+  _specialLeaveCashDays?: number;
+  _specialLeaveCashAmount?: number;
+  _specialLeaveCashNotes?: string | null;
 }
 
 interface NewAttendanceRecord {
@@ -77,8 +91,15 @@ interface SalaryResult {
     usedDates: string[];
     cashDays: number;
     cashAmount: number;
+    cashMonth?: string;
     notes?: string;
   };
+}
+
+interface FinalizedSalaryRecord {
+  employeeId?: number | null;
+  salaryYear: number;
+  salaryMonth: number;
 }
 
 const ATTENDANCE_PAGE_LIMIT = 1000;
@@ -145,6 +166,35 @@ function toMonthKey(dateValue: string): string | null {
   return `${year}-${String(month).padStart(2, "0")}`;
 }
 
+function parseAttendanceDateParts(date: string | null | undefined): { year: number; month: number; day: number } | null {
+  const match = String(date || '').match(/^(\d{4})[/-](\d{1,2})(?:[/-](\d{1,2}))?/);
+  if (!match) {
+    return null;
+  }
+
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3] || '0', 10);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return null;
+  }
+
+  return { year, month, day };
+}
+
+function getEmployeeMonthKey(employeeId: number, year: number, month: number): string {
+  return `${employeeId}:${formatYearMonthKey(year, month)}`;
+}
+
+function getAttendanceSortValue(record: Pick<AttendanceRecord, 'date'>): number {
+  const parts = parseAttendanceDateParts(record.date);
+  if (!parts) {
+    return 0;
+  }
+
+  return parts.year * 10000 + parts.month * 100 + parts.day;
+}
+
 export function useAttendanceData() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -189,6 +239,25 @@ export function useAttendanceData() {
     const records = rawAttendanceData ? extractListData(rawAttendanceData) : [];
     return records.map((record) => normalizeAttendanceRecord(record));
   }, [rawAttendanceData]);
+
+  const { data: salaryRecords = [] } = useQuery<FinalizedSalaryRecord[]>({
+    queryKey: ['/api/salary-records'],
+    enabled: isAdmin,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1
+  });
+
+  const finalizedSalaryMonthKeys = useMemo(() => {
+    return new Set(
+      salaryRecords
+        .filter((record) => record.employeeId && record.salaryYear && record.salaryMonth)
+        .map((record) =>
+          getEmployeeMonthKey(record.employeeId as number, record.salaryYear, record.salaryMonth)
+        )
+    );
+  }, [salaryRecords]);
 
   // Surface fetch errors to admins.
   useEffect(() => {
@@ -239,7 +308,7 @@ export function useAttendanceData() {
       .filter(date => date.startsWith(monthPrefix));
 
     const cashMonth = employee.specialLeaveCashMonth || '';
-    const isCashMonth = cashMonth === `${year}年${month}月`;
+    const isCashMonth = matchesYearMonth(cashMonth, year, month);
     const cashDays = isCashMonth ? (employee.specialLeaveCashDays || 0) : 0;
     const baseSalary = settings?.baseMonthSalary || 29500;
     const dailySalary = Math.round(baseSalary / 30);
@@ -254,6 +323,7 @@ export function useAttendanceData() {
       usedDates: monthlyUsedDates,
       cashDays,
       cashAmount,
+      cashMonth: isCashMonth && cashDays > 0 ? cashMonth : undefined,
       notes: employee.specialLeaveNotes || ''
     };
   };
@@ -261,6 +331,20 @@ export function useAttendanceData() {
   // Enhance attendance rows with holiday labels and employee names.
   const enhancedAttendanceData = useMemo(() => {
     const attData = Array.isArray(attendanceData) ? attendanceData : [];
+    const activeAttendanceData = attData.filter((record) => {
+      if (!record.employeeId) {
+        return true;
+      }
+
+      const dateParts = parseAttendanceDateParts(record.date);
+      if (!dateParts) {
+        return true;
+      }
+
+      return !finalizedSalaryMonthKeys.has(
+        getEmployeeMonthKey(record.employeeId, dateParts.year, dateParts.month)
+      );
+    });
     debugLog('attendance enhancement counts', employees?.length || 0, 'records', attData.length);
 
     const holidayTypeLabels: Record<string, string> = {
@@ -269,12 +353,13 @@ export function useAttendanceData() {
       'sick_leave': '病假',
       'personal_leave': '事假',
       'typhoon_leave': '颱風假',
+      'special_leave_cash': '特休折現',
       'worked': '假日出勤'
     };
 
     const noClockTypes = ['national_holiday', 'typhoon_leave', 'special_leave'];
 
-    const enhancedRecords = attData.map((record: any) => {
+    const enhancedRecords = activeAttendanceData.map((record: any) => {
       let enhanced: any = { ...record };
 
       if (record.employeeId && employees && employees.length > 0) {
@@ -296,18 +381,60 @@ export function useAttendanceData() {
       return enhanced;
     });
 
-    return enhancedRecords;
-  }, [attendanceData, employees]);
+    const dailySalary = Math.round((settings?.baseMonthSalary || 29500) / 30);
+    const specialLeaveCashRecords = (employees || []).flatMap((employee) => {
+      const cashDays = employee.specialLeaveCashDays || 0;
+      if (cashDays <= 0) {
+        return [];
+      }
+
+      const cashMonthKey = parseYearMonthKey(employee.specialLeaveCashMonth);
+      if (!cashMonthKey) {
+        return [];
+      }
+
+      const [yearText, monthText] = cashMonthKey.split('-');
+      const year = Number.parseInt(yearText, 10);
+      const month = Number.parseInt(monthText, 10);
+      if (finalizedSalaryMonthKeys.has(getEmployeeMonthKey(employee.id, year, month))) {
+        return [];
+      }
+
+      const cashAmount = cashDays * dailySalary;
+      const paddedMonth = String(month).padStart(2, '0');
+
+      return [{
+        id: -(1_000_000 + employee.id * 10_000 + year * 100 + month),
+        employeeId: employee.id,
+        _employeeName: employee.name,
+        _employeeDepartment: employee.department || undefined,
+        date: `${year}/${paddedMonth}/00`,
+        _displayDate: `${year}/${paddedMonth}`,
+        clockIn: '--:--',
+        clockOut: '--:--',
+        isHoliday: true,
+        holidayType: 'special_leave_cash',
+        isBarcodeScanned: false,
+        _isLeaveRecord: true,
+        _isNoClockType: true,
+        _holidayType: 'special_leave_cash',
+        _holidayName: `特休折現 ${cashDays}天 / $${cashAmount.toLocaleString()}`,
+        _isSpecialLeaveCashRecord: true,
+        _specialLeaveCashDays: cashDays,
+        _specialLeaveCashAmount: cashAmount,
+        _specialLeaveCashNotes: employee.specialLeaveNotes || null
+      } satisfies AttendanceRecord];
+    });
+
+    return [...enhancedRecords, ...specialLeaveCashRecords];
+  }, [attendanceData, employees, finalizedSalaryMonthKeys, settings?.baseMonthSalary]);
 
   // Show the newest attendance records first in the registration table.
   const sortedAttendanceData = useMemo(() => {
     if (enhancedAttendanceData.length === 0) return [];
 
     return [...enhancedAttendanceData].sort((a, b) => {
-      const dateA = new Date(a.date.replace(/\//g, '-'));
-      const dateB = new Date(b.date.replace(/\//g, '-'));
-      const dateDiff = dateB.getTime() - dateA.getTime();
-
+      const dateDiff = getAttendanceSortValue(b) - getAttendanceSortValue(a);
       if (dateDiff !== 0) {
         return dateDiff;
       }
@@ -527,8 +654,13 @@ export function useAttendanceData() {
         : { employeeId: 0, employeeName: 'Unknown employee' };
 
       const employeeId = employeeInfo.employeeId as number;
-      const normalDays = sortedData.filter((day) => !day.isHoliday);
-      const holidayDays = sortedData.filter((day) => day.isHoliday);
+      const specialLeaveInfo = employeeId
+        ? getSpecialLeaveInfoForMonth(employeeId, salaryYear, salaryMonth)
+        : null;
+      const specialLeaveCashAmount = specialLeaveInfo?.cashAmount || 0;
+      const payrollAttendanceData = sortedData.filter((day) => !day._isSpecialLeaveCashRecord);
+      const normalDays = payrollAttendanceData.filter((day) => !day.isHoliday);
+      const holidayDays = payrollAttendanceData.filter((day) => day.isHoliday);
 
       let totalOT1Hours = 0;
       let totalOT2Hours = 0;
@@ -572,7 +704,7 @@ export function useAttendanceData() {
         : [];
       debugLog("employeeHolidays", employeeHolidays.map((h: any) => ({ date: h.date, name: h.name })));
 
-      const actualHolidayWork = sortedData.filter((day) => {
+      const actualHolidayWork = payrollAttendanceData.filter((day) => {
         if (!day.clockIn || !day.clockOut || day.clockIn === "" || day.clockOut === "" || day.clockIn === "--:--" || day.clockOut === "--:--") {
           return false;
         }
@@ -592,7 +724,7 @@ export function useAttendanceData() {
       });
 
       const paidLeave = employeeHolidays.filter((h: any) => {
-        const hasAttendanceRecord = sortedData.some((day) =>
+        const hasAttendanceRecord = payrollAttendanceData.some((day) =>
           day.date === h.date && day.clockIn && day.clockOut && day.clockIn !== "" && day.clockOut !== ""
         );
         return !hasAttendanceRecord;
@@ -607,7 +739,7 @@ export function useAttendanceData() {
       const hourlyWage = Math.round(dailyWage / 8);
       const leaveDeductions: { name: string; amount: number }[] = [];
 
-      sortedData.forEach((day) => {
+      payrollAttendanceData.forEach((day) => {
         const holidayType = day.holidayType;
         if (!holidayType || holidayType === "none" || holidayType === "worked" || holidayType === "national_holiday") {
           return;
@@ -644,7 +776,14 @@ export function useAttendanceData() {
       debugLog("leaveDeductions", leaveDeductions);
 
       const allDeductions = [...deductions, ...leaveDeductions];
-      const grossSalary = calculateGrossSalary(baseMonthSalary, totalOvertimePay, totalHolidayPay, welfareAllowance, housingAllowance);
+      const grossSalary =
+        calculateGrossSalary(
+          baseMonthSalary,
+          totalOvertimePay,
+          totalHolidayPay,
+          welfareAllowance,
+          housingAllowance
+        ) + specialLeaveCashAmount;
       const totalDeductions = allDeductions.reduce((sum: number, deduction: { name: string; amount: number }) => sum + deduction.amount, 0);
       const netSalary = calculateNetSalary(grossSalary, totalDeductions);
 
@@ -670,7 +809,8 @@ export function useAttendanceData() {
         deductions: allDeductions.map((d: { name: string; amount: number; description?: string }) => ({ name: d.name, amount: d.amount })),
         totalDeductions,
         netSalary,
-        attendanceData: sortedData
+        attendanceData: payrollAttendanceData,
+        specialLeaveInfo: specialLeaveInfo || undefined
       };
 
       setSalaryResult(result);
@@ -700,8 +840,11 @@ export function useAttendanceData() {
         recordsToFinalize && recordsToFinalize.length > 0
           ? recordsToFinalize
           : salaryResult.attendanceData;
+      const payrollSourceAttendanceData = sourceAttendanceData.filter(
+        (record) => !record._isSpecialLeaveCashRecord && record.id > 0
+      );
 
-      if (!sourceAttendanceData || sourceAttendanceData.length === 0) {
+      if (!payrollSourceAttendanceData || payrollSourceAttendanceData.length === 0) {
         toast({
           title: "Salary save failed",
           description: "No attendance records were found for the selected month.",
@@ -712,7 +855,7 @@ export function useAttendanceData() {
 
       const employeeMap: Record<number, AttendanceRecord[]> = {};
 
-      sourceAttendanceData.forEach((record: AttendanceRecord) => {
+      payrollSourceAttendanceData.forEach((record: AttendanceRecord) => {
         if (record.employeeId) {
           const employeeId = record.employeeId;
           if (!employeeMap[employeeId]) {

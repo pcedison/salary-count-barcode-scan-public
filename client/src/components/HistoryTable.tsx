@@ -5,6 +5,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useEmployees } from '@/hooks/useEmployees';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { matchesYearMonth } from '@shared/utils/specialLeaveSync';
 
 interface HistoryTableProps {
   records: Array<{
@@ -24,6 +25,7 @@ interface HistoryTableProps {
       usedDates: string[];
       cashDays: number;
       cashAmount: number;
+      cashMonth?: string;
       notes?: string;
     };
   }>;
@@ -53,7 +55,7 @@ export default function HistoryTable({
   onSelectAll
 }: HistoryTableProps) {
   const [, setLocation] = useLocation();
-  const { activeEmployees } = useEmployees();
+  const { employees, activeEmployees } = useEmployees();
 
   const getEmployeesFromAttendanceData = (attendanceData: any[]) => {
     if (!attendanceData || !Array.isArray(attendanceData) || attendanceData.length === 0) {
@@ -89,6 +91,37 @@ export default function HistoryTable({
     return '無員工資料';
   };
 
+  const getRecordEmployeeId = (record: HistoryRecord): number | null => {
+    const employeeId = (record as any).employeeId;
+    if (typeof employeeId === 'number') {
+      return employeeId;
+    }
+
+    const attendanceEmployeeId = record.attendanceData?.find(
+      (entry) => typeof entry.employeeId === 'number'
+    )?.employeeId;
+
+    return typeof attendanceEmployeeId === 'number' ? attendanceEmployeeId : null;
+  };
+
+  const shouldShowSpecialLeaveCash = (record: HistoryRecord): boolean => {
+    const info = record.specialLeaveInfo;
+    if (!info || info.cashDays <= 0) {
+      return false;
+    }
+
+    if (info.cashMonth) {
+      return matchesYearMonth(info.cashMonth, record.salaryYear, record.salaryMonth);
+    }
+
+    const employeeId = getRecordEmployeeId(record);
+    const employee = employees.find((item) => item.id === employeeId);
+    return Boolean(
+      employee?.specialLeaveCashMonth &&
+      matchesYearMonth(employee.specialLeaveCashMonth, record.salaryYear, record.salaryMonth)
+    );
+  };
+
   const renderEmployeeDetails = (record: HistoryRecord) => (
     <div>
       {(record as any).employeeName || (record.attendanceData && record.attendanceData.length > 0) ? (
@@ -112,7 +145,7 @@ export default function HistoryTable({
             </div>
           )}
 
-          {record.specialLeaveInfo && record.specialLeaveInfo.cashDays > 0 && (
+          {shouldShowSpecialLeaveCash(record) && record.specialLeaveInfo && (
             <div className="mt-2 text-xs text-amber-600">
               折抵{record.specialLeaveInfo.cashDays}天 ({formatCurrency(record.specialLeaveInfo.cashAmount)})
             </div>

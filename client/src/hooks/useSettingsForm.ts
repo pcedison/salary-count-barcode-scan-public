@@ -1,11 +1,31 @@
-import { useEffect, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { useSettings } from '@/hooks/useSettings';
 import { useAdmin } from '@/hooks/useAdmin';
 import { useEmployees } from '@/hooks/useEmployees';
 import { apiRequest } from '@/lib/queryClient';
 import { constants } from '@/lib/constants';
+import { formatYearMonthKey, parseYearMonthKey } from '@shared/utils/specialLeaveSync';
+
+interface FinalizedSalaryRecord {
+  employeeId?: number | null;
+  salaryYear: number;
+  salaryMonth: number;
+}
+
+interface HolidayRecord {
+  id: number;
+  employeeId?: number | null;
+  date: string;
+  name: string;
+  description?: string;
+  holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'special_leave';
+}
+
+function getEmployeeMonthKey(employeeId: number, yearMonthKey: string): string {
+  return `${employeeId}:${yearMonthKey}`;
+}
 
 const DEFAULT_CONFIG = {
   BASE_HOURLY_RATE: constants.BASE_HOURLY_RATE,
@@ -41,6 +61,52 @@ export function useSettingsForm() {
   const { settings, isLoading, updateSettings, holidays, isHolidaysLoading, addHoliday, deleteHoliday } =
     useSettings({ requireAdminSettings: isAdmin });
   const { employees } = useEmployees({ requireAdminDetails: isAdmin });
+  const { data: salaryRecords = [], isLoading: isSalaryRecordsLoading } = useQuery<FinalizedSalaryRecord[]>({
+    queryKey: ['/api/salary-records'],
+    enabled: isAdmin,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1
+  });
+
+  const finalizedSalaryMonthKeys = useMemo(() => {
+    return new Set(
+      salaryRecords
+        .filter((record) => record.employeeId && record.salaryYear && record.salaryMonth)
+        .map((record) =>
+          getEmployeeMonthKey(
+            record.employeeId as number,
+            formatYearMonthKey(record.salaryYear, record.salaryMonth)
+          )
+        )
+    );
+  }, [salaryRecords]);
+
+  const visibleHolidays = useMemo(() => {
+    if (isAdmin && isSalaryRecordsLoading) {
+      return [];
+    }
+
+    if (!Array.isArray(holidays)) {
+      return [];
+    }
+
+    return holidays.filter((holiday: HolidayRecord) => {
+      if (!holiday.employeeId) {
+        return true;
+      }
+
+      const yearMonthKey = parseYearMonthKey(holiday.date);
+      if (!yearMonthKey) {
+        return true;
+      }
+
+      return !finalizedSalaryMonthKeys.has(
+        getEmployeeMonthKey(holiday.employeeId, yearMonthKey)
+      );
+    });
+  }, [holidays, finalizedSalaryMonthKeys, isAdmin, isSalaryRecordsLoading]);
 
   const normalizedEmployees = employees.map((employee) => ({
     ...employee,
@@ -313,6 +379,19 @@ export function useSettingsForm() {
       toast({ title: '員工必選', description: '請選擇要新增假日的員工。', variant: 'destructive' });
       return;
     }
+    const holidayYearMonthKey = parseYearMonthKey(newHolidayDate);
+    if (
+      holidayYearMonthKey &&
+      finalizedSalaryMonthKeys.has(getEmployeeMonthKey(selectedEmployeeId, holidayYearMonthKey))
+    ) {
+      toast({
+        title: '該月份已結算',
+        description: '已完成薪資結算的月份不能再新增假日設定。',
+        variant: 'destructive'
+      });
+      return;
+    }
+
     try {
       const addedHoliday = await addHoliday({
         employeeId: selectedEmployeeId,
@@ -322,14 +401,8 @@ export function useSettingsForm() {
         description: newHolidayDescription || ''
       });
       if (addedHoliday) {
-        const settingsSaved = await handleSaveSettings();
         const selectedEmployee = employees?.find((emp) => emp.id === selectedEmployeeId);
-        toast({
-          title: '新增成功',
-          description: settingsSaved
-            ? `已為員工 ${selectedEmployee?.name} 新增假日並自動儲存`
-            : `已為員工 ${selectedEmployee?.name} 新增假日；薪資設定未自動儲存`
-        });
+        toast({ title: '新增成功', description: `已為員工 ${selectedEmployee?.name} 新增假日並自動儲存` });
         setNewHolidayDate('');
         setNewHolidayDescription('');
         setSelectedEmployeeId(null);
@@ -433,8 +506,8 @@ export function useSettingsForm() {
     handleDisableBarcode,
     handleEnableBarcode,
     // Holiday
-    holidays,
-    isHolidaysLoading,
+    holidays: visibleHolidays,
+    isHolidaysLoading: isHolidaysLoading || isSalaryRecordsLoading,
     newHolidayDate,
     setNewHolidayDate,
     newHolidayDescription,

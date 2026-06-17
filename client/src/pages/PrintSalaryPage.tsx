@@ -37,7 +37,7 @@ interface SalaryRecordWithExtras {
     clockIn: string;
     clockOut: string;
     isHoliday: boolean;
-    holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'special_leave' | null;
+    holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'special_leave' | 'special_leave_cash' | null;
   }> | null;
   specialLeaveInfo?: {
     usedDays: number;
@@ -108,7 +108,9 @@ export default function PrintSalaryPage() {
       }
     });
 
-    const sortedAttendance = [...(salaryRecord.attendanceData ?? [])].sort((a, b) => {
+    const sortedAttendance = (salaryRecord.attendanceData ?? [])
+      .filter((record) => record.holidayType !== 'special_leave_cash')
+      .sort((a, b) => {
       return new Date(a.date.replace(/\//g, '-')).getTime() - new Date(b.date.replace(/\//g, '-')).getTime();
     });
 
@@ -178,6 +180,11 @@ export default function PrintSalaryPage() {
   <td colspan="5">假日出勤加給</td>
   <td class="amount-cell">${(salaryRecord.holidayDays ?? 0) > 0 ? salaryRecord.totalHolidayPay : '0'}</td>
 </tr>
+${salaryRecord.specialLeaveInfo && salaryRecord.specialLeaveInfo.cashAmount > 0 ? `
+<tr class="summary-size-row">
+  <td colspan="5">特休折現</td>
+  <td class="amount-cell">${salaryRecord.specialLeaveInfo.cashAmount}</td>
+</tr>` : ''}
 <tr class="base-salary-row">
   <td colspan="5">基本薪資</td>
   <td class="amount-cell">${salaryRecord.baseSalary}</td>
