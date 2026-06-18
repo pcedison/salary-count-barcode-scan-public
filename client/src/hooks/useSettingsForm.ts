@@ -6,6 +6,7 @@ import { useAdmin } from '@/hooks/useAdmin';
 import { useEmployees } from '@/hooks/useEmployees';
 import { apiRequest } from '@/lib/queryClient';
 import { constants } from '@/lib/constants';
+import { extractListData, type PaginatedPayload } from '@/lib/paginatedPayload';
 import { formatYearMonthKey, parseYearMonthKey } from '@shared/utils/specialLeaveSync';
 
 interface FinalizedSalaryRecord {
@@ -61,7 +62,9 @@ export function useSettingsForm() {
   const { settings, isLoading, updateSettings, holidays, isHolidaysLoading, addHoliday, deleteHoliday } =
     useSettings({ requireAdminSettings: isAdmin });
   const { employees } = useEmployees({ requireAdminDetails: isAdmin });
-  const { data: salaryRecords = [], isLoading: isSalaryRecordsLoading } = useQuery<FinalizedSalaryRecord[]>({
+  const { data: rawSalaryRecords = [], isLoading: isSalaryRecordsLoading } = useQuery<
+    FinalizedSalaryRecord[] | PaginatedPayload<FinalizedSalaryRecord>
+  >({
     queryKey: ['/api/salary-records'],
     enabled: isAdmin,
     staleTime: 30_000,
@@ -69,6 +72,11 @@ export function useSettingsForm() {
     refetchOnWindowFocus: false,
     retry: 1
   });
+
+  const salaryRecords = useMemo(
+    () => extractListData(rawSalaryRecords),
+    [rawSalaryRecords]
+  );
 
   const finalizedSalaryMonthKeys = useMemo(() => {
     return new Set(

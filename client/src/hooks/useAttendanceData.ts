@@ -240,7 +240,9 @@ export function useAttendanceData() {
     return records.map((record) => normalizeAttendanceRecord(record));
   }, [rawAttendanceData]);
 
-  const { data: salaryRecords = [] } = useQuery<FinalizedSalaryRecord[]>({
+  const { data: rawSalaryRecords = [] } = useQuery<
+    FinalizedSalaryRecord[] | PaginatedPayload<FinalizedSalaryRecord>
+  >({
     queryKey: ['/api/salary-records'],
     enabled: isAdmin,
     staleTime: 30_000,
@@ -248,6 +250,11 @@ export function useAttendanceData() {
     refetchOnWindowFocus: false,
     retry: 1
   });
+
+  const salaryRecords = useMemo(
+    () => extractListData(rawSalaryRecords),
+    [rawSalaryRecords]
+  );
 
   const finalizedSalaryMonthKeys = useMemo(() => {
     return new Set(
