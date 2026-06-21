@@ -99,7 +99,7 @@
     "jszip": "^3.10.1",
     "lucide-react": "^0.453.0",
     "nanoid": "^5.1.11",
-    "nodemailer": "^8.0.10",
+    "nodemailer": "^9.0.1",
     "pg": "^8.16.3",
     "postgres": "^3.4.7",
     "puppeteer-core": "^25.1.0",
