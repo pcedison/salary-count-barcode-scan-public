@@ -125,7 +125,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "4.17.21",
     "@types/express-session": "^1.18.0",
-    "@types/node": "24.12.4",
+    "@types/node": "26.0.0",
     "@types/nodemailer": "^8.0.0",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.11",
