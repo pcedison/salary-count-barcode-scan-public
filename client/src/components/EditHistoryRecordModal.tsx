@@ -244,6 +244,7 @@ export default function EditHistoryRecordModal({
                           <SelectItem value="sick_leave">病假</SelectItem>
                           <SelectItem value="personal_leave">事假</SelectItem>
                           <SelectItem value="typhoon_leave">颱風假</SelectItem>
+                          <SelectItem value="temporary_stop_work_and_classes">臨時停止上班上課</SelectItem>
                           <SelectItem value="special_leave">特別假</SelectItem>
                         </SelectContent>
                       </Select>
@@ -315,6 +316,7 @@ export default function EditHistoryRecordModal({
                               <SelectItem value="sick_leave">病假</SelectItem>
                               <SelectItem value="personal_leave">事假</SelectItem>
                               <SelectItem value="typhoon_leave">颱風假</SelectItem>
+                              <SelectItem value="temporary_stop_work_and_classes">臨時停止上班上課</SelectItem>
                               <SelectItem value="special_leave">特別假</SelectItem>
                             </SelectContent>
                           </Select>

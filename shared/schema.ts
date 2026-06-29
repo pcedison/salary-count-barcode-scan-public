@@ -183,7 +183,15 @@ export const holidays = pgTable("holidays", {
   date: text("date").notNull(),
   name: text("name").notNull(),
   holidayType: text("holiday_type", {
-    enum: ["worked", "sick_leave", "personal_leave", "national_holiday", "typhoon_leave", "special_leave"]
+    enum: [
+      "worked",
+      "sick_leave",
+      "personal_leave",
+      "national_holiday",
+      "typhoon_leave",
+      "temporary_stop_work_and_classes",
+      "special_leave"
+    ]
   }).notNull().default("national_holiday"),
   description: text("description"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -201,6 +209,7 @@ export const holidayTypeOptions = [
   { value: "sick_leave", label: "病假", paid: false, deductPay: true, description: "病假扣薪" },
   { value: "personal_leave", label: "事假", paid: false, deductPay: true, description: "事假扣薪" },
   { value: "typhoon_leave", label: "颱風假", paid: false, deductPay: true, description: "依公司規定處理" },
+  { value: "temporary_stop_work_and_classes", label: "臨時停止上班上課", paid: false, deductPay: true, description: "依公司規定處理" },
   { value: "worked", label: "假日出勤", paid: true, deductPay: false, description: "假日出勤加給" }
 ] as const;
 

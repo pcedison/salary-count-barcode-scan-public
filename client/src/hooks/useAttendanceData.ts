@@ -360,11 +360,12 @@ export function useAttendanceData() {
       'sick_leave': '病假',
       'personal_leave': '事假',
       'typhoon_leave': '颱風假',
+      'temporary_stop_work_and_classes': '臨時停止上班上課',
       'special_leave_cash': '特休折現',
       'worked': '假日出勤'
     };
 
-    const noClockTypes = ['national_holiday', 'typhoon_leave', 'special_leave'];
+    const noClockTypes = ['national_holiday', 'typhoon_leave', 'temporary_stop_work_and_classes', 'special_leave'];
 
     const enhancedRecords = activeAttendanceData.map((record: any) => {
       let enhanced: any = { ...record };
@@ -758,6 +759,12 @@ export function useAttendanceData() {
           case "typhoon_leave":
             leaveDeductions.push({
               name: `typhoon_leave (${day.date})`,
+              amount: dailyWage
+            });
+            break;
+          case "temporary_stop_work_and_classes":
+            leaveDeductions.push({
+              name: `temporary_stop_work_and_classes (${day.date})`,
               amount: dailyWage
             });
             break;

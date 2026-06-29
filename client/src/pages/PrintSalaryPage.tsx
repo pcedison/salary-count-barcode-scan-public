@@ -37,7 +37,7 @@ interface SalaryRecordWithExtras {
     clockIn: string;
     clockOut: string;
     isHoliday: boolean;
-    holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'special_leave' | 'special_leave_cash' | null;
+    holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'temporary_stop_work_and_classes' | 'special_leave' | 'special_leave_cash' | null;
   }> | null;
   specialLeaveInfo?: {
     usedDays: number;

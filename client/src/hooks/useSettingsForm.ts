@@ -21,7 +21,7 @@ interface HolidayRecord {
   date: string;
   name: string;
   description?: string;
-  holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'special_leave';
+  holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'temporary_stop_work_and_classes' | 'special_leave';
 }
 
 function getEmployeeMonthKey(employeeId: number, yearMonthKey: string): string {
@@ -147,7 +147,7 @@ export function useSettingsForm() {
   const [newHolidayDescription, setNewHolidayDescription] = useState<string>('');
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<number | null>(null);
   const [holidayType, setHolidayType] = useState<
-    'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'special_leave'
+    'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'temporary_stop_work_and_classes' | 'special_leave'
   >('national_holiday');
 
   // --- Auth / PIN state ---

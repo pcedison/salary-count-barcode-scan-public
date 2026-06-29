@@ -8,7 +8,16 @@ export interface SalaryDeductionItem {
   description?: string;
 }
 
-const AUTO_LEAVE_DEDUCTION_KEYWORDS = ['病假扣款', '事假扣款', '颱風假扣款'];
+const AUTO_LEAVE_DEDUCTION_KEYWORDS = [
+  '病假扣款',
+  '事假扣款',
+  '颱風假扣款',
+  '臨時停止上班上課扣款',
+  'sick_leave (',
+  'personal_leave (',
+  'typhoon_leave (',
+  'temporary_stop_work_and_classes (',
+];
 
 export function matchesSalaryYearMonth(
   date: string | null | undefined,

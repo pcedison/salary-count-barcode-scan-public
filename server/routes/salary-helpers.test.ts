@@ -5,7 +5,7 @@ import {
   filterAttendanceForSalaryMonth,
   mergeSalaryDeductions,
   normalizeSalaryDeductions,
-  shouldRecalculateSalary
+  shouldRecalculateSalary,
 } from './salary-helpers';
 
 describe('salary route helpers', () => {
@@ -14,12 +14,12 @@ describe('salary route helpers', () => {
       { employeeId: 5, date: '2026/03/01', holidayType: 'worked' },
       { employeeId: 5, date: '2026-03-15', holidayType: 'sick_leave' },
       { employeeId: 5, date: '2026/04/01', holidayType: 'worked' },
-      { employeeId: 6, date: '2026/03/20', holidayType: 'worked' }
+      { employeeId: 6, date: '2026/03/20', holidayType: 'worked' },
     ];
 
     expect(filterAttendanceForSalaryMonth(records, 5, 2026, 3)).toEqual([
       { employeeId: 5, date: '2026/03/01', holidayType: 'worked' },
-      { employeeId: 5, date: '2026-03-15', holidayType: 'sick_leave' }
+      { employeeId: 5, date: '2026-03-15', holidayType: 'sick_leave' },
     ]);
   });
 
@@ -29,13 +29,15 @@ describe('salary route helpers', () => {
         [
           { name: '勞保費', amount: 100 },
           { name: '病假扣款 (2026/03/01)', amount: 50 },
-          { name: '颱風假扣款 (2026/03/02)', amount: 80 }
+          { name: 'typhoon_leave (2026/03/02)', amount: 80 },
+          { name: 'temporary_stop_work_and_classes (2026/03/03)', amount: 90 },
+          { name: '臨時停止上班上課扣款 (2026/03/04)', amount: 100 },
         ],
-        [{ name: '病假扣款 (2026/03/03)', amount: 60 }]
+        [{ name: '病假扣款 (2026/03/05)', amount: 60 }]
       )
     ).toEqual([
       { name: '勞保費', amount: 100 },
-      { name: '病假扣款 (2026/03/03)', amount: 60 }
+      { name: '病假扣款 (2026/03/05)', amount: 60 },
     ]);
   });
 
@@ -43,7 +45,7 @@ describe('salary route helpers', () => {
     expect(
       deriveHolidayPayBase({
         storedTotalHolidayPay: 1800,
-        previousWorkedHolidayPay: 1200
+        previousWorkedHolidayPay: 1200,
       })
     ).toBe(600);
 
@@ -51,7 +53,7 @@ describe('salary route helpers', () => {
       deriveHolidayPayBase({
         explicitHolidayPay: 900,
         storedTotalHolidayPay: 1800,
-        previousWorkedHolidayPay: 1200
+        previousWorkedHolidayPay: 1200,
       })
     ).toBe(900);
   });
@@ -67,7 +69,7 @@ describe('salary route helpers', () => {
       normalizeSalaryDeductions([
         { name: '勞保費', amount: 100 },
         { name: 'invalid' },
-        'bad item'
+        'bad item',
       ])
     ).toEqual([{ name: '勞保費', amount: 100, description: undefined }]);
   });
