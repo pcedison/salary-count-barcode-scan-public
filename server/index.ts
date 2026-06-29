@@ -1,5 +1,6 @@
 import { logOperation, OperationType } from './admin-auth';
 import { attachApiFallbackHandlers, createConfiguredApp } from './bootstrap/create-app';
+import { installGracefulShutdown } from './bootstrap/graceful-shutdown';
 import { startRuntimeServices } from './bootstrap/runtime-services';
 import { registerRoutes } from './routes';
 import { serveStatic } from './static';
@@ -34,6 +35,11 @@ const isDevelopment = process.env.NODE_ENV === 'development';
       appLog.info(`[server] serving on port ${port}`);
 
       const runtimeServices = startRuntimeServices({ logger: appLog });
+      installGracefulShutdown({
+        server,
+        runtimeServices,
+        logger: appLog,
+      });
 
       server.once('close', () => {
         runtimeServices.stop();
