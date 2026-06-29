@@ -15,6 +15,7 @@ const HOLIDAY_TYPE_LABELS: Record<string, string> = {
   national_holiday: '國定假日',
   special_leave: '特別休假',
   typhoon_leave: '颱風假',
+  temporary_stop_work_and_classes: '臨時停止上班上課',
   sick_leave: '病假',
   personal_leave: '事假',
   worked: '假日出勤'
@@ -37,6 +38,7 @@ async function ensureHolidayAttendanceRecord(holiday: Holiday) {
   const isNoClockType =
     holiday.holidayType === 'national_holiday' ||
     holiday.holidayType === 'typhoon_leave' ||
+    holiday.holidayType === 'temporary_stop_work_and_classes' ||
     holiday.holidayType === 'special_leave';
 
   await storage.createTemporaryAttendance({

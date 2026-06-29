@@ -25,6 +25,7 @@ interface SettingsFormProps {
       | 'personal_leave'
       | 'national_holiday'
       | 'typhoon_leave'
+      | 'temporary_stop_work_and_classes'
       | 'special_leave';
   }>;
   employees: Array<{ id: number; name: string; department: string }>;
@@ -37,6 +38,7 @@ interface SettingsFormProps {
     | 'personal_leave'
     | 'national_holiday'
     | 'typhoon_leave'
+    | 'temporary_stop_work_and_classes'
     | 'special_leave';
   connectionStatus: 'connected' | 'disconnected' | 'testing';
   isAdmin?: boolean;
@@ -65,6 +67,7 @@ interface SettingsFormProps {
       | 'personal_leave'
       | 'national_holiday'
       | 'typhoon_leave'
+      | 'temporary_stop_work_and_classes'
       | 'special_leave',
   ) => void;
   onAddHoliday: () => void;
@@ -239,6 +242,8 @@ function getHolidayBadgeClassName(holidayType?: SettingsFormProps['holidayType']
       return 'bg-orange-100 text-orange-700';
     case 'typhoon_leave':
       return 'bg-purple-100 text-purple-700';
+    case 'temporary_stop_work_and_classes':
+      return 'bg-cyan-100 text-cyan-700';
     case 'worked':
       return 'bg-blue-100 text-blue-700';
     default:

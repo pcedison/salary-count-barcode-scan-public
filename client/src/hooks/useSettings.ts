@@ -80,6 +80,7 @@ export function useSettings(options: UseSettingsOptions = {}) {
         | "personal_leave"
         | "national_holiday"
         | "typhoon_leave"
+        | "temporary_stop_work_and_classes"
         | "special_leave";
       description?: string;
     }) => {
@@ -172,6 +173,7 @@ export function useSettings(options: UseSettingsOptions = {}) {
       | "personal_leave"
       | "national_holiday"
       | "typhoon_leave"
+      | "temporary_stop_work_and_classes"
       | "special_leave";
     description?: string;
   }) => {

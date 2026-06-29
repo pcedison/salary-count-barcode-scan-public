@@ -391,6 +391,18 @@ export function calculateHolidayPayAdjustments(
         }
         break;
 
+      case 'temporary_stop_work_and_classes':
+        const temporaryClosureDeduction = Math.round(dailyWage);
+
+        if (temporaryClosureDeduction > 0) {
+          deductionItems.push({
+            name: `臨時停止上班上課扣款 (${record.date})`,
+            amount: temporaryClosureDeduction,
+            description: '臨時停止上班上課未出勤，扣除日薪100%'
+          });
+        }
+        break;
+
       case 'national_holiday':
         // 國定假日：不扣薪，已包含在基本薪資中
         break;

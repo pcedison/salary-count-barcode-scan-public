@@ -88,6 +88,8 @@ const getHolidayTypeStyle = (holidayType?: string) => {
       return 'bg-amber-100 text-amber-800';
     case 'typhoon_leave':
       return 'bg-purple-100 text-purple-800';
+    case 'temporary_stop_work_and_classes':
+      return 'bg-cyan-100 text-cyan-800';
     case 'worked':
       return 'bg-blue-100 text-blue-800';
     default:
