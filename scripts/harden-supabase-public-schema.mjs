@@ -9,6 +9,7 @@ const TABLES = [
   "temporary_attendance",
   "settings",
   "salary_records",
+  "monthly_salary_runs",
   "holidays",
   "pending_bindings",
   "oauth_states",
