@@ -146,7 +146,9 @@ describe('monthlySalaryRunRepository.acquireRun (real database)', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `npm run test:real-db -- monthlySalaryRunRepository`
+`npm run test:real-db` only chains two hardcoded files (`test:real-db:retention`, `test:real-db:rehearsal` — see `package.json`), so run this new file directly against the real-db Vitest config instead:
+
+Run: `npx vitest run --config vitest.real-db.config.ts server/repositories/monthlySalaryRunRepository.real-db.test.ts`
 Expected: FAIL — `Cannot find module './monthlySalaryRunRepository'` (the file doesn't exist yet).
 
 ---
@@ -257,13 +259,39 @@ export const monthlySalaryRunRepository = new DatabaseMonthlySalaryRunRepository
 
 - [ ] **Step 2: Run the real-db test to verify it passes**
 
-Run: `npm run test:real-db -- monthlySalaryRunRepository`
+Run: `npx vitest run --config vitest.real-db.config.ts server/repositories/monthlySalaryRunRepository.real-db.test.ts`
 Expected: PASS — all 3 tests green.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Wire the new test into the `test:real-db` verification gate**
+
+`package.json`'s `test:real-db` script (and README's "Extended database verification" section) only runs `test:real-db:retention` and `test:real-db:rehearsal` today. Add a third entry so this new test doesn't silently get skipped by anyone running the documented command.
+
+In `package.json`, change:
+
+```json
+    "test:real-db": "npm run test:real-db:retention && npm run test:real-db:rehearsal",
+    "test:real-db:retention": "vitest run --config vitest.real-db.config.ts server/storage.retention.real-db.test.ts",
+    "test:real-db:rehearsal": "vitest run --config vitest.real-db.config.ts server/rehearsal.real-db.test.ts",
+```
+
+to:
+
+```json
+    "test:real-db": "npm run test:real-db:retention && npm run test:real-db:rehearsal && npm run test:real-db:monthly-salary-run",
+    "test:real-db:retention": "vitest run --config vitest.real-db.config.ts server/storage.retention.real-db.test.ts",
+    "test:real-db:rehearsal": "vitest run --config vitest.real-db.config.ts server/rehearsal.real-db.test.ts",
+    "test:real-db:monthly-salary-run": "vitest run --config vitest.real-db.config.ts server/repositories/monthlySalaryRunRepository.real-db.test.ts",
+```
+
+- [ ] **Step 4: Run the full composite script to verify wiring**
+
+Run: `npm run test:real-db`
+Expected: PASS — all three real-db suites run and pass, in order.
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add server/repositories/monthlySalaryRunRepository.ts server/repositories/monthlySalaryRunRepository.real-db.test.ts
+git add server/repositories/monthlySalaryRunRepository.ts server/repositories/monthlySalaryRunRepository.real-db.test.ts package.json
 git commit -m "feat: add atomic monthlySalaryRunRepository.acquireRun"
 ```
 
@@ -536,7 +564,7 @@ Expected: PASS — all tests green, including "persists the monthly run, PDF pat
 
 - [ ] **Step 5: Run the real-database test suite once more**
 
-Run: `npm run test:real-db -- monthlySalaryRunRepository`
+Run: `npm run test:real-db`
 Expected: PASS (unchanged from Task 2, confirms nothing in this task broke the repository itself).
 
 - [ ] **Step 6: Commit**
