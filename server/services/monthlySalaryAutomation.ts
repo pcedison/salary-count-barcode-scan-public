@@ -16,6 +16,7 @@ import {
 } from '../config/salaryAutomation';
 import { storage } from '../storage';
 import { monthlySalaryRunRepository } from '../repositories/monthlySalaryRunRepository';
+import { salaryRepository } from '../repositories/salaryRepository';
 import { createLogger } from '../utils/logger';
 import { buildCalculatedSalaryRecord } from '../routes/salary.routes';
 import { sendMonthlySalaryEmail } from './salaryEmail';
@@ -214,7 +215,7 @@ async function markRunFailed(run: MonthlySalaryRun | undefined, error: unknown) 
   }
 
   const message = error instanceof Error ? error.message : String(error);
-  return storage.updateMonthlySalaryRun(run.id, {
+  return monthlySalaryRunRepository.updateMonthlySalaryRun(run.id, {
     status: 'failed',
     errorMessage: message,
     completedAt: new Date(),
@@ -251,7 +252,7 @@ export async function runMonthlySalaryAutomation(
           reason: acquireResult.skipReason,
           run,
           calculatedRecords,
-          persistedRecords: await storage.getSalaryRecordsByYearMonth(target.year, target.month),
+          persistedRecords: await salaryRepository.getSalaryRecordsByYearMonth(target.year, target.month),
           skippedEmployees,
           emailRecipients: run?.emailTo ?? [],
         };
@@ -265,7 +266,7 @@ export async function runMonthlySalaryAutomation(
 
     const employees = (await storage.getAllEmployees()).filter(isActivePayrollEmployee);
     for (const employee of employees) {
-      const existingRecord = await storage.getSalaryRecordByYearMonthEmployee(
+      const existingRecord = await salaryRepository.getSalaryRecordByYearMonthEmployee(
         target.year,
         target.month,
         employee.id
@@ -305,8 +306,8 @@ export async function runMonthlySalaryAutomation(
       }
 
       const persistedRecord = existingRecord
-        ? await storage.updateSalaryRecord(existingRecord.id, finalRecord)
-        : await storage.createSalaryRecord(finalRecord);
+        ? await salaryRepository.updateSalaryRecord(existingRecord.id, finalRecord)
+        : await salaryRepository.createSalaryRecord(finalRecord);
 
       if (persistedRecord) {
         persistedRecords.push(persistedRecord);
@@ -326,7 +327,7 @@ export async function runMonthlySalaryAutomation(
 
     if (persistedRecords.length === 0) {
       const updatedRun = run
-        ? await storage.updateMonthlySalaryRun(run.id, {
+        ? await monthlySalaryRunRepository.updateMonthlySalaryRun(run.id, {
             status: 'skipped',
             recordCount: 0,
             skippedCount: skippedEmployees.length,
@@ -365,7 +366,7 @@ export async function runMonthlySalaryAutomation(
     }
 
     const updatedRun = run
-      ? await storage.updateMonthlySalaryRun(run.id, {
+      ? await monthlySalaryRunRepository.updateMonthlySalaryRun(run.id, {
           status: 'succeeded',
           recordCount: persistedRecords.length,
           skippedCount: skippedEmployees.length,
