@@ -8,6 +8,7 @@ import path from 'path';
 import { sql } from 'drizzle-orm';
 import { db } from './db';
 import { storage } from './storage';
+import { salaryRepository } from './repositories/salaryRepository';
 import * as schema from '@shared/schema';
 import {
   AUTHORITATIVE_BACKUP_PAYLOAD_KEYS,
@@ -336,7 +337,7 @@ async function loadAuthoritativeBackupValue(payloadKey: AuthoritativeBackupPaylo
     case 'holidays':
       return storage.getAllHolidays();
     case 'salaryRecords':
-      return storage.getAllSalaryRecords();
+      return salaryRepository.getAllSalaryRecords();
     case 'temporaryAttendance':
       return storage.getTemporaryAttendance();
     case 'calculationRules':
@@ -1519,7 +1520,7 @@ export async function createDatabaseBackup(
     data.pendingBindings = await db.select().from(schema.pendingBindings);
 
     // Include salary records.
-    data.salaryRecords = await storage.getAllSalaryRecords();
+    data.salaryRecords = await salaryRepository.getAllSalaryRecords();
 
     // Include temporary attendance and reference tables.
     data.temporaryAttendance = await storage.getTemporaryAttendance();

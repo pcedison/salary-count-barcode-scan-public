@@ -85,13 +85,18 @@ vi.mock('./storage', () => ({
     getAllEmployeesIncludingDeleted: getAllEmployeesMock,
     getSettings: getSettingsMock,
     getAllHolidays: getAllHolidaysMock,
-    getAllSalaryRecords: getAllSalaryRecordsMock,
     getTemporaryAttendance: getTemporaryAttendanceMock,
     createEmployee: createEmployeeMock,
     createOrUpdateSettings: createOrUpdateSettingsMock,
     createHoliday: createHolidayMock,
-    createSalaryRecord: createSalaryRecordMock,
     createTemporaryAttendance: createTemporaryAttendanceMock
+  }
+}));
+
+vi.mock('./repositories/salaryRepository', () => ({
+  salaryRepository: {
+    getAllSalaryRecords: getAllSalaryRecordsMock,
+    createSalaryRecord: createSalaryRecordMock
   }
 }));
 
