@@ -15,6 +15,7 @@ import {
 
 let storage: typeof import('./storage').storage;
 let db: typeof import('./db').db;
+let salaryRepository: typeof import('./repositories/salaryRepository').salaryRepository;
 let runEmployeeRetentionCycle: typeof import('./employee-retention').runEmployeeRetentionCycle;
 
 const TEST_PREFIX = `__retention_${Date.now()}`;
@@ -76,7 +77,7 @@ async function cleanup(): Promise<void> {
 
   for (const salaryRecordId of trackedSalaryRecordIds) {
     try {
-      await storage.deleteSalaryRecord(salaryRecordId);
+      await salaryRepository.deleteSalaryRecord(salaryRecordId);
     } catch {
       // ignore cleanup failures
     }
@@ -98,7 +99,7 @@ async function createSalaryRecordForEmployee(
   employee: Employee,
   attendanceSnapshot: TemporaryAttendance[]
 ) {
-  const salaryRecord = await storage.createSalaryRecord({
+  const salaryRecord = await salaryRepository.createSalaryRecord({
     salaryYear: 2099,
     salaryMonth: employee.id % 12 + 1,
     employeeId: employee.id,
@@ -139,6 +140,7 @@ afterAll(async () => {
 beforeAll(async () => {
   ({ storage } = await import('./storage'));
   ({ db } = await import('./db'));
+  ({ salaryRepository } = await import('./repositories/salaryRepository'));
   ({ runEmployeeRetentionCycle } = await import('./employee-retention'));
 });
 
@@ -272,7 +274,7 @@ describe('real database - retention lifecycle', () => {
     trackedAttendanceIds.delete(attendance.id);
     trackedEmployeeIds.delete(employee.id);
 
-    const anonymizedRecord = await storage.getSalaryRecordById(salaryRecord.id);
+    const anonymizedRecord = await salaryRepository.getSalaryRecordById(salaryRecord.id);
     expect(anonymizedRecord).toBeDefined();
     expect(anonymizedRecord).toMatchObject({
       id: salaryRecord.id,
@@ -340,7 +342,7 @@ describe('real database - retention lifecycle', () => {
       })
       .where(eq(salaryRecords.id, salaryRecord.id));
 
-    const anonymizedBeforeCleanup = await storage.getSalaryRecordById(salaryRecord.id);
+    const anonymizedBeforeCleanup = await salaryRepository.getSalaryRecordById(salaryRecord.id);
     expect(anonymizedBeforeCleanup).toBeDefined();
     expect(anonymizedBeforeCleanup?.employeeId).toBeNull();
     expect(anonymizedBeforeCleanup?.retentionUntil).toBeInstanceOf(Date);
@@ -350,7 +352,7 @@ describe('real database - retention lifecycle', () => {
     expect(cleanupResult.purgedEmployeeIds).toEqual([]);
     expect(cleanupResult.anonymizedSalaryRecords).toBe(0);
     expect(cleanupResult.purgedSalaryRecords).toBeGreaterThanOrEqual(1);
-    expect(await storage.getSalaryRecordById(salaryRecord.id)).toBeUndefined();
+    expect(await salaryRepository.getSalaryRecordById(salaryRecord.id)).toBeUndefined();
 
     trackedSalaryRecordIds.delete(salaryRecord.id);
   });
