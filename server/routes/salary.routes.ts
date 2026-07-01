@@ -5,6 +5,7 @@ import { insertSalaryRecordSchema, type InsertSalaryRecord, type Settings } from
 import { recordLatency } from '../observability/runtimeMetrics';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { storage } from '../storage';
+import { salaryRepository } from '../repositories/salaryRepository';
 import {
   normalizeSalaryPrintRecordIds,
   verifySalaryPrintToken,
@@ -235,8 +236,8 @@ export function registerSalaryRoutes(app: Express): void {
       const { page, limit } = parseBoundedPagination(req.query.page, req.query.limit);
       const filters = parseSalaryRecordFilters(req.query);
       const { rows, total } = filters
-        ? await storage.getAllSalaryRecordsPage(page, limit, filters)
-        : await storage.getAllSalaryRecordsPage(page, limit);
+        ? await salaryRepository.getAllSalaryRecordsPage(page, limit, filters)
+        : await salaryRepository.getAllSalaryRecordsPage(page, limit);
       return res.json({ data: rows, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
     } catch (err) {
       return handleRouteError(err, res);
@@ -249,8 +250,8 @@ export function registerSalaryRoutes(app: Express): void {
     try {
       const filters = parseSalaryRecordYearFilters(req.query);
       const years = filters
-        ? await storage.getSalaryRecordYears(filters)
-        : await storage.getSalaryRecordYears();
+        ? await salaryRepository.getSalaryRecordYears(filters)
+        : await salaryRepository.getSalaryRecordYears();
       return res.json({ years });
     } catch (err) {
       return handleRouteError(err, res);
@@ -270,7 +271,7 @@ export function registerSalaryRoutes(app: Express): void {
 
       const records = [];
       for (const id of ids) {
-        const record = await storage.getSalaryRecordById(id);
+        const record = await salaryRepository.getSalaryRecordById(id);
         if (!record) {
           return res.status(404).json({ message: `Salary record ${id} not found` });
         }
@@ -290,7 +291,7 @@ export function registerSalaryRoutes(app: Express): void {
         return res.status(400).json({ message: 'Invalid ID' });
       }
 
-      const record = await storage.getSalaryRecordById(id);
+      const record = await salaryRepository.getSalaryRecordById(id);
       if (!record) {
         return res.status(404).json({ message: 'Salary record not found' });
       }
@@ -310,7 +311,7 @@ export function registerSalaryRoutes(app: Express): void {
 
       const validatedData = insertSalaryRecordSchema.parse(req.body);
       const finalData = await buildCalculatedSalaryRecord(validatedData, settings);
-      const record = await storage.createSalaryRecord(finalData);
+      const record = await salaryRepository.createSalaryRecord(finalData);
 
       return res.status(201).json(record);
     } catch (err) {
@@ -330,7 +331,7 @@ export function registerSalaryRoutes(app: Express): void {
         return res.status(500).json({ message: 'Settings must be configured before updating salary records.' });
       }
 
-      const existingRecord = await storage.getSalaryRecordById(id);
+      const existingRecord = await salaryRepository.getSalaryRecordById(id);
       if (!existingRecord) {
         return res.status(404).json({ message: 'Salary record not found' });
       }
@@ -366,7 +367,7 @@ export function registerSalaryRoutes(app: Express): void {
         updateData.netSalary = recalculatedRecord.netSalary;
       }
 
-      const record = await storage.updateSalaryRecord(id, updateData);
+      const record = await salaryRepository.updateSalaryRecord(id, updateData);
       if (!record) {
         return res.status(404).json({ message: 'Salary record not found' });
       }
@@ -384,7 +385,7 @@ export function registerSalaryRoutes(app: Express): void {
         return res.status(400).json({ message: 'Invalid ID' });
       }
 
-      const deleted = await storage.deleteSalaryRecord(id);
+      const deleted = await salaryRepository.deleteSalaryRecord(id);
       if (!deleted) {
         return res.status(404).json({ message: 'Salary record not found' });
       }
@@ -475,7 +476,7 @@ export function registerSalaryRoutes(app: Express): void {
         return res.status(400).json({ message: 'Invalid ID' });
       }
 
-      const record = await storage.getSalaryRecordById(id);
+      const record = await salaryRepository.getSalaryRecordById(id);
       if (!record) {
         return res.status(404).json({ message: 'Salary record not found' });
       }
