@@ -41,14 +41,6 @@ const state = vi.hoisted(() => ({
 }));
 
 const storageMock = vi.hoisted(() => ({
-  getMonthlySalaryRun: vi.fn(async (year: number, month: number) =>
-    state.salaryRuns.find((run) => run.salaryYear === year && run.salaryMonth === month)
-  ),
-  createMonthlySalaryRun: vi.fn(async (run: Record<string, any>) => {
-    const created = { ...run, id: state.salaryRuns.length + 1, startedAt: new Date() };
-    state.salaryRuns.push(created);
-    return created;
-  }),
   updateMonthlySalaryRun: vi.fn(async (id: number, data: Record<string, any>) => {
     const run = state.salaryRuns.find((item) => item.id === id);
     if (!run) return undefined;
@@ -84,6 +76,64 @@ const storageMock = vi.hoisted(() => ({
   }),
 }));
 
+const monthlySalaryRunRepositoryMock = vi.hoisted(() => ({
+  acquireRun: vi.fn(
+    async (params: {
+      year: number;
+      month: number;
+      runKey: string;
+      force: boolean;
+      emailRecipients: string[];
+    }) => {
+      const existing = state.salaryRuns.find(
+        (run) => run.salaryYear === params.year && run.salaryMonth === params.month
+      );
+
+      if (existing?.status === 'succeeded' && !params.force) {
+        return { run: existing, skipReason: 'monthly salary run already succeeded' };
+      }
+
+      if (existing?.status === 'running' && !params.force) {
+        return { run: existing, skipReason: 'monthly salary run is already running' };
+      }
+
+      if (existing) {
+        Object.assign(existing, {
+          status: 'running',
+          recordCount: 0,
+          skippedCount: 0,
+          pdfPath: null,
+          emailTo: params.emailRecipients,
+          emailSentAt: null,
+          errorMessage: null,
+          completedAt: null,
+        });
+        return { run: existing };
+      }
+
+      const created = {
+        id: state.salaryRuns.length + 1,
+        runKey: params.runKey,
+        salaryYear: params.year,
+        salaryMonth: params.month,
+        status: 'running',
+        recordCount: 0,
+        skippedCount: 0,
+        emailTo: params.emailRecipients,
+        startedAt: new Date(),
+      };
+      state.salaryRuns.push(created);
+      return { run: created };
+    }
+  ),
+  updateMonthlySalaryRun: vi.fn(async (id: number, data: Record<string, any>) => {
+    const run = state.salaryRuns.find((item) => item.id === id);
+    if (!run) return undefined;
+    Object.assign(run, data);
+    return run;
+  }),
+}));
+
 const buildCalculatedSalaryRecord = vi.hoisted(() =>
   vi.fn(async (draft: Record<string, any>) => ({
     ...draft,
@@ -99,6 +149,9 @@ const sendMonthlySalaryEmail = vi.hoisted(() =>
 );
 
 vi.mock('../storage', () => ({ storage: storageMock }));
+vi.mock('../repositories/monthlySalaryRunRepository', () => ({
+  monthlySalaryRunRepository: monthlySalaryRunRepositoryMock,
+}));
 vi.mock('../routes/salary.routes', () => ({ buildCalculatedSalaryRecord }));
 vi.mock('./salaryPdf', () => ({ generateMonthlySalaryPdf }));
 vi.mock('./salaryEmail', () => ({ sendMonthlySalaryEmail }));
