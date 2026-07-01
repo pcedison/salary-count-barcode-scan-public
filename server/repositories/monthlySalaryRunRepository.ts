@@ -1,4 +1,4 @@
-import { and, eq, ne } from 'drizzle-orm';
+import { and, desc, eq, ne } from 'drizzle-orm';
 
 import {
   monthlySalaryRuns,
@@ -88,6 +88,47 @@ export class DatabaseMonthlySalaryRunRepository {
           ? 'monthly salary run already succeeded'
           : 'monthly salary run is already running',
     };
+  }
+
+  async getMonthlySalaryRun(year: number, month: number): Promise<MonthlySalaryRun | undefined> {
+    const [run] = await db
+      .select()
+      .from(monthlySalaryRuns)
+      .where(
+        and(
+          eq(monthlySalaryRuns.salaryYear, year),
+          eq(monthlySalaryRuns.salaryMonth, month)
+        )
+      );
+    return run;
+  }
+
+  async getRecentMonthlySalaryRuns(limit = 12): Promise<MonthlySalaryRun[]> {
+    return db
+      .select()
+      .from(monthlySalaryRuns)
+      .orderBy(desc(monthlySalaryRuns.startedAt))
+      .limit(limit);
+  }
+
+  async createMonthlySalaryRun(run: InsertMonthlySalaryRun): Promise<MonthlySalaryRun> {
+    const [createdRun] = await db.insert(monthlySalaryRuns).values(run).returning();
+    return createdRun;
+  }
+
+  async updateMonthlySalaryRun(
+    id: number,
+    run: Partial<InsertMonthlySalaryRun> & {
+      completedAt?: Date | null;
+      emailSentAt?: Date | null;
+    }
+  ): Promise<MonthlySalaryRun | undefined> {
+    const [updatedRun] = await db
+      .update(monthlySalaryRuns)
+      .set(run as typeof monthlySalaryRuns.$inferInsert)
+      .where(eq(monthlySalaryRuns.id, id))
+      .returning();
+    return updatedRun;
   }
 }
 
