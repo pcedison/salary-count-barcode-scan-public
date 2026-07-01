@@ -1,9 +1,18 @@
+import { CheckCircle2, Lock, RefreshCw, TriangleAlert, type LucideIcon } from "lucide-react";
+
 export type AttendanceSyncState = "synced" | "syncing" | "locked" | "error";
 
 export type AttendanceSyncStatus = {
   state: AttendanceSyncState;
   synced: boolean;
   lastSynced: string | null;
+};
+
+export type AttendanceSyncBadge = {
+  icon: LucideIcon;
+  label: string;
+  tone: string;
+  detail: string;
 };
 
 export function createAttendanceSyncStatus(
@@ -17,18 +26,18 @@ export function createAttendanceSyncStatus(
   };
 }
 
-export function getAttendanceSyncBadge(syncStatus: AttendanceSyncStatus) {
+export function getAttendanceSyncBadge(syncStatus: AttendanceSyncStatus): AttendanceSyncBadge {
   switch (syncStatus.state) {
     case "locked":
       return {
-        icon: "lock_clock",
+        icon: Lock,
         label: "等待解鎖",
         tone: "text-gray-500",
         detail: "掃碼站尚未解鎖，公開考勤資料會在解鎖後自動更新。",
       };
     case "error":
       return {
-        icon: "sync_problem",
+        icon: TriangleAlert,
         label: "同步失敗",
         tone: "text-red-600",
         detail: syncStatus.lastSynced
@@ -37,7 +46,7 @@ export function getAttendanceSyncBadge(syncStatus: AttendanceSyncStatus) {
       };
     case "syncing":
       return {
-        icon: "sync",
+        icon: RefreshCw,
         label: "同步中...",
         tone: "text-warning",
         detail: "正在與伺服器同步最新考勤資料。",
@@ -45,7 +54,7 @@ export function getAttendanceSyncBadge(syncStatus: AttendanceSyncStatus) {
     case "synced":
     default:
       return {
-        icon: "cloud_done",
+        icon: CheckCircle2,
         label: "資料已同步",
         tone: "text-success",
         detail: `最後同步時間：${syncStatus.lastSynced || "未知"}`,
