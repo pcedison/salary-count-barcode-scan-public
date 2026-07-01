@@ -19,7 +19,10 @@ const storageMock = vi.hoisted(() => ({
       ...payload,
       createdAt: new Date('2026-03-12T00:00:00.000Z')
     };
-  }),
+  })
+}));
+
+const salaryRepositoryMock = vi.hoisted(() => ({
   getSalaryRecordByYearMonth: vi.fn(async () => importState.existingSalaryRecord),
   getSalaryRecordsByYearMonth: vi.fn(async () =>
     importState.existingSalaryRecords.length > 0
@@ -57,6 +60,10 @@ const storageMock = vi.hoisted(() => ({
 
 vi.mock('../storage', () => ({
   storage: storageMock
+}));
+
+vi.mock('../repositories/salaryRepository', () => ({
+  salaryRepository: salaryRepositoryMock
 }));
 
 vi.mock('../middleware/rateLimiter', () => ({
@@ -210,7 +217,7 @@ describe('import routes integration', () => {
 
       expect(result.response.status).toBe(200);
       expect(result.body?.success).toBe(true);
-      expect(storageMock.updateSalaryRecord).toHaveBeenCalledOnce();
+      expect(salaryRepositoryMock.updateSalaryRecord).toHaveBeenCalledOnce();
       expect(importState.updatedSalaryPayload).toMatchObject({
         salaryYear: 2026,
         salaryMonth: 3,
@@ -273,8 +280,8 @@ describe('import routes integration', () => {
       });
 
       expect(result.response.status).toBe(200);
-      expect(storageMock.getSalaryRecordByYearMonthEmployee).toHaveBeenCalledWith(2026, 3, 9);
-      expect(storageMock.updateSalaryRecord).toHaveBeenCalledWith(
+      expect(salaryRepositoryMock.getSalaryRecordByYearMonthEmployee).toHaveBeenCalledWith(2026, 3, 9);
+      expect(salaryRepositoryMock.updateSalaryRecord).toHaveBeenCalledWith(
         8,
         expect.objectContaining({
           employeeId: 9,
@@ -319,8 +326,8 @@ describe('import routes integration', () => {
 
       expect(result.response.status).toBe(200);
       expect(result.body?.success).toBe(true);
-      expect(storageMock.updateSalaryRecord).not.toHaveBeenCalled();
-      expect(storageMock.createSalaryRecord).toHaveBeenCalledWith(
+      expect(salaryRepositoryMock.updateSalaryRecord).not.toHaveBeenCalled();
+      expect(salaryRepositoryMock.createSalaryRecord).toHaveBeenCalledWith(
         expect.objectContaining({
           employeeName: 'Employee Beta',
           salaryYear: 2026,
@@ -371,8 +378,8 @@ describe('import routes integration', () => {
         success: false,
         code: 'AMBIGUOUS_SALARY_IMPORT'
       });
-      expect(storageMock.updateSalaryRecord).not.toHaveBeenCalled();
-      expect(storageMock.createSalaryRecord).not.toHaveBeenCalled();
+      expect(salaryRepositoryMock.updateSalaryRecord).not.toHaveBeenCalled();
+      expect(salaryRepositoryMock.createSalaryRecord).not.toHaveBeenCalled();
     } finally {
       await server.close();
     }
