@@ -4,12 +4,19 @@ const storageMock = vi.hoisted(() => ({
   purgeExpiredDeletedEmployees: vi.fn(async () => ({
     purgedEmployeeIds: [5],
     anonymizedSalaryRecords: 2
-  })),
+  }))
+}));
+
+const salaryRepositoryMock = vi.hoisted(() => ({
   purgeExpiredRetainedSalaryRecords: vi.fn(async () => 1)
 }));
 
 vi.mock('./storage', () => ({
   storage: storageMock
+}));
+
+vi.mock('./repositories/salaryRepository', () => ({
+  salaryRepository: salaryRepositoryMock
 }));
 
 let runEmployeeRetentionCycle: typeof import('./employee-retention').runEmployeeRetentionCycle;
@@ -36,7 +43,7 @@ describe('employee retention scheduler', () => {
     const result = await runEmployeeRetentionCycle();
 
     expect(storageMock.purgeExpiredDeletedEmployees).toHaveBeenCalledTimes(1);
-    expect(storageMock.purgeExpiredRetainedSalaryRecords).toHaveBeenCalledTimes(1);
+    expect(salaryRepositoryMock.purgeExpiredRetainedSalaryRecords).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       purgedEmployeeIds: [5],
       anonymizedSalaryRecords: 2,
@@ -69,14 +76,14 @@ describe('employee retention scheduler', () => {
     await Promise.resolve();
 
     expect(storageMock.purgeExpiredDeletedEmployees).toHaveBeenCalledTimes(1);
-    expect(storageMock.purgeExpiredRetainedSalaryRecords).toHaveBeenCalledTimes(1);
+    expect(salaryRepositoryMock.purgeExpiredRetainedSalaryRecords).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(60_000);
     await Promise.resolve();
     await Promise.resolve();
 
     expect(storageMock.purgeExpiredDeletedEmployees).toHaveBeenCalledTimes(2);
-    expect(storageMock.purgeExpiredRetainedSalaryRecords).toHaveBeenCalledTimes(2);
+    expect(salaryRepositoryMock.purgeExpiredRetainedSalaryRecords).toHaveBeenCalledTimes(2);
 
     stopEmployeeRetentionScheduler(handle);
 
@@ -85,6 +92,6 @@ describe('employee retention scheduler', () => {
     await Promise.resolve();
 
     expect(storageMock.purgeExpiredDeletedEmployees).toHaveBeenCalledTimes(2);
-    expect(storageMock.purgeExpiredRetainedSalaryRecords).toHaveBeenCalledTimes(2);
+    expect(salaryRepositoryMock.purgeExpiredRetainedSalaryRecords).toHaveBeenCalledTimes(2);
   });
 });

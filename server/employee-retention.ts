@@ -1,5 +1,6 @@
 import { createLogger } from './utils/logger';
 import { storage } from './storage';
+import { salaryRepository } from './repositories/salaryRepository';
 
 const log = createLogger('employee-retention');
 const DEFAULT_RETENTION_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -12,7 +13,7 @@ export async function runEmployeeRetentionCycle(): Promise<{
   purgedSalaryRecords: number;
 }> {
   const { purgedEmployeeIds, anonymizedSalaryRecords } = await storage.purgeExpiredDeletedEmployees();
-  const purgedSalaryRecords = await storage.purgeExpiredRetainedSalaryRecords();
+  const purgedSalaryRecords = await salaryRepository.purgeExpiredRetainedSalaryRecords();
 
   if (purgedEmployeeIds.length > 0 || anonymizedSalaryRecords > 0 || purgedSalaryRecords > 0) {
     log.info('Employee retention cycle completed', {
