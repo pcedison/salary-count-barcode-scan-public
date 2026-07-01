@@ -98,7 +98,7 @@ export function EmployeesTableCard({
                     </div>
                     <Button
                       variant="outline"
-                      size="sm"
+                      size="mobile"
                       className="shrink-0"
                       title="複製掃碼專用 ID"
                       onClick={() => handleCopyScanId(employee)}
@@ -110,12 +110,18 @@ export function EmployeesTableCard({
                 </div>
 
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button variant="outline" className="w-full" onClick={() => onEdit(employee)}>
+                  <Button
+                    variant="outline"
+                    size="mobile"
+                    className="w-full"
+                    onClick={() => onEdit(employee)}
+                  >
                     <Pencil className="h-4 w-4" />
                     編輯
                   </Button>
                   <Button
                     variant="outline"
+                    size="mobile"
                     className="w-full text-red-600 hover:bg-red-50 hover:text-red-700"
                     onClick={() => onDelete(employee)}
                   >
@@ -182,6 +188,7 @@ export function EmployeesTableCard({
                         size="icon"
                         className="ml-1 h-6 w-6"
                         title="複製掃碼專用 ID"
+                        aria-label="複製掃碼專用 ID"
                         onClick={(event) => {
                           event.stopPropagation();
                           handleCopyScanId(employee);
@@ -203,7 +210,13 @@ export function EmployeesTableCard({
                     </span>
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="icon" onClick={() => onEdit(employee)} title="編輯">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onEdit(employee)}
+                      title="編輯"
+                      aria-label="編輯"
+                    >
                       <Pencil className="h-4 w-4" />
                     </Button>
                     <Button
@@ -211,6 +224,7 @@ export function EmployeesTableCard({
                       size="icon"
                       onClick={() => onDelete(employee)}
                       title="刪除"
+                      aria-label="刪除"
                       className="text-red-500 hover:bg-red-50 hover:text-red-700"
                     >
                       <Trash2 className="h-4 w-4" />
