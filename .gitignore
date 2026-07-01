@@ -62,6 +62,7 @@ pnpm-debug.log*
 .claude/
 .config/
 .local/
+.superpowers/
 *.swp
 *.swo
 *.sublime-*
