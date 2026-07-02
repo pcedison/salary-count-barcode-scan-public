@@ -15,6 +15,7 @@ import {
   type SalaryAutomationConfig,
 } from '../config/salaryAutomation';
 import { storage } from '../storage';
+import { monthlySalaryRunRepository } from '../repositories/monthlySalaryRunRepository';
 import { createLogger } from '../utils/logger';
 import { buildCalculatedSalaryRecord } from '../routes/salary.routes';
 import { sendMonthlySalaryEmail } from './salaryEmail';
@@ -207,51 +208,6 @@ function buildSalaryDraftForEmployee(
   };
 }
 
-async function acquireRun(
-  target: SalaryReportTarget,
-  options: MonthlySalaryAutomationOptions,
-  config: SalaryAutomationConfig
-): Promise<{ run?: MonthlySalaryRun; skipReason?: string }> {
-  if (options.dryRun) {
-    return {};
-  }
-
-  const existingRun = await storage.getMonthlySalaryRun(target.year, target.month);
-  if (existingRun?.status === 'succeeded' && !options.force) {
-    return { run: existingRun, skipReason: 'monthly salary run already succeeded' };
-  }
-
-  if (existingRun?.status === 'running' && !options.force) {
-    return { run: existingRun, skipReason: 'monthly salary run is already running' };
-  }
-
-  if (existingRun) {
-    const updatedRun = await storage.updateMonthlySalaryRun(existingRun.id, {
-      status: 'running',
-      recordCount: 0,
-      skippedCount: 0,
-      pdfPath: null,
-      emailTo: config.emailRecipients,
-      emailSentAt: null,
-      errorMessage: null,
-      completedAt: null,
-    });
-    return { run: updatedRun ?? existingRun };
-  }
-
-  const run = await storage.createMonthlySalaryRun({
-    runKey: getRunKey(target),
-    salaryYear: target.year,
-    salaryMonth: target.month,
-    status: 'running',
-    recordCount: 0,
-    skippedCount: 0,
-    emailTo: config.emailRecipients,
-  });
-
-  return { run };
-}
-
 async function markRunFailed(run: MonthlySalaryRun | undefined, error: unknown) {
   if (!run) {
     return undefined;
@@ -275,21 +231,33 @@ export async function runMonthlySalaryAutomation(
   const persistedRecords: SalaryRecord[] = [];
   const skippedEmployees: MonthlySalaryAutomationResult['skippedEmployees'] = [];
 
-  const { run, skipReason } = await acquireRun(target, options, config);
-  if (skipReason) {
-    return {
-      target,
-      status: 'skipped',
-      reason: skipReason,
-      run,
-      calculatedRecords,
-      persistedRecords: await storage.getSalaryRecordsByYearMonth(target.year, target.month),
-      skippedEmployees,
-      emailRecipients: run?.emailTo ?? [],
-    };
-  }
+  let run: MonthlySalaryRun | undefined;
 
   try {
+    if (!options.dryRun) {
+      const acquireResult = await monthlySalaryRunRepository.acquireRun({
+        year: target.year,
+        month: target.month,
+        runKey: getRunKey(target),
+        force: !!options.force,
+        emailRecipients: config.emailRecipients,
+      });
+      run = acquireResult.run;
+
+      if (acquireResult.skipReason) {
+        return {
+          target,
+          status: 'skipped',
+          reason: acquireResult.skipReason,
+          run,
+          calculatedRecords,
+          persistedRecords: await storage.getSalaryRecordsByYearMonth(target.year, target.month),
+          skippedEmployees,
+          emailRecipients: run?.emailTo ?? [],
+        };
+      }
+    }
+
     const settings = await storage.getSettings();
     if (!settings) {
       throw new Error('Salary settings are not configured.');
