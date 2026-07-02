@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
-import { Archive, Database, Lock, Shield, Upload } from "lucide-react";
+import { Archive, ChevronLeft, ChevronRight, Database, Lock, Search, Shield, Upload } from "lucide-react";
 import JSZip from "jszip";
 import { debugLog } from "@/lib/debug";
 
@@ -475,9 +475,7 @@ export default function HistoryPage() {
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full border-gray-300 px-4 py-2 pr-10 focus:border-primary focus:ring-primary"
               />
-              <span className="material-icons absolute right-3 top-2.5 text-gray-400">
-                search
-              </span>
+              <Search className="absolute right-3 top-2.5 h-5 w-5 text-gray-400" />
             </div>
 
             <Select value={yearFilter} onValueChange={setYearFilter}>
@@ -584,7 +582,7 @@ export default function HistoryPage() {
               disabled={effectiveCurrentPage === 1 || !hasFilteredRecords}
               onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
             >
-              <span className="material-icons text-sm">chevron_left</span>
+              <ChevronLeft className="h-4 w-4" />
             </button>
 
             {pageNumbers.map((pageNum) => (
@@ -614,7 +612,7 @@ export default function HistoryPage() {
                 setCurrentPage((prev) => Math.min(prev + 1, totalPages))
               }
             >
-              <span className="material-icons text-sm">chevron_right</span>
+              <ChevronRight className="h-4 w-4" />
             </button>
           </div>
         </div>
