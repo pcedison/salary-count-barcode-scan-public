@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Lock } from "lucide-react";
 
 import {
   createAttendanceSyncStatus,
@@ -12,7 +13,7 @@ describe("attendance sync status", () => {
     );
 
     expect(badge.label).toBe("等待解鎖");
-    expect(badge.icon).toBe("lock_clock");
+    expect(badge.icon).toBe(Lock);
   });
 
   it("keeps synced state marked as synced", () => {

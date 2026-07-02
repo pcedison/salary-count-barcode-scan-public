@@ -110,7 +110,10 @@ export async function verifySuperAdminPermission(pin: string): Promise<boolean> 
     );
   }
 
-  if (process.env.NODE_ENV !== 'production') {
+  // Fallback to the regular admin PIN only in automated test runs. Development
+  // and staging must configure SUPER_ADMIN_PIN explicitly, so a mislabelled
+  // NODE_ENV can never turn a regular admin PIN into a SUPER elevation.
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') {
     return verifyAdminPermission(pin, PermissionLevel.SUPER);
   }
 

@@ -163,6 +163,7 @@ export default function HistoryTable({
         className="rounded-full p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
         onClick={() => onDownloadPdf(record)}
         title="查看報表"
+        aria-label="查看報表"
       >
         <Download size={16} />
       </button>
@@ -171,6 +172,7 @@ export default function HistoryTable({
         className="rounded-full p-1 text-blue-500 hover:bg-blue-50 hover:text-blue-600"
         onClick={() => setLocation(`/print-salary?id=${record.id}`)}
         title="列印薪資單"
+        aria-label="列印薪資單"
       >
         <Printer size={16} />
       </button>
@@ -180,6 +182,7 @@ export default function HistoryTable({
           className="rounded-full p-1 text-indigo-500 hover:bg-indigo-50 hover:text-indigo-600"
           onClick={() => onEditRecord(record)}
           title="編輯薪資記錄"
+          aria-label="編輯薪資記錄"
         >
           <Edit size={16} />
         </button>
@@ -191,6 +194,7 @@ export default function HistoryTable({
           onClick={() => onDeleteRecord(record.id)}
           disabled={isDeleting}
           title="刪除記錄"
+          aria-label="刪除記錄"
         >
           <Trash2 size={16} />
         </button>
@@ -202,7 +206,7 @@ export default function HistoryTable({
     <div className="flex flex-col gap-2 sm:flex-row">
       <Button
         variant="outline"
-        size="sm"
+        size="mobile"
         className="w-full justify-center sm:flex-1"
         onClick={() => onDownloadPdf(record)}
       >
@@ -212,7 +216,7 @@ export default function HistoryTable({
 
       <Button
         variant="outline"
-        size="sm"
+        size="mobile"
         className="w-full justify-center sm:flex-1"
         onClick={() => setLocation(`/print-salary?id=${record.id}`)}
       >
@@ -223,7 +227,7 @@ export default function HistoryTable({
       {onEditRecord && isAdmin && (
         <Button
           variant="outline"
-          size="sm"
+          size="mobile"
           className="w-full justify-center sm:flex-1"
           onClick={() => onEditRecord(record)}
         >
@@ -235,7 +239,7 @@ export default function HistoryTable({
       {onDeleteRecord && isAdmin && (
         <Button
           variant="destructive"
-          size="sm"
+          size="mobile"
           className="w-full justify-center sm:flex-1"
           onClick={() => onDeleteRecord(record.id)}
           disabled={isDeleting}

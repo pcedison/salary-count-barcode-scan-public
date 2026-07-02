@@ -1,6 +1,7 @@
 import { logOperation, OperationType } from './admin-auth';
 import { attachApiFallbackHandlers, createConfiguredApp } from './bootstrap/create-app';
 import { installGracefulShutdown } from './bootstrap/graceful-shutdown';
+import { installProcessErrorHandlers } from './bootstrap/process-error-handlers';
 import { startRuntimeServices } from './bootstrap/runtime-services';
 import { registerRoutes } from './routes';
 import { serveStatic } from './static';
@@ -8,6 +9,8 @@ import { createLogger } from './utils/logger';
 
 const app = createConfiguredApp();
 const appLog = createLogger('server');
+
+installProcessErrorHandlers({ logger: appLog });
 const isDevelopment = process.env.NODE_ENV === 'development';
 
 (async () => {

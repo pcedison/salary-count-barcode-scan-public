@@ -1,4 +1,4 @@
-﻿import { eq, and, desc, or, isNull, isNotNull, lte, ilike, type SQL, sql as drizzleSql } from "drizzle-orm";
+﻿import { eq, and, desc, or, isNull, isNotNull, inArray, lte, ilike, type SQL, sql as drizzleSql } from "drizzle-orm";
 import { normalizeDateToDash, normalizeDateToSlash } from "../shared/utils/specialLeaveSync";
 import { createLogger } from "./utils/logger";
 import {
@@ -20,6 +20,7 @@ import {
 
 import { db } from './db';
 import { DatabaseEmployeeRepository } from './repositories/employeeRepository';
+import { compareAttendanceByLatestEvent } from './routes/scan-helpers';
 
 const log = createLogger('storage');
 
@@ -60,45 +61,6 @@ export type AttendanceScanUpsertResult =
       action: AttendanceScanAction;
       attendance?: TemporaryAttendance;
     };
-
-function getAttendanceEventTime(record: TemporaryAttendance): string {
-  const clockOut = record.clockOut?.trim();
-  return clockOut ? clockOut : record.clockIn;
-}
-
-function parseTimeToMinutes(time: string): number {
-  const [hours = '0', minutes = '0'] = time.split(':');
-  const parsedHours = Number.parseInt(hours, 10);
-  const parsedMinutes = Number.parseInt(minutes, 10);
-
-  if (Number.isNaN(parsedHours) || Number.isNaN(parsedMinutes)) {
-    return -1;
-  }
-
-  return parsedHours * 60 + parsedMinutes;
-}
-
-function compareAttendanceByLatestEvent(
-  left: TemporaryAttendance,
-  right: TemporaryAttendance
-): number {
-  const eventDifference =
-    parseTimeToMinutes(getAttendanceEventTime(right)) -
-    parseTimeToMinutes(getAttendanceEventTime(left));
-
-  if (eventDifference !== 0) {
-    return eventDifference;
-  }
-
-  const createdAtDifference =
-    new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime();
-
-  if (createdAtDifference !== 0) {
-    return createdAtDifference;
-  }
-
-  return (right.id ?? 0) - (left.id ?? 0);
-}
 
 function getLatestIncompleteAttendanceRecord(
   records: TemporaryAttendance[]
@@ -236,6 +198,7 @@ export interface IStorage {
   getAllSalaryRecordsPage(page: number, limit: number, filters?: SalaryRecordPageFilters): Promise<{ rows: SalaryRecord[]; total: number }>;
   getSalaryRecordYears(filters?: SalaryRecordYearFilters): Promise<number[]>;
   getSalaryRecordById(id: number): Promise<SalaryRecord | undefined>;
+  getSalaryRecordsByIds(ids: number[]): Promise<SalaryRecord[]>;
   getSalaryRecordByYearMonth(year: number, month: number): Promise<SalaryRecord | undefined>;
   getSalaryRecordsByYearMonth(year: number, month: number): Promise<SalaryRecord[]>;
   getSalaryRecordByYearMonthEmployee(year: number, month: number, employeeId: number): Promise<SalaryRecord | undefined>;
@@ -647,6 +610,13 @@ export class DatabaseStorage implements IStorage {
   async getSalaryRecordById(id: number): Promise<SalaryRecord | undefined> {
     const [record] = await db.select().from(salaryRecords).where(eq(salaryRecords.id, id));
     return record;
+  }
+
+  async getSalaryRecordsByIds(ids: number[]): Promise<SalaryRecord[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    return db.select().from(salaryRecords).where(inArray(salaryRecords.id, ids));
   }
 
   async getSalaryRecordByYearMonth(year: number, month: number): Promise<SalaryRecord | undefined> {

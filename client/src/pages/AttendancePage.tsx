@@ -17,6 +17,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Lock,
+  Plus,
   Shield,
   UserCheck,
 } from "lucide-react";
@@ -504,7 +505,7 @@ export default function AttendancePage() {
               title={syncBadge.detail}
               type="button"
             >
-              <span className="material-icons text-sm">{syncBadge.icon}</span>
+              <syncBadge.icon className="h-4 w-4" />
               {syncBadge.label}
             </button>
 
@@ -735,7 +736,7 @@ export default function AttendancePage() {
             disabled={!selectedEmployee || !isAdmin}
             className="flex w-full items-center justify-center bg-primary px-6 py-2 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
           >
-            <span className="material-icons text-sm mr-1">add</span>
+            <Plus className="mr-1 h-4 w-4" />
             {selectedEmployee ? "新增" : "請先選擇員工"}
           </Button>
         </div>

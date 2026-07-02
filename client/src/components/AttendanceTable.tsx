@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 import { calculateOvertime, cn } from '@/lib/utils';
 import { Loader2, XCircle } from 'lucide-react';
+import ConfirmationModal from '@/components/ConfirmationModal';
 
 interface AttendanceTableProps {
   data: Array<{
@@ -124,6 +125,8 @@ export default function AttendanceTable({
   const [editClockIn, setEditClockIn] = useState<string>('');
   const [editClockOut, setEditClockOut] = useState<string>('');
   const [updatingHolidayType, setUpdatingHolidayType] = useState<number | null>(null);
+  const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState<boolean>(false);
 
   const handleEdit = (record: AttendanceRecord) => {
     setEditingId(record.id);
@@ -202,11 +205,16 @@ export default function AttendanceTable({
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('確定要刪除此考勤記錄嗎？')) return;
+  const handleDeleteClick = (id: number) => {
+    setDeleteTargetId(id);
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (deleteTargetId === null) return;
 
     try {
-      await onDeleteAttendance(id);
+      await onDeleteAttendance(deleteTargetId);
       toast({
         title: "已刪除",
         description: "考勤記錄已成功刪除。",
@@ -218,6 +226,9 @@ export default function AttendanceTable({
         description: "無法刪除考勤記錄，請稍後再試。",
         variant: "destructive"
       });
+    } finally {
+      setIsDeleteModalOpen(false);
+      setDeleteTargetId(null);
     }
   };
 
@@ -366,7 +377,7 @@ export default function AttendanceTable({
           variant="ghost"
           size="sm"
           className="h-8 px-2 text-error hover:text-red-700"
-          onClick={() => handleDelete(row.record.id)}
+          onClick={() => handleDeleteClick(row.record.id)}
           data-testid={`button-delete-${row.record.id}`}
           aria-label="刪除考勤記錄"
         >
@@ -422,7 +433,7 @@ export default function AttendanceTable({
           variant="destructive"
           className="w-full sm:flex-1"
           size="sm"
-          onClick={() => handleDelete(row.record.id)}
+          onClick={() => handleDeleteClick(row.record.id)}
           data-testid={`button-delete-mobile-${row.record.id}`}
         >
           刪除
@@ -449,6 +460,7 @@ export default function AttendanceTable({
   }
 
   return (
+    <>
     <div className="space-y-4">
       <div className="space-y-3 md:hidden">
         {rows.map((row) => (
@@ -683,5 +695,17 @@ export default function AttendanceTable({
         </table>
       </div>
     </div>
+
+    <ConfirmationModal
+      isOpen={isDeleteModalOpen}
+      onClose={() => {
+        setIsDeleteModalOpen(false);
+        setDeleteTargetId(null);
+      }}
+      onConfirm={handleConfirmDelete}
+      title="刪除考勤記錄"
+      message="確定要刪除此考勤記錄嗎？此操作無法復原。"
+    />
+    </>
   );
 }
