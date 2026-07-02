@@ -20,6 +20,7 @@
     "test:real-db:retention": "vitest run --config vitest.real-db.config.ts server/storage.retention.real-db.test.ts",
     "test:real-db:rehearsal": "vitest run --config vitest.real-db.config.ts server/rehearsal.real-db.test.ts",
     "test:real-db:monthly-salary-run": "vitest run --config vitest.real-db.config.ts server/repositories/monthlySalaryRunRepository.real-db.test.ts",
+    "test:mobile-ui": "playwright test --config=playwright.config.ts client/__tests__/mobile-ui.spec.ts",
     "restore:check": "tsx server/scripts/restore-check.ts",
     "restore:check:required": "tsx server/scripts/restore-check.ts --require-backup",
     "restore:rehearse": "tsx server/scripts/restore-rehearsal.ts",
@@ -92,6 +93,7 @@
     "zod-validation-error": "^5.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/typography": "^0.5.15",
     "@types/connect-pg-simple": "^7.0.3",
     "@types/cors": "^2.8.19",
