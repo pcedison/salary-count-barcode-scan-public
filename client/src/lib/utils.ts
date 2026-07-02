@@ -1,12 +1,7 @@
 ﻿import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
-import {
-  calculateOvertime as sharedCalculateOvertime,
-  calculateOvertimePay as sharedCalculateOvertimePay
-} from '@shared/utils/salaryMath';
-
-import { constants } from './constants';
+import { calculateOvertime as sharedCalculateOvertime } from '@shared/utils/salaryMath';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -52,25 +47,6 @@ export function calculateOvertime(clockIn: string, clockOut: string): {
   return sharedCalculateOvertime(clockIn, clockOut);
 }
 
-// Calculate overtime pay based on hours and rates
-export function calculateOvertimePay(
-  ot1Hours: number,
-  ot2Hours: number,
-  hourlyRate: number = 119,
-  ot1Multiplier: number = 1.34,
-  ot2Multiplier: number = 1.67
-): number {
-  return sharedCalculateOvertimePay(
-    { totalOT1Hours: ot1Hours, totalOT2Hours: ot2Hours },
-    {
-      baseHourlyRate: hourlyRate,
-      ot1Multiplier,
-      ot2Multiplier,
-      baseMonthSalary: hourlyRate * constants.STANDARD_WORK_DAYS * constants.STANDARD_WORK_HOURS
-    }
-  );
-}
-
 // Format currency to show with commas
 export function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('zh-TW').format(amount);
@@ -88,47 +64,6 @@ export function getCurrentYearMonth(): { year: number; month: number } {
     year: now.getFullYear(),
     month: now.getMonth() + 1
   };
-}
-
-// Extract year and month from a date string (YYYY/MM/DD)
-export function extractYearMonth(dateStr: string): { year: number | null; month: number | null } {
-  if (!dateStr) return { year: null, month: null };
-
-  try {
-    const [year, month] = dateStr.split('/').map(Number);
-    if (!isNaN(year) && !isNaN(month)) {
-      return { year, month };
-    }
-    return { year: null, month: null };
-  } catch (e) {
-    console.error('Error extracting year and month:', e);
-    return { year: null, month: null };
-  }
-}
-
-// Get deduction amount from deductions array
-export function getDeductionAmount(deductions: Array<{ name: string; amount: number }> | undefined, name: string): number {
-  if (!deductions) return 0;
-  const item = deductions.find(d => d.name === name);
-  return item ? item.amount : 0;
-}
-
-// Check if a date is a weekend
-export function isWeekend(dateStr: string): boolean {
-  try {
-    const date = new Date(dateStr.replace(/\//g, '-'));
-    const day = date.getDay();
-    // 0 is Sunday, 6 is Saturday
-    return day === 0 || day === 6;
-  } catch (e) {
-    console.error('Error checking if date is weekend:', e);
-    return false;
-  }
-}
-
-// Check if a date is in the list of holidays
-export function isHoliday(dateStr: string, holidays: Array<{ date: string }>): boolean {
-  return holidays.some(holiday => holiday.date === dateStr);
 }
 
 // Get the current time in HH:MM format (Taiwan time UTC+8)

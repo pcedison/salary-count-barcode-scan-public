@@ -7,7 +7,6 @@ import { invalidateAttendanceQueries } from '@/lib/attendanceRecords';
 import { debugLog } from '@/lib/debug';
 import { eventBus, EventNames } from '@/lib/eventBus';
 import { getCurrentTime } from '@/lib/utils';
-import { updateEmployeeCache } from '@/utils/employeeCache';
 
 export interface ScanResult {
   timestamp: string;
@@ -369,13 +368,6 @@ export function useBarcodeScanner() {
         currentTime;
       const statusMessage = payload.message ||
         `${payload.employeeName} ${action === 'clock-in' ? '上班' : '下班'}打卡成功`;
-
-      updateEmployeeCache({
-        id: payload.employeeId,
-        name: payload.employeeName,
-        department: payload.department || '',
-        idNumber: payload.idNumber || '',
-      });
 
       const scanResult: ScanResult = {
         timestamp: payload.timestamp || new Date().toISOString(),
