@@ -104,15 +104,6 @@ export interface CalculationModel {
 const specialRules: SpecialCaseRule[] = [];
 
 /**
- * 單日加班記錄界面
- */
-export interface DailyOvertimeRecord {
-  date: string;      // 日期 (YYYY-MM-DD)
-  ot1Hours: number;  // 當日第一階段加班時數 (1.34倍)
-  ot2Hours: number;  // 當日第二階段加班時數 (1.67倍)
-}
-
-/**
  * 標準計算模型 - 適用於大多數情況
  */
 export const standardCalculationModel: CalculationModel = {
