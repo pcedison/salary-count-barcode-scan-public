@@ -121,13 +121,13 @@ function MobileNavButton({
         "flex min-w-0 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-center transition-colors",
         isActive
           ? "bg-white text-[var(--sage-deep)] shadow-[0_8px_20px_rgba(42,46,42,0.08)]"
-          : "text-[var(--ink-3)] hover:bg-white/70 hover:text-[var(--ink-1)]",
+          : "text-[var(--ink-2)] hover:bg-white/70 hover:text-[var(--ink-1)]",
       )}
     >
       <Icon
         className={cn(
           "h-5 w-5",
-          isActive ? "text-[var(--sage)]" : "text-[var(--ink-3)]",
+          isActive ? "text-[var(--sage)]" : "text-[var(--ink-2)]",
         )}
       />
       <span className="text-[11px] font-medium tracking-[0.08em]">{label}</span>
@@ -206,7 +206,7 @@ export function AppShell({
             <BrandMark compact />
 
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[10px] uppercase tracking-[0.24em] text-[var(--ink-3)]">
+              <p className="truncate text-[10px] uppercase tracking-[0.24em] text-[var(--ink-2)]">
                 {appTitle}
               </p>
               <div className="mt-1 flex items-center gap-2">
@@ -214,7 +214,7 @@ export function AppShell({
                   {currentItem?.label}
                 </h1>
                 {appVersion ? (
-                  <span className="shrink-0 rounded-full border border-[var(--line)] bg-white/80 px-2 py-0.5 text-[10px] tracking-[0.16em] text-[var(--ink-3)]">
+                  <span className="shrink-0 rounded-full border border-[var(--line)] bg-white/80 px-2 py-0.5 text-[10px] tracking-[0.16em] text-[var(--ink-2)]">
                     v{appVersion}
                   </span>
                 ) : null}
@@ -226,7 +226,7 @@ export function AppShell({
         <main className="mx-auto w-full max-w-6xl px-4 pb-28 pt-4">
           {children}
 
-          <footer className="mt-6 pb-2 text-center text-[11px] tracking-[0.14em] text-[var(--ink-3)]">
+          <footer className="mt-6 pb-2 text-center text-[11px] tracking-[0.14em] text-[var(--ink-2)]">
             {appTitle} &copy; {currentYear}
           </footer>
         </main>
@@ -286,7 +286,7 @@ export function AppShell({
                   <div className="truncate text-base font-semibold tracking-[0.08em] text-[var(--ink-1)]">
                     考勤薪資
                   </div>
-                  <div className="mt-1 text-[11px] tracking-[0.18em] text-[var(--ink-3)]">
+                  <div className="mt-1 text-[11px] tracking-[0.18em] text-[var(--ink-2)]">
                     BARCODE · V3
                   </div>
                 </div>
@@ -308,7 +308,7 @@ export function AppShell({
               return (
                 <section key={section.label}>
                   {!collapsed ? (
-                    <div className="px-3 pb-2 text-[11px] font-medium tracking-[0.24em] text-[var(--ink-3)]">
+                    <div className="px-3 pb-2 text-[11px] font-medium tracking-[0.24em] text-[var(--ink-2)]">
                       {section.label}
                     </div>
                   ) : (
@@ -349,7 +349,7 @@ export function AppShell({
               {!collapsed ? (
                 <div className="min-w-0">
                   <div className="text-sm font-medium text-[var(--ink-1)]">管理員</div>
-                  <div className="text-[11px] tracking-[0.14em] text-[var(--ink-3)]">
+                  <div className="text-[11px] tracking-[0.14em] text-[var(--ink-2)]">
                     已登入
                   </div>
                 </div>
@@ -375,7 +375,7 @@ export function AppShell({
               </button>
 
               <div className="min-w-0 flex-1">
-                <div className="text-xs tracking-[0.18em] text-[var(--ink-3)]">
+                <div className="text-xs tracking-[0.18em] text-[var(--ink-2)]">
                   {appTitle}
                 </div>
                 <div className="mt-1 truncate text-xl font-semibold tracking-[0.04em] text-[var(--ink-1)]">
@@ -384,7 +384,7 @@ export function AppShell({
               </div>
 
               {appVersion ? (
-                <div className="rounded-full border border-[var(--line)] bg-white/80 px-3 py-1 text-xs tracking-[0.16em] text-[var(--ink-3)]">
+                <div className="rounded-full border border-[var(--line)] bg-white/80 px-3 py-1 text-xs tracking-[0.16em] text-[var(--ink-2)]">
                   v{appVersion}
                 </div>
               ) : null}
@@ -395,7 +395,7 @@ export function AppShell({
             {children}
           </main>
 
-          <footer className="border-t border-[var(--line-soft)] px-6 py-4 text-center text-xs tracking-[0.16em] text-[var(--ink-3)] xl:px-8">
+          <footer className="border-t border-[var(--line-soft)] px-6 py-4 text-center text-xs tracking-[0.16em] text-[var(--ink-2)] xl:px-8">
             {appTitle} &copy; {currentYear}
             {appVersion ? ` 版本 ${appVersion}` : ""}
           </footer>
