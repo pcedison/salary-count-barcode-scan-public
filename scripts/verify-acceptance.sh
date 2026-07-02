@@ -19,10 +19,10 @@ report_check() {
   local status=$2
   if [ "$status" -eq 0 ]; then
     echo -e "${GREEN}✓${NC} $name"
-    ((CHECKS_PASSED++))
+    CHECKS_PASSED=$((CHECKS_PASSED + 1))
   else
     echo -e "${RED}✗${NC} $name"
-    ((CHECKS_FAILED++))
+    CHECKS_FAILED=$((CHECKS_FAILED + 1))
   fi
 }
 

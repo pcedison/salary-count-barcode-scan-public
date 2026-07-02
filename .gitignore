@@ -80,3 +80,7 @@ scripts/check-employee-types.ts
 scripts/test-employee-type.ts
 scripts/test-put-employee-type.ts
 scripts/test-schema.ts
+
+# Playwright
+playwright-report/
+test-results/
