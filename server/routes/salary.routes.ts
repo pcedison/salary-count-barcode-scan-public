@@ -268,9 +268,11 @@ export function registerSalaryRoutes(app: Express): void {
         return res.status(401).json({ message: 'Invalid or expired salary print token' });
       }
 
+      const fetchedRecords = await storage.getSalaryRecordsByIds(ids);
+      const recordsById = new Map(fetchedRecords.map((record) => [record.id, record]));
       const records = [];
       for (const id of ids) {
-        const record = await storage.getSalaryRecordById(id);
+        const record = recordsById.get(id);
         if (!record) {
           return res.status(404).json({ message: `Salary record ${id} not found` });
         }
