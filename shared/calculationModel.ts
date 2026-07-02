@@ -113,82 +113,6 @@ export interface DailyOvertimeRecord {
 }
 
 /**
- * 標準計算邏輯的實現 - 使用共用的加班與薪資公式
- */
-export const standardCalculationLogic = {
-  /**
-   * 計算單日加班費 - 每日單獨計算後再加總，避免月彙總誤差
-   */
-  calculateDailyOvertimePay: (record: DailyOvertimeRecord, settings: CalculationSettings): number => {
-    const { baseHourlyRate, ot1Multiplier, ot2Multiplier } = settings;
-
-    // 計算精確時薪 (不取整)
-    const ot1HourlyRate = baseHourlyRate * ot1Multiplier;
-    const ot2HourlyRate = baseHourlyRate * ot2Multiplier;
-
-    // 計算該日各階段加班費 (不預先四捨五入)
-    const dailyOt1Pay = ot1HourlyRate * record.ot1Hours;
-    const dailyOt2Pay = ot2HourlyRate * record.ot2Hours;
-
-    // 將該日各階段加班費四捨五入為整數，並加總
-    const dailyOvertimePay = Math.round(dailyOt1Pay) + Math.round(dailyOt2Pay);
-
-    return dailyOvertimePay;
-  },
-
-  /**
-   * 計算整月加班費 - 正確方法：每日單獨計算後加總
-   */
-  calculateMonthlyOvertimePayByDaily: (dailyRecords: DailyOvertimeRecord[], settings: CalculationSettings): number => {
-    // 計算每日加班費並加總
-    return dailyRecords.reduce((total, record) => {
-      const dailyPay = standardCalculationLogic.calculateDailyOvertimePay(record, settings);
-      return total + dailyPay;
-    }, 0);
-  },
-
-  /**
-   * 舊的方法 (不推薦使用) - 將月加班時數一次性計算
-   * 只保留以兼容舊代碼，新的計算應使用 calculateMonthlyOvertimePayByDaily
-   */
-  calculateOvertimePay: (overtimeHours: OvertimeHours, settings: CalculationSettings): number => {
-    const { baseHourlyRate, ot1Multiplier, ot2Multiplier } = settings;
-    const { totalOT1Hours, totalOT2Hours } = overtimeHours;
-
-    // 計算精確時薪 (不取整)
-    const ot1HourlyRate = baseHourlyRate * ot1Multiplier;
-    const ot2HourlyRate = baseHourlyRate * ot2Multiplier;
-
-    // 計算各階段加班費 (不預先四捨五入)
-    const ot1Pay = ot1HourlyRate * totalOT1Hours;
-    const ot2Pay = ot2HourlyRate * totalOT2Hours;
-
-    // 將各階段加班費四捨五入為整數
-    const roundedOt1Pay = Math.round(ot1Pay);
-    const roundedOt2Pay = Math.round(ot2Pay);
-
-    // 返回總加班費
-    return roundedOt1Pay + roundedOt2Pay;
-  },
-
-  // 總薪資計算
-  calculateGrossSalary: (
-    baseSalary: number,
-    overtimePay: number,
-    holidayPay: number = 0,
-    welfareAllowance: number = 0,
-    housingAllowance: number = 0
-  ): number => {
-    return baseSalary + overtimePay + holidayPay + welfareAllowance + housingAllowance;
-  },
-
-  // 淨薪資計算
-  calculateNetSalary: (grossSalary: number, totalDeductions: number): number => {
-    return grossSalary - totalDeductions;
-  }
-};
-
-/**
  * 標準計算模型 - 適用於大多數情況
  */
 export const standardCalculationModel: CalculationModel = {
@@ -200,9 +124,9 @@ export const standardCalculationModel: CalculationModel = {
     welfareAllowance: sharedConstants.DEFAULT_WELFARE_ALLOWANCE
   },
 
-  calculateOvertimePay: standardCalculationLogic.calculateOvertimePay,
-  calculateGrossSalary: standardCalculationLogic.calculateGrossSalary,
-  calculateNetSalary: standardCalculationLogic.calculateNetSalary,
+  calculateOvertimePay: (overtimeHours, settings) => sharedCalculateOvertimePay(overtimeHours, settings),
+  calculateGrossSalary: sharedCalculateGrossSalary,
+  calculateNetSalary: sharedCalculateNetSalary,
 
   checkSpecialCase: (year: number, month: number, employeeId: number, overtimeHours: OvertimeHours, baseSalary: number, welfareAllowance?: number, housingAllowance?: number): SpecialCaseResult | null => {
     // 檢查是否有匹配的資料驅動特殊規則
