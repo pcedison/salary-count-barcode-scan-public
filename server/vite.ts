@@ -42,7 +42,9 @@ export async function setupVite(app: Express, server: Server) {
       ...viteLogger,
       error: (msg, options) => {
         viteLogger.error(msg, options);
-        process.exit(1);
+        // 不可在此 process.exit(1):Vite 會把瀏覽器端的 console.error
+        // relay 到這個 logger(格式為 "[vite] (client) [console.error] …"),
+        // 任何前端 runtime 錯誤都會誤殺整個 dev server。
       },
     },
     server: serverOptions,

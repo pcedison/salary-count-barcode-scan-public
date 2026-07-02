@@ -73,6 +73,9 @@ test.describe("mobile shell structure", () => {
   test("bottom nav tab navigates between pages", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
+    // 先等 shell 完成掛載(useIsMobile 翻轉後才會渲染底部導覽)
+    await expect(page.locator("header").first()).toBeVisible();
+
     const navBar = page.locator("nav").last();
     await expect(navBar).toBeVisible();
 
