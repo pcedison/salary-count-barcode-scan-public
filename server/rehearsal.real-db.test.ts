@@ -1,5 +1,6 @@
 import fs from 'fs';
 import { execFile } from 'node:child_process';
+import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -189,6 +190,11 @@ describe('real database — rollback / restore rehearsals', () => {
         shell: spawnShell,
         env: {
           ...process.env,
+          // aes:ready 的 readiness 檢查器固定在 workspace 相對路徑
+          // backups/restore-rehearsal/reports 尋找產物;runtime 的
+          // getBackupRootDir() 預設已指向 workspace 之外(AppData),
+          // 需明確對齊,否則產物永遠不會被檢查器找到。
+          APP_BACKUP_DIR: path.resolve(process.cwd(), 'backups'),
         },
         maxBuffer: 2 * 1024 * 1024,
       });
@@ -199,6 +205,9 @@ describe('real database — rollback / restore rehearsals', () => {
         env: {
           ...process.env,
           ENCRYPTION_KEY: TEST_AES_KEY,
+          // 資料庫已 100% AES 時,readiness 守門要求 execute 環境
+          // 必須開啟 AES 寫入;測試環境比照提供。
+          USE_AES_ENCRYPTION: 'true',
         },
         maxBuffer: 2 * 1024 * 1024,
       });
