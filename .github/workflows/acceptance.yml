@@ -1,0 +1,81 @@
+name: Acceptance
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mobile-ui:
+    name: Mobile UI structural checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run mobile UI acceptance tests
+        run: npm run test:mobile-ui
+
+      - name: Upload mobile screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ui-screenshots
+          path: test-results/mobile-screenshots/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  real-db:
+    name: Real database tests (opt-in via secret)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # 必須指向「測試用」資料庫(schema 與正式庫一致),絕不可指向正式庫。
+      # 未設定此 secret 時,本 job 會以 notice 略過而不失敗。
+      DATABASE_URL: ${{ secrets.REAL_DB_TEST_DATABASE_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+
+      - name: Run real database tests
+        if: env.DATABASE_URL != ''
+        run: npm run test:real-db
+
+      - name: Skip notice
+        if: env.DATABASE_URL == ''
+        run: echo "::notice::REAL_DB_TEST_DATABASE_URL secret not configured; real-db tests were skipped. Run 'npm run test:real-db' locally before merging."
