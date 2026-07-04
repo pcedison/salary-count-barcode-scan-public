@@ -46,7 +46,7 @@ function timeToMinutesForPrint(timeStr: string): number {
 export default function PrintableSalarySheet({ result }: PrintableSalarySheetProps) {
 
 // 安全數值處理函數
-const safeNumber = (value: any): number => {
+const safeNumber = (value: unknown): number => {
   if (value === null || value === undefined) return 0;
   const num = Number(value);
   return isNaN(num) ? 0 : num;

@@ -24,6 +24,13 @@ import {
 } from '@/lib/attendanceEnhancement';
 import { useAttendanceQueries } from '@/hooks/useAttendanceQueries';
 
+interface HolidayEntry {
+  date: string;
+  name?: string;
+  holidayType?: string;
+  employeeId?: number | null;
+}
+
 interface NewAttendanceRecord {
   employeeId?: number | null;
   date: string;
@@ -191,7 +198,7 @@ export function useAttendanceData() {
 
   // Create salary record
   const createSalaryRecordMutation = useMutation({
-    mutationFn: async (salaryRecord: any) => {
+    mutationFn: async (salaryRecord: SalaryResult) => {
       return await apiRequest('POST', '/api/salary-records', salaryRecord);
     },
     onSuccess: () => {
@@ -252,7 +259,7 @@ export function useAttendanceData() {
     }
   };
 
-  const calculateSalary = (dataToUse?: any[]) => {
+  const calculateSalary = (dataToUse?: AttendanceRecord[]) => {
     const recordsToProcess = dataToUse || attendanceData;
 
     if (!Array.isArray(recordsToProcess) || recordsToProcess.length === 0 || !settings) {
@@ -346,19 +353,19 @@ export function useAttendanceData() {
 
       const salaryMonthKey = `${salaryYear}-${String(salaryMonth).padStart(2, '0')}`;
       const employeeHolidays = Array.isArray(holidays)
-        ? holidays.filter((h: any) =>
+        ? holidays.filter((h: HolidayEntry) =>
             (!h.employeeId || h.employeeId === employeeId) &&
             toMonthKey(h.date) === salaryMonthKey
           )
         : [];
-      debugLog("employeeHolidays", employeeHolidays.map((h: any) => ({ date: h.date, name: h.name })));
+      debugLog("employeeHolidays", employeeHolidays.map((h) => ({ date: h.date, name: h.name })));
 
       const actualHolidayWork = payrollAttendanceData.filter((day) => {
         if (!day.clockIn || !day.clockOut || day.clockIn === "" || day.clockOut === "" || day.clockIn === "--:--" || day.clockOut === "--:--") {
           return false;
         }
 
-        const holidayRecord = employeeHolidays.find((h: any) => h.date === day.date);
+        const holidayRecord = employeeHolidays.find((h) => h.date === day.date);
         if (holidayRecord) {
           return holidayRecord.holidayType === "worked";
         }
@@ -372,7 +379,7 @@ export function useAttendanceData() {
         return isWeekend;
       });
 
-      const paidLeave = employeeHolidays.filter((h: any) => {
+      const paidLeave = employeeHolidays.filter((h) => {
         const hasAttendanceRecord = payrollAttendanceData.some((day) =>
           day.date === h.date && day.clockIn && day.clockOut && day.clockIn !== "" && day.clockOut !== ""
         );
@@ -544,7 +551,7 @@ export function useAttendanceData() {
           employeeIds.length === 1 ? salaryResult : calculateSalary(employeeAttendance);
 
         if (employeeResult) {
-          const recordToSave: any = { ...employeeResult };
+          const recordToSave: SalaryResult = { ...employeeResult };
           recordToSave.employeeId = employeeId;
           recordToSave.employeeName = employeeAttendance[0]._employeeName || `Employee ID: ${employeeId}`;
           recordToSave.attendanceData = employeeAttendance;

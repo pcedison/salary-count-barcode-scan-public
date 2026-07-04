@@ -10,7 +10,7 @@ import { apiRequest } from '@/lib/queryClient';
 import { calculateOvertime } from '@/lib/salaryCalculations';
 import { debugLog } from '@/lib/debug';
 
-interface SalaryRecord {
+export interface SalaryRecord {
   id: number;
   salaryYear: number;
   salaryMonth: number;
@@ -35,7 +35,16 @@ interface SalaryRecord {
     clockIn: string;
     clockOut: string;
     isHoliday: boolean;
+    employeeId?: number;
   }>;
+  specialLeaveInfo?: {
+    usedDays: number;
+    usedDates: string[];
+    cashDays: number;
+    cashAmount: number;
+    cashMonth?: string;
+    notes?: string;
+  } | null;
   createdAt: string;
 }
 

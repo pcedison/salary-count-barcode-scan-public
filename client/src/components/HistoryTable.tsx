@@ -6,33 +6,14 @@ import { useEmployees } from '@/hooks/useEmployees';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { matchesYearMonth } from '@shared/utils/specialLeaveSync';
+import type { SalaryRecord } from '@/hooks/useHistoryData';
 
 interface HistoryTableProps {
-  records: Array<{
-    id: number;
-    salaryYear: number;
-    salaryMonth: number;
-    baseSalary: number;
-    totalOT1Hours: number;
-    totalOT2Hours: number;
-    totalOvertimePay: number;
-    holidayDays: number;
-    totalHolidayPay: number;
-    netSalary: number;
-    attendanceData?: Array<any>;
-    specialLeaveInfo?: {
-      usedDays: number;
-      usedDates: string[];
-      cashDays: number;
-      cashAmount: number;
-      cashMonth?: string;
-      notes?: string;
-    };
-  }>;
+  records: SalaryRecord[];
   isLoading: boolean;
-  onDownloadPdf: (record: any) => void;
+  onDownloadPdf: (record: SalaryRecord) => void;
   onDeleteRecord?: (id: number) => void;
-  onEditRecord?: (record: any) => void;
+  onEditRecord?: (record: SalaryRecord) => void;
   isDeleting?: boolean;
   isAdmin?: boolean;
   selectedRecords?: number[];
@@ -40,7 +21,8 @@ interface HistoryTableProps {
   onSelectAll?: (checked: boolean) => void;
 }
 
-type HistoryRecord = HistoryTableProps['records'][number];
+type HistoryRecord = SalaryRecord;
+
 
 export default function HistoryTable({
   records,
@@ -57,7 +39,7 @@ export default function HistoryTable({
   const [, setLocation] = useLocation();
   const { employees, activeEmployees } = useEmployees();
 
-  const getEmployeesFromAttendanceData = (attendanceData: any[]) => {
+  const getEmployeesFromAttendanceData = (attendanceData: Array<{ employeeId?: number }>) => {
     if (!attendanceData || !Array.isArray(attendanceData) || attendanceData.length === 0) {
       return [];
     }
@@ -77,8 +59,8 @@ export default function HistoryTable({
   };
 
   const getEmployeeLabel = (record: HistoryRecord) => {
-    if ((record as any).employeeName) {
-      return (record as any).employeeName as string;
+    if (record.employeeName) {
+      return record.employeeName;
     }
 
     if (record.attendanceData && record.attendanceData.length > 0) {
@@ -92,9 +74,8 @@ export default function HistoryTable({
   };
 
   const getRecordEmployeeId = (record: HistoryRecord): number | null => {
-    const employeeId = (record as any).employeeId;
-    if (typeof employeeId === 'number') {
-      return employeeId;
+    if (typeof record.employeeId === 'number') {
+      return record.employeeId;
     }
 
     const attendanceEmployeeId = record.attendanceData?.find(
@@ -124,7 +105,7 @@ export default function HistoryTable({
 
   const renderEmployeeDetails = (record: HistoryRecord) => (
     <div>
-      {(record as any).employeeName || (record.attendanceData && record.attendanceData.length > 0) ? (
+      {record.employeeName || (record.attendanceData && record.attendanceData.length > 0) ? (
         <div>
           <div className="flex items-center gap-1.5">
             <User className="h-4 w-4 text-primary" />

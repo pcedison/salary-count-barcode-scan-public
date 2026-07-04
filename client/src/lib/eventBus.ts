@@ -3,7 +3,7 @@
  * 用於頁面間通訊，例如當一個頁面上的操作需要通知另一個頁面時
  */
 
-type EventCallback = (...args: any[]) => void;
+type EventCallback = (...args: unknown[]) => void;
 
 interface EventMap {
   [eventName: string]: EventCallback[];
@@ -35,7 +35,7 @@ class EventBus {
   }
 
   // 發布事件
-  emit(eventName: string, ...args: any[]) {
+  emit(eventName: string, ...args: unknown[]) {
     const callbacks = this.events[eventName];
     if (!callbacks || callbacks.length === 0) return;
 

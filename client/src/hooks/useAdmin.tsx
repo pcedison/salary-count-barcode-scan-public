@@ -134,6 +134,8 @@ export function AdminProvider({ children }: { children: ReactNode }) {
     clearLegacyAdminStorage();
 
     try {
+      // 刻意用裸 fetch:本 hook 是認證引導層,走 apiRequest 會在 401 時
+      // 觸發 admin-session-invalidated 事件而形成遞迴。
       const response = await fetch("/api/admin/session", {
         method: "GET",
         credentials: "include",

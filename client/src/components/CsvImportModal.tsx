@@ -25,7 +25,7 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
   const [parseResult, setParseResult] = useState<{
     success: boolean;
     message: string;
-    preview?: any[];
+    preview?: unknown[];
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 

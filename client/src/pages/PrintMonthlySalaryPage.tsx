@@ -80,6 +80,7 @@ export default function PrintMonthlySalaryPage() {
           ids: ids.join(','),
           token,
         });
+        // 刻意用裸 fetch:需要 AbortController signal,apiRequest 不支援。
         const response = await fetch(`/api/salary-records/print-batch?${params.toString()}`, {
           credentials: 'include',
           signal: controller.signal,

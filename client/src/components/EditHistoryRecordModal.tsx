@@ -30,11 +30,47 @@ interface SpecialLeaveInfo {
   notes?: string;
 }
 
+interface EditableAttendanceEntry {
+  date: string;
+  clockIn: string;
+  clockOut: string;
+  isHoliday: boolean;
+  holidayType?: string;
+  employeeId?: number;
+}
+
+interface EditableHistoryRecord {
+  id: number;
+  salaryYear: number;
+  salaryMonth: number;
+  baseSalary?: number;
+  housingAllowance?: number;
+  totalOvertimePay?: number;
+  totalHolidayPay?: number;
+  attendanceData?: EditableAttendanceEntry[];
+  allowances?: Allowance[];
+  deductions?: Deduction[];
+  specialLeaveInfo?: SpecialLeaveInfo | null;
+}
+
+export interface HistoryRecordUpdatePayload {
+  attendanceData: EditableAttendanceEntry[];
+  allowances: Allowance[];
+  deductions: Deduction[];
+  housingAllowance: number;
+  baseSalary: number;
+  welfareAllowance: number;
+  totalDeductions: number;
+  grossSalary: number;
+  netSalary: number;
+  specialLeaveInfo: SpecialLeaveInfo | null;
+}
+
 interface EditHistoryRecordModalProps {
-  record: any;
+  record: EditableHistoryRecord | null;
   isOpen: boolean;
   onClose: () => void;
-  onSave: (id: number, updatedData: any) => Promise<void>;
+  onSave: (id: number, updatedData: HistoryRecordUpdatePayload) => Promise<void>;
   isSaving: boolean;
 }
 
@@ -45,7 +81,7 @@ export default function EditHistoryRecordModal({
   onSave,
   isSaving
 }: EditHistoryRecordModalProps) {
-  const [attendanceData, setAttendanceData] = useState<any[]>([]);
+  const [attendanceData, setAttendanceData] = useState<EditableAttendanceEntry[]>([]);
   const [allowances, setAllowances] = useState<Allowance[]>([]);
   const [deductions, setDeductions] = useState<Deduction[]>([]);
   const [housingAllowance, setHousingAllowance] = useState<number>(0);
@@ -63,13 +99,13 @@ export default function EditHistoryRecordModal({
     }
   }, [record, isOpen]);
 
-  const updateAttendanceField = (index: number, field: string, value: any) => {
+  const updateAttendanceField = (index: number, field: keyof EditableAttendanceEntry, value: string | boolean) => {
     const updatedData = [...attendanceData];
     updatedData[index] = { ...updatedData[index], [field]: value };
     setAttendanceData(updatedData);
   };
 
-  const updateAllowance = (index: number, field: keyof Allowance, value: any) => {
+  const updateAllowance = (index: number, field: keyof Allowance, value: string) => {
     const updated = [...allowances];
     updated[index] = { ...updated[index], [field]: field === 'amount' ? parseFloat(value) || 0 : value };
     setAllowances(updated);
@@ -83,7 +119,7 @@ export default function EditHistoryRecordModal({
     setAllowances(allowances.filter((_, i) => i !== index));
   };
 
-  const updateDeduction = (index: number, field: keyof Deduction, value: any) => {
+  const updateDeduction = (index: number, field: keyof Deduction, value: string) => {
     const updated = [...deductions];
     updated[index] = { ...updated[index], [field]: field === 'amount' ? parseFloat(value) || 0 : value };
     setDeductions(updated);

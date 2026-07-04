@@ -131,6 +131,8 @@ export function useBarcodeScanner() {
     setIsScanSessionLoading(true);
 
     try {
+      // 刻意用裸 fetch 而非 apiRequest:kiosk 流程需要解析非 2xx 回應
+      // (401 掛鎖偵測、429 重複掃描訊息),apiRequest 會直接拋錯。
       const response = await fetch('/api/scan/session', {
         method: 'GET',
         credentials: 'include',

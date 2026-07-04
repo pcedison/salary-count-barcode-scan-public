@@ -61,8 +61,8 @@ export default function ClockInPage() {
         setErrorMessage(data.error ?? '打卡失敗，請再試一次');
         setState('error');
       }
-    } catch (err: any) {
-      setErrorMessage(err?.message ?? '打卡失敗，請再試一次');
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : '打卡失敗，請再試一次');
       setState('error');
     }
   }, []);
@@ -85,6 +85,7 @@ export default function ClockInPage() {
     (async () => {
       try {
         // 1. 確認後端 LINE 功能是否啟用
+        // 刻意用裸 fetch:LIFF 公開端點,非 2xx 走優雅分支而非拋錯。
         const configRes = await fetch('/api/line/config');
         const config = await configRes.json();
         if (!config.configured) {
@@ -192,8 +193,8 @@ export default function ClockInPage() {
         setErrorMessage(data.error ?? '綁定失敗，請再試一次');
         setState('error');
       }
-    } catch (err: any) {
-      setErrorMessage(err?.message ?? '綁定失敗，請再試一次');
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : '綁定失敗，請再試一次');
       setState('error');
     }
   }, [lineData, idNumber]);

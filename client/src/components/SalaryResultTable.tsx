@@ -33,7 +33,11 @@ interface SalaryResultTableProps {
       notes?: string;
     };
   };
-  settings: any;
+  settings: {
+    ot1Multiplier?: number;
+    ot2Multiplier?: number;
+    baseHourlyRate?: number;
+  } | null | undefined;
   onFinalize: () => void;
 }
 

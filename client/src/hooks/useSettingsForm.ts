@@ -340,7 +340,7 @@ export function useSettingsForm() {
       queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
       queryClient.invalidateQueries({ queryKey: ['/api/settings/admin'] });
       queryClient.invalidateQueries({ queryKey: ['/api/employees/admin'] });
-      const migrated = (data as any).migrationResult?.migrated ?? 0;
+      const migrated = (data as { migrationResult?: { migrated?: number } }).migrationResult?.migrated ?? 0;
       toast({ title: '掃碼槍功能已停用', description: `${migrated} 位員工身分證已加密為 AES-256-GCM` });
     } catch (error) {
       console.error('Failed to disable barcode:', error);
