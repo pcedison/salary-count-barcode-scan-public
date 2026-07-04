@@ -1,21 +1,12 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAdmin } from '@/hooks/useAdmin';
-import { apiRequest, getQueryFn } from '@/lib/queryClient';
+import { apiRequest } from '@/lib/queryClient';
 import { useSettings } from '@/hooks/useSettings';
 import { useEmployees } from '@/hooks/useEmployees';
-import {
-  createAttendanceSyncStatus,
-  type AttendanceSyncStatus,
-} from '@/lib/attendanceSyncStatus';
-import {
-  invalidateAttendanceQueries,
-  normalizeAttendanceRecord,
-  type AttendanceRecordLike,
-} from '@/lib/attendanceRecords';
+import { invalidateAttendanceQueries } from '@/lib/attendanceRecords';
 import { debugLog } from '@/lib/debug';
-import { extractListData, type PaginatedPayload } from '@/lib/paginatedPayload';
 import {
   getCurrentYearMonth,
   formatDate
@@ -27,33 +18,11 @@ import {
   normalizeSalarySettings
 } from '@shared/utils/salaryMath';
 import {
-  formatYearMonthKey,
-  matchesYearMonth,
-  parseYearMonthKey
-} from '@shared/utils/specialLeaveSync';
-
-interface AttendanceRecord {
-  id: number;
-  employeeId?: number;
-  _employeeName?: string;
-  _employeeDepartment?: string;
-  date: string;
-  clockIn: string;
-  clockOut: string;
-  isHoliday: boolean;
-  holidayId?: number;
-  holidayType?: string;
-  isBarcodeScanned?: boolean;
-  _isLeaveRecord?: boolean;
-  _isNoClockType?: boolean;
-  _displayDate?: string;
-  _holidayType?: string;
-  _holidayName?: string;
-  _isSpecialLeaveCashRecord?: boolean;
-  _specialLeaveCashDays?: number;
-  _specialLeaveCashAmount?: number;
-  _specialLeaveCashNotes?: string | null;
-}
+  getSpecialLeaveInfoForMonth as getSpecialLeaveInfoForMonthPure,
+  toMonthKey,
+  type AttendanceRecord
+} from '@/lib/attendanceEnhancement';
+import { useAttendanceQueries } from '@/hooks/useAttendanceQueries';
 
 interface NewAttendanceRecord {
   employeeId?: number | null;
@@ -96,362 +65,42 @@ interface SalaryResult {
   };
 }
 
-interface FinalizedSalaryRecord {
-  employeeId?: number | null;
-  salaryYear: number;
-  salaryMonth: number;
-}
-
-const ATTENDANCE_PAGE_LIMIT = 1000;
-
-async function fetchAttendanceJson(path: string) {
-  const response = await fetch(path, {
-    credentials: 'include'
-  });
-
-  if (!response.ok) {
-    const text = (await response.text()) || response.statusText;
-    throw new Error(`${response.status}: ${text}`);
-  }
-
-  return response.json();
-}
-
-async function fetchAllAttendancePages(): Promise<PaginatedPayload<AttendanceRecordLike>> {
-  const records: AttendanceRecordLike[] = [];
-  let page = 1;
-  let total = 0;
-  let pages = 1;
-
-  do {
-    const payload = (await fetchAttendanceJson(
-      `/api/attendance?page=${page}&limit=${ATTENDANCE_PAGE_LIMIT}`
-    )) as AttendanceRecordLike[] | PaginatedPayload<AttendanceRecordLike>;
-    const pageRecords = extractListData(payload);
-    records.push(...pageRecords);
-
-    if (!Array.isArray(payload) && payload.pagination) {
-      total = payload.pagination.total;
-      pages = payload.pagination.pages;
-    } else {
-      total = records.length;
-      pages = 1;
-    }
-
-    page += 1;
-  } while (page <= pages);
-
-  return {
-    data: records,
-    pagination: {
-      page: 1,
-      limit: records.length || ATTENDANCE_PAGE_LIMIT,
-      total,
-      pages: records.length > 0 ? 1 : 0
-    }
-  };
-}
-
-function toMonthKey(dateValue: string): string | null {
-  if (!dateValue) return null;
-
-  const [yearValue, monthValue] = dateValue.replace(/-/g, "/").split("/");
-  const year = Number(yearValue);
-  const month = Number(monthValue);
-
-  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
-    return null;
-  }
-
-  return `${year}-${String(month).padStart(2, "0")}`;
-}
-
-function parseAttendanceDateParts(date: string | null | undefined): { year: number; month: number; day: number } | null {
-  const match = String(date || '').match(/^(\d{4})[/-](\d{1,2})(?:[/-](\d{1,2}))?/);
-  if (!match) {
-    return null;
-  }
-
-  const year = Number.parseInt(match[1], 10);
-  const month = Number.parseInt(match[2], 10);
-  const day = Number.parseInt(match[3] || '0', 10);
-  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
-    return null;
-  }
-
-  return { year, month, day };
-}
-
-function getEmployeeMonthKey(employeeId: number, year: number, month: number): string {
-  return `${employeeId}:${formatYearMonthKey(year, month)}`;
-}
-
-function getAttendanceSortValue(record: Pick<AttendanceRecord, 'date'>): number {
-  const parts = parseAttendanceDateParts(record.date);
-  if (!parts) {
-    return 0;
-  }
-
-  return parts.year * 10000 + parts.month * 100 + parts.day;
-}
-
+/**
+ * 出勤登記主 hook,由三層組成:
+ * - lib/attendanceEnhancement:純函式(過濾/增強/排序,有單元測試)
+ * - useAttendanceQueries:查詢軸(抓取、同步狀態、顯示資料)
+ * - 本檔:mutations 與試算/結算工作流
+ * 公開介面與拆分前完全一致。
+ */
 export function useAttendanceData() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { isAdmin } = useAdmin();
   const { settings, holidays } = useSettings({ requireAdminSettings: isAdmin });
-
-  const [salaryResult, setSalaryResult] = useState<SalaryResult | null>(null);
-  const [syncStatus, setSyncStatus] = useState<AttendanceSyncStatus>(
-    createAttendanceSyncStatus('syncing', null)
-  );
-
-  // Fetch attendance data.
-  const attendanceQueryKey = isAdmin ? '/api/attendance?allPages=true' : '/api/attendance/today';
-  const attendanceQueryFn = useMemo(
-    () =>
-      isAdmin
-        ? async () => fetchAllAttendancePages()
-        : getQueryFn<AttendanceRecordLike[] | PaginatedPayload<AttendanceRecordLike> | null>({
-            on401: 'returnNull',
-          }),
-    [isAdmin]
-  );
-
-  const {
-    data: rawAttendanceData,
-    isLoading,
-    error
-  } = useQuery<AttendanceRecordLike[] | PaginatedPayload<AttendanceRecordLike> | null>({
-    queryKey: [attendanceQueryKey],
-    queryFn: attendanceQueryFn,
-    enabled: true,
-    refetchInterval: 30000,
-    staleTime: 15000,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: false,
-    retry: 1
-  });
-
-  const isKioskLocked = !isAdmin && rawAttendanceData === null;
-
-  const attendanceData = useMemo<AttendanceRecord[]>(() => {
-    const records = rawAttendanceData ? extractListData(rawAttendanceData) : [];
-    return records.map((record) => normalizeAttendanceRecord(record));
-  }, [rawAttendanceData]);
-
-  const { data: rawSalaryRecords = [] } = useQuery<
-    FinalizedSalaryRecord[] | PaginatedPayload<FinalizedSalaryRecord>
-  >({
-    queryKey: ['/api/salary-records'],
-    enabled: isAdmin,
-    staleTime: 30_000,
-    refetchInterval: 60_000,
-    refetchOnWindowFocus: false,
-    retry: 1
-  });
-
-  const salaryRecords = useMemo(
-    () => extractListData(rawSalaryRecords),
-    [rawSalaryRecords]
-  );
-
-  const finalizedSalaryMonthKeys = useMemo(() => {
-    return new Set(
-      salaryRecords
-        .filter((record) => record.employeeId && record.salaryYear && record.salaryMonth)
-        .map((record) =>
-          getEmployeeMonthKey(record.employeeId as number, record.salaryYear, record.salaryMonth)
-        )
-    );
-  }, [salaryRecords]);
-
-  // Surface fetch errors to admins.
-  useEffect(() => {
-    if (isAdmin && error) {
-      toast({
-        title: "Attendance fetch failed",
-        description: error instanceof Error ? error.message : "Failed to load attendance data",
-        variant: "destructive"
-      });
-      console.error('Error fetching attendance data:', error);
-    }
-  }, [error, isAdmin, toast]);
-
-  // Keep sync state aligned with the latest query outcome.
-  useEffect(() => {
-    if (isKioskLocked) {
-      setSyncStatus((previous) =>
-        createAttendanceSyncStatus('locked', previous.lastSynced)
-      );
-      return;
-    }
-
-    if (!isLoading && !error) {
-      setSyncStatus(
-        createAttendanceSyncStatus('synced', new Date().toLocaleString())
-      );
-    } else if (error) {
-      setSyncStatus((previous) =>
-        createAttendanceSyncStatus('error', previous.lastSynced)
-      );
-    }
-  }, [attendanceData, error, isKioskLocked, isLoading]);
-  // Enrich attendance rows with employee metadata.
   const { employees } = useEmployees({ requireAdminDetails: isAdmin });
 
-  const getSpecialLeaveInfoForMonth = (employeeId: number, year: number, month: number) => {
-    const employee = employees?.find(emp => emp.id === employeeId);
-    if (!employee) return null;
+  const [salaryResult, setSalaryResult] = useState<SalaryResult | null>(null);
 
-    const usedDates = employee.specialLeaveUsedDates || [];
-    const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  const {
+    attendanceData,
+    sortedAttendanceData,
+    isLoading,
+    syncStatus,
+    markSyncing
+  } = useAttendanceQueries({
+    isAdmin,
+    employees,
+    baseMonthSalary: settings?.baseMonthSalary || 29500
+  });
 
-    // Normalize dates to YYYY-MM-DD.
-    const normalizeDate = (date: string): string => date.replace(/\//g, '-');
+  const getSpecialLeaveInfoForMonth = (employeeId: number, year: number, month: number) =>
+    getSpecialLeaveInfoForMonthPure(
+      employees?.find((emp) => emp.id === employeeId),
+      year,
+      month,
+      settings?.baseMonthSalary || 29500
+    );
 
-    const monthlyUsedDates = usedDates
-      .map(normalizeDate)
-      .filter(date => date.startsWith(monthPrefix));
-
-    const cashMonth = employee.specialLeaveCashMonth || '';
-    const isCashMonth = matchesYearMonth(cashMonth, year, month);
-    const cashDays = isCashMonth ? (employee.specialLeaveCashDays || 0) : 0;
-    const baseSalary = settings?.baseMonthSalary || 29500;
-    const dailySalary = Math.round(baseSalary / 30);
-    const cashAmount = cashDays * dailySalary;
-
-    if (monthlyUsedDates.length === 0 && cashDays === 0) {
-      return null;
-    }
-
-    return {
-      usedDays: monthlyUsedDates.length,
-      usedDates: monthlyUsedDates,
-      cashDays,
-      cashAmount,
-      cashMonth: isCashMonth && cashDays > 0 ? cashMonth : undefined,
-      notes: employee.specialLeaveNotes || ''
-    };
-  };
-
-  // Enhance attendance rows with holiday labels and employee names.
-  const enhancedAttendanceData = useMemo(() => {
-    const attData = Array.isArray(attendanceData) ? attendanceData : [];
-    const activeAttendanceData = attData.filter((record) => {
-      if (!record.employeeId) {
-        return true;
-      }
-
-      const dateParts = parseAttendanceDateParts(record.date);
-      if (!dateParts) {
-        return true;
-      }
-
-      return !finalizedSalaryMonthKeys.has(
-        getEmployeeMonthKey(record.employeeId, dateParts.year, dateParts.month)
-      );
-    });
-    debugLog('attendance enhancement counts', employees?.length || 0, 'records', attData.length);
-
-    const holidayTypeLabels: Record<string, string> = {
-      'national_holiday': '國定假日',
-      'special_leave': '特別休假',
-      'sick_leave': '病假',
-      'personal_leave': '事假',
-      'typhoon_leave': '颱風假',
-      'temporary_stop_work_and_classes': '臨時停止上班上課',
-      'special_leave_cash': '特休折現',
-      'worked': '假日出勤'
-    };
-
-    const noClockTypes = ['national_holiday', 'typhoon_leave', 'temporary_stop_work_and_classes', 'special_leave'];
-
-    const enhancedRecords = activeAttendanceData.map((record: any) => {
-      let enhanced: any = { ...record };
-
-      if (record.employeeId && employees && employees.length > 0) {
-        const employee = employees.find((emp) => emp.id === record.employeeId);
-        if (employee) {
-          enhanced._employeeName = employee.name;
-          enhanced._employeeDepartment = employee.department;
-        }
-      }
-
-      if (record.holidayType) {
-        const isNoClockType = noClockTypes.includes(record.holidayType);
-        enhanced._isLeaveRecord = true;
-        enhanced._isNoClockType = isNoClockType;
-        enhanced._holidayType = record.holidayType;
-        enhanced._holidayName = holidayTypeLabels[record.holidayType] || '假日';
-      }
-
-      return enhanced;
-    });
-
-    const dailySalary = Math.round((settings?.baseMonthSalary || 29500) / 30);
-    const specialLeaveCashRecords = (employees || []).flatMap((employee) => {
-      const cashDays = employee.specialLeaveCashDays || 0;
-      if (cashDays <= 0) {
-        return [];
-      }
-
-      const cashMonthKey = parseYearMonthKey(employee.specialLeaveCashMonth);
-      if (!cashMonthKey) {
-        return [];
-      }
-
-      const [yearText, monthText] = cashMonthKey.split('-');
-      const year = Number.parseInt(yearText, 10);
-      const month = Number.parseInt(monthText, 10);
-      if (finalizedSalaryMonthKeys.has(getEmployeeMonthKey(employee.id, year, month))) {
-        return [];
-      }
-
-      const cashAmount = cashDays * dailySalary;
-      const paddedMonth = String(month).padStart(2, '0');
-
-      return [{
-        id: -(1_000_000 + employee.id * 10_000 + year * 100 + month),
-        employeeId: employee.id,
-        _employeeName: employee.name,
-        _employeeDepartment: employee.department || undefined,
-        date: `${year}/${paddedMonth}/00`,
-        _displayDate: `${year}/${paddedMonth}`,
-        clockIn: '--:--',
-        clockOut: '--:--',
-        isHoliday: true,
-        holidayType: 'special_leave_cash',
-        isBarcodeScanned: false,
-        _isLeaveRecord: true,
-        _isNoClockType: true,
-        _holidayType: 'special_leave_cash',
-        _holidayName: `特休折現 ${cashDays}天 / $${cashAmount.toLocaleString()}`,
-        _isSpecialLeaveCashRecord: true,
-        _specialLeaveCashDays: cashDays,
-        _specialLeaveCashAmount: cashAmount,
-        _specialLeaveCashNotes: employee.specialLeaveNotes || null
-      } satisfies AttendanceRecord];
-    });
-
-    return [...enhancedRecords, ...specialLeaveCashRecords];
-  }, [attendanceData, employees, finalizedSalaryMonthKeys, settings?.baseMonthSalary]);
-
-  // Show the newest attendance records first in the registration table.
-  const sortedAttendanceData = useMemo(() => {
-    if (enhancedAttendanceData.length === 0) return [];
-
-    return [...enhancedAttendanceData].sort((a, b) => {
-      const dateDiff = getAttendanceSortValue(b) - getAttendanceSortValue(a);
-      if (dateDiff !== 0) {
-        return dateDiff;
-      }
-
-      return b.id - a.id;
-    });
-  }, [enhancedAttendanceData]);
-
-  // Create attendance record
   const createAttendanceMutation = useMutation({
     mutationFn: async (newRecord: NewAttendanceRecord) => {
       const formattedRecord = {
@@ -561,9 +210,7 @@ export function useAttendanceData() {
   // Add a new attendance record
   const addAttendance = async (record: NewAttendanceRecord) => {
     try {
-      setSyncStatus((previous) =>
-        createAttendanceSyncStatus('syncing', previous.lastSynced)
-      );
+      markSyncing();
       await createAttendanceMutation.mutateAsync(record);
       return true;
     } catch (error) {
@@ -574,9 +221,7 @@ export function useAttendanceData() {
   // Update an attendance record
   const updateAttendance = async (id: number, data: Partial<NewAttendanceRecord>) => {
     try {
-      setSyncStatus((previous) =>
-        createAttendanceSyncStatus('syncing', previous.lastSynced)
-      );
+      markSyncing();
       await updateAttendanceMutation.mutateAsync({ id, data });
       return true;
     } catch (error) {
@@ -587,9 +232,7 @@ export function useAttendanceData() {
   // Delete an attendance record
   const deleteAttendance = async (id: number) => {
     try {
-      setSyncStatus((previous) =>
-        createAttendanceSyncStatus('syncing', previous.lastSynced)
-      );
+      markSyncing();
       await deleteSingleAttendanceMutation.mutateAsync(id);
       return true;
     } catch (error) {
@@ -600,9 +243,7 @@ export function useAttendanceData() {
   // Clear all attendance records
   const clearAllData = async () => {
     try {
-      setSyncStatus((previous) =>
-        createAttendanceSyncStatus('syncing', previous.lastSynced)
-      );
+      markSyncing();
       await deleteFilteredAttendanceMutation.mutateAsync({});
       setSalaryResult(null);
       return true;
