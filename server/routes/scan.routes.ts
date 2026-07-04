@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import type { Express, Request, Response } from 'express';
 
 import { normalizeDateToSlash } from '@shared/utils/specialLeaveSync';
@@ -17,6 +16,15 @@ import { storage, type AttendanceScanAction } from '../storage';
 import { maskEmployeeIdentityForLog, normalizeEmployeeIdentity } from '../utils/employeeIdentity';
 import { createLogger } from '../utils/logger';
 
+import {
+  ScanDedupGuard,
+  buildScanUnlockTokenPayload,
+  consumeScanUnlockTokenNonce,
+  decodeScanUnlockToken,
+  encodeScanUnlockToken,
+  hasValidDeviceTokenValue
+} from '../services/scanSecurity.service';
+
 import { handleRouteError } from './route-helpers';
 import {
   buildEmployeeCacheKey,
@@ -33,7 +41,6 @@ const log = createLogger('scan');
 const EMPLOYEE_CACHE_TTL_MS = 4 * 60 * 60 * 1000;
 const HOLIDAY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const DEVICE_TOKEN_HEADER = 'x-scan-device-token';
-const SCAN_UNLOCK_TOKEN_TTL_MS = 10 * 60 * 1000;
 
 interface CacheEntry<T> {
   value: T;
@@ -45,22 +52,12 @@ interface HolidayCache {
   expiresAt: number;
 }
 
-type ScanUnlockTokenPayload = {
-  scope: 'scan_unlock';
-  issuedAt: number;
-  expiresAt: number;
-  nonce: string;
-  kioskChallenge: string;
-};
-
 class DuplicateScanStateError extends Error {
   constructor() {
     super('Scan state changed while another scan was being persisted.');
     this.name = 'DuplicateScanStateError';
   }
 }
-
-const usedScanUnlockTokenNonces = new Map<string, number>();
 
 function getCachedValue<T>(entry: CacheEntry<T> | null | undefined, now: number): T | undefined {
   if (!entry || entry.expiresAt <= now) {
@@ -83,14 +80,6 @@ function isBrowserScanUnlockRequired(): boolean {
 
 function isDeviceTokenRequired(): boolean {
   return process.env.NODE_ENV === 'production' || Boolean(process.env.SCAN_DEVICE_TOKEN?.trim());
-}
-
-function resolveScanUnlockTokenSecret(): string {
-  return (
-    process.env.SCAN_UNLOCK_TOKEN_SECRET?.trim() ||
-    process.env.SESSION_SECRET?.trim() ||
-    'development-scan-unlock-secret-do-not-use'
-  );
 }
 
 function getConfiguredDeviceToken(): string | null {
@@ -133,96 +122,6 @@ function normalizeKioskChallenge(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function buildScanUnlockTokenPayload(kioskChallenge: string): ScanUnlockTokenPayload {
-  const issuedAt = Date.now();
-  return {
-    scope: 'scan_unlock',
-    issuedAt,
-    expiresAt: issuedAt + SCAN_UNLOCK_TOKEN_TTL_MS,
-    nonce: crypto.randomUUID(),
-    kioskChallenge
-  };
-}
-
-function encodeScanUnlockToken(payload: ScanUnlockTokenPayload): string {
-  const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-  const signature = crypto
-    .createHmac('sha256', resolveScanUnlockTokenSecret())
-    .update(encodedPayload)
-    .digest('base64url');
-
-  return `${encodedPayload}.${signature}`;
-}
-
-function decodeScanUnlockToken(token: string): ScanUnlockTokenPayload | null {
-  const [encodedPayload, signature] = token.split('.');
-  if (!encodedPayload || !signature) {
-    return null;
-  }
-
-  const expectedSignature = crypto
-    .createHmac('sha256', resolveScanUnlockTokenSecret())
-    .update(encodedPayload)
-    .digest('base64url');
-
-  const signatureBuffer = Buffer.from(signature, 'utf8');
-  const expectedBuffer = Buffer.from(expectedSignature, 'utf8');
-  if (
-    signatureBuffer.length !== expectedBuffer.length ||
-    !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)
-  ) {
-    return null;
-  }
-
-  try {
-    const decoded = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as Partial<ScanUnlockTokenPayload>;
-
-    if (
-      decoded?.scope !== 'scan_unlock' ||
-      typeof decoded.issuedAt !== 'number' ||
-      typeof decoded.expiresAt !== 'number' ||
-      typeof decoded.nonce !== 'string' ||
-      typeof decoded.kioskChallenge !== 'string'
-    ) {
-      return null;
-    }
-
-    return {
-      scope: 'scan_unlock',
-      issuedAt: decoded.issuedAt,
-      expiresAt: decoded.expiresAt,
-      nonce: decoded.nonce,
-      kioskChallenge: decoded.kioskChallenge
-    };
-  } catch {
-    return null;
-  }
-}
-
-function cleanupExpiredScanUnlockTokens(now: number): void {
-  for (const [nonce, expiresAt] of Array.from(usedScanUnlockTokenNonces.entries())) {
-    if (expiresAt <= now) {
-      usedScanUnlockTokenNonces.delete(nonce);
-    }
-  }
-}
-
-function consumeScanUnlockTokenNonce(payload: ScanUnlockTokenPayload): boolean {
-  const now = Date.now();
-  cleanupExpiredScanUnlockTokens(now);
-
-  if (payload.expiresAt <= now) {
-    return false;
-  }
-
-  if (usedScanUnlockTokenNonces.has(payload.nonce)) {
-    return false;
-  }
-
-  usedScanUnlockTokenNonces.set(payload.nonce, payload.expiresAt);
-  return true;
-}
-
 function hasValidDeviceToken(req: Request): boolean {
   const expected = getConfiguredDeviceToken();
   if (!expected) {
@@ -230,17 +129,7 @@ function hasValidDeviceToken(req: Request): boolean {
   }
 
   const provided = req.header(DEVICE_TOKEN_HEADER)?.trim() ?? '';
-  if (!provided) {
-    return false;
-  }
-
-  const expectedBuffer = Buffer.from(expected, 'utf8');
-  const providedBuffer = Buffer.from(provided, 'utf8');
-
-  return (
-    expectedBuffer.length === providedBuffer.length &&
-    crypto.timingSafeEqual(expectedBuffer, providedBuffer)
-  );
+  return hasValidDeviceTokenValue(expected, provided);
 }
 
 function respondDeviceTokenRequired(res: Response, statusCode: 401 | 503 = 401) {
@@ -272,10 +161,9 @@ function respondDuplicateScan(res: Response) {
 }
 
 export function registerScanRoutes(app: Express): void {
-  // Per-server dedup map: keeps rapid double-scan protection scoped to each server instance
+  // Per-server dedup guard: keeps rapid double-scan protection scoped to each server instance
   // (ensures test isolation when registerScanRoutes is called multiple times in tests)
-  const recentScans = new Map<string, number>();
-  const SCAN_DEDUP_WINDOW_MS = 2000;
+  const scanDedupGuard = new ScanDedupGuard(2000);
 
   // Guard: return 503 for all scan endpoints when barcodeEnabled is false
   const SCAN_PATHS = ['/api/scan', '/api/barcode-scan', '/api/raspberry-scan', '/api/last-scan-result'];
@@ -551,17 +439,8 @@ export function registerScanRoutes(app: Express): void {
       // Determine pending action (clockIn/clockOut) to key the dedup check correctly.
       // This ensures clock-in → clock-out transitions are not blocked by the dedup window.
       const { action: pendingAction } = await getPendingAction(employee.id);
-      const scanKey = `${employee.id}-${pendingAction}`;
-      const lastScan = recentScans.get(scanKey);
-      if (lastScan && Date.now() - lastScan < SCAN_DEDUP_WINDOW_MS) {
+      if (!scanDedupGuard.tryAcquire(employee.id, pendingAction)) {
         return respondDuplicateScan(res);
-      }
-      recentScans.set(scanKey, Date.now());
-      // Clean up entries older than the dedup window to prevent unbounded growth
-      for (const [key, ts] of Array.from(recentScans.entries())) {
-        if (Date.now() - ts >= SCAN_DEDUP_WINDOW_MS) {
-          recentScans.delete(key);
-        }
       }
 
       const result = await upsertAttendanceScan(employee, pendingAction);
@@ -613,17 +492,8 @@ export function registerScanRoutes(app: Express): void {
       }
 
       const { action: pendingActionRpi } = await getPendingAction(employee.id);
-      const scanKeyRpi = `${employee.id}-${pendingActionRpi}`;
-      const lastScanRpi = recentScans.get(scanKeyRpi);
-      if (lastScanRpi && Date.now() - lastScanRpi < SCAN_DEDUP_WINDOW_MS) {
+      if (!scanDedupGuard.tryAcquire(employee.id, pendingActionRpi)) {
         return respondDuplicateScan(res);
-      }
-      recentScans.set(scanKeyRpi, Date.now());
-      // Clean up entries older than the dedup window to prevent unbounded growth
-      for (const [key, ts] of Array.from(recentScans.entries())) {
-        if (Date.now() - ts >= SCAN_DEDUP_WINDOW_MS) {
-          recentScans.delete(key);
-        }
       }
 
       const result = await upsertAttendanceScan(employee, pendingActionRpi);
