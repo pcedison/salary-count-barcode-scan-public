@@ -1,7 +1,7 @@
 import type { Config } from "tailwindcss";
 
 export default {
-  darkMode: ["class"],
+  // 專案為單一主題(紙感)設計,無深色模式 —— 勿加回 darkMode 設定
   content: ["./client/index.html", "./client/src/**/*.{js,jsx,ts,tsx}"],
   theme: {
     extend: {
@@ -44,22 +44,35 @@ export default {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
-        chart: {
-          "1": "hsl(var(--chart-1))",
-          "2": "hsl(var(--chart-2))",
-          "3": "hsl(var(--chart-3))",
-          "4": "hsl(var(--chart-4))",
-          "5": "hsl(var(--chart-5))",
+        // 紙感主題 tokens(單一設計事實來源,值定義於 index.css :root)
+        paper: {
+          DEFAULT: "var(--paper)",
+          soft: "var(--paper-soft)",
+          sink: "var(--paper-sink)",
         },
-        sidebar: {
-          DEFAULT: "hsl(var(--sidebar-background))",
-          foreground: "hsl(var(--sidebar-foreground))",
-          primary: "hsl(var(--sidebar-primary))",
-          "primary-foreground": "hsl(var(--sidebar-primary-foreground))",
-          accent: "hsl(var(--sidebar-accent))",
-          "accent-foreground": "hsl(var(--sidebar-accent-foreground))",
-          border: "hsl(var(--sidebar-border))",
-          ring: "hsl(var(--sidebar-ring))",
+        ink: {
+          1: "var(--ink-1)",
+          2: "var(--ink-2)",
+          3: "var(--ink-3)",
+          4: "var(--ink-4)",
+        },
+        line: {
+          DEFAULT: "var(--line)",
+          soft: "var(--line-soft)",
+        },
+        sage: {
+          DEFAULT: "var(--sage)",
+          deep: "var(--sage-deep)",
+          soft: "var(--sage-soft)",
+          tint: "var(--sage-tint)",
+        },
+        clay: {
+          DEFAULT: "var(--clay)",
+          soft: "var(--clay-soft)",
+        },
+        moss: {
+          DEFAULT: "var(--moss)",
+          soft: "var(--moss-soft)",
         },
       },
       keyframes: {
