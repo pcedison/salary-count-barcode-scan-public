@@ -63,6 +63,7 @@ const storageMock = vi.hoisted(() => ({
   getTemporaryAttendanceByEmployeeAndMonth: vi.fn(async (employeeId: number) =>
     state.attendance.filter((record) => record.employeeId === employeeId)
   ),
+  getTemporaryAttendanceByMonth: vi.fn(async () => state.attendance),
   createSalaryRecord: vi.fn(async (record: Record<string, any>) => {
     const created = { ...record, id: state.salaryRecords.length + 1, createdAt: new Date() };
     state.salaryRecords.push(created);
@@ -74,6 +75,25 @@ const storageMock = vi.hoisted(() => ({
     Object.assign(record, data);
     return record;
   }),
+  saveSalaryRecordsAtomically: vi.fn(
+    async (items: Array<{ existingId?: number; record: Record<string, any> }>) =>
+      items.map((item) => {
+        if (item.existingId != null) {
+          const existing = state.salaryRecords.find((record) => record.id === item.existingId);
+          if (existing) {
+            Object.assign(existing, item.record);
+            return existing;
+          }
+        }
+        const created = {
+          ...item.record,
+          id: state.salaryRecords.length + 1,
+          createdAt: new Date(),
+        };
+        state.salaryRecords.push(created);
+        return created;
+      })
+  ),
 }));
 
 const monthlySalaryRunRepositoryMock = vi.hoisted(() => ({
@@ -207,6 +227,70 @@ describe('monthly salary automation', () => {
     expect(storageMock.createSalaryRecord).not.toHaveBeenCalled();
     expect(generateMonthlySalaryPdf).not.toHaveBeenCalled();
     expect(sendMonthlySalaryEmail).not.toHaveBeenCalled();
+  });
+
+  it('preloads month data with fixed query count and persists records in a single atomic batch', async () => {
+    // 防 N+1 迴歸:不論員工數多寡,查詢次數固定;寫入必須走單一 transaction 批次,
+    // 中途失敗時不得留下半套薪資資料。
+    state.employees.push({
+      id: 10,
+      name: 'Second User',
+      active: true,
+      deletedAt: null,
+      specialLeaveUsedDates: [],
+      specialLeaveCashDays: 0,
+      specialLeaveCashMonth: null,
+      specialLeaveNotes: null,
+    });
+    state.attendance.push({
+      id: 2,
+      employeeId: 10,
+      date: '2026/04/02',
+      clockIn: '09:00',
+      clockOut: '18:00',
+      isHoliday: false,
+      holidayType: null,
+      createdAt: new Date('2026-04-02T00:00:00.000Z'),
+    });
+
+    try {
+      const result = await moduleUnderTest.runMonthlySalaryAutomation({
+        target: { year: 2026, month: 4 },
+        sendEmail: false,
+        config: {
+          enabled: true,
+          timeZone: 'UTC',
+          runHour: 1,
+          runMinute: 15,
+          intervalMs: 3600000,
+          emailRecipients: [],
+          smtpPort: 587,
+          smtpSecure: false,
+        },
+      });
+
+      expect(result.status).toBe('succeeded');
+      expect(result.persistedRecords).toHaveLength(2);
+
+      // 整月資料一次預載,而非每員工各查一次
+      expect(storageMock.getSalaryRecordsByYearMonth).toHaveBeenCalledTimes(1);
+      expect(storageMock.getTemporaryAttendanceByMonth).toHaveBeenCalledTimes(1);
+      expect(storageMock.getTemporaryAttendanceByMonth).toHaveBeenCalledWith(2026, 4);
+      expect(storageMock.getSalaryRecordByYearMonthEmployee).not.toHaveBeenCalled();
+      expect(storageMock.getTemporaryAttendanceByEmployeeAndMonth).not.toHaveBeenCalled();
+
+      // 全部寫入集中於單一原子批次
+      expect(storageMock.saveSalaryRecordsAtomically).toHaveBeenCalledTimes(1);
+      expect(storageMock.saveSalaryRecordsAtomically).toHaveBeenCalledWith([
+        expect.objectContaining({ record: expect.objectContaining({ employeeId: 9 }) }),
+        expect.objectContaining({ record: expect.objectContaining({ employeeId: 10 }) }),
+      ]);
+      expect(storageMock.createSalaryRecord).not.toHaveBeenCalled();
+      expect(storageMock.updateSalaryRecord).not.toHaveBeenCalled();
+    } finally {
+      state.employees.pop();
+      state.attendance.pop();
+    }
   });
 
   it('persists the monthly run, PDF path, and sent email metadata', async () => {

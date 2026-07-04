@@ -50,6 +50,12 @@ export interface SalaryRecordPageFilters {
 
 export type SalaryRecordYearFilters = Omit<SalaryRecordPageFilters, 'salaryYear'>;
 
+/** 單筆薪資寫入意圖:有 existingId 走 update,否則 insert。供原子批次寫入使用。 */
+export interface SalaryRecordWrite {
+  existingId?: number;
+  record: InsertSalaryRecord;
+}
+
 export type AttendanceScanUpsertResult =
   | {
       duplicate: false;
@@ -182,6 +188,7 @@ export interface IStorage {
   getTemporaryAttendanceByDate(date: string): Promise<TemporaryAttendance[]>; // 查詢特定日期的所有考勤記錄
   getTemporaryAttendanceByEmployeeAndDate(employeeId: number, date: string): Promise<TemporaryAttendance[]>; // 查詢特定員工特定日期的考勤記錄
   getTemporaryAttendanceByEmployeeAndMonth(employeeId: number, year: number, month: number): Promise<TemporaryAttendance[]>;
+  getTemporaryAttendanceByMonth(year: number, month: number): Promise<TemporaryAttendance[]>;
   upsertTemporaryAttendanceScan(input: AttendanceScanUpsertInput): Promise<AttendanceScanUpsertResult>;
   createTemporaryAttendance(attendance: InsertTemporaryAttendance): Promise<TemporaryAttendance>;
   updateTemporaryAttendance(id: number, attendance: Partial<InsertTemporaryAttendance>): Promise<TemporaryAttendance | undefined>;
@@ -204,6 +211,7 @@ export interface IStorage {
   getSalaryRecordByYearMonthEmployee(year: number, month: number, employeeId: number): Promise<SalaryRecord | undefined>;
   createSalaryRecord(record: InsertSalaryRecord): Promise<SalaryRecord>;
   updateSalaryRecord(id: number, record: Partial<InsertSalaryRecord>): Promise<SalaryRecord | undefined>;
+  saveSalaryRecordsAtomically(items: SalaryRecordWrite[]): Promise<SalaryRecord[]>;
   deleteSalaryRecord(id: number): Promise<boolean>;
 
   // Monthly salary automation methods
@@ -421,6 +429,19 @@ export class DatabaseStorage implements IStorage {
           eq(temporaryAttendance.employeeId, employeeId),
           drizzleSql`(${temporaryAttendance.date} like ${slashPrefix} or ${temporaryAttendance.date} like ${dashPrefix})`
         )
+      );
+  }
+
+  async getTemporaryAttendanceByMonth(year: number, month: number): Promise<TemporaryAttendance[]> {
+    const normalizedMonth = String(month).padStart(2, '0');
+    const slashPrefix = `${year}/${normalizedMonth}/%`;
+    const dashPrefix = `${year}-${normalizedMonth}-%`;
+
+    return db
+      .select()
+      .from(temporaryAttendance)
+      .where(
+        drizzleSql`(${temporaryAttendance.date} like ${slashPrefix} or ${temporaryAttendance.date} like ${dashPrefix})`
       );
   }
 
@@ -673,6 +694,38 @@ export class DatabaseStorage implements IStorage {
       .where(eq(salaryRecords.id, id))
       .returning();
     return updatedRecord;
+  }
+
+  async saveSalaryRecordsAtomically(items: SalaryRecordWrite[]): Promise<SalaryRecord[]> {
+    if (items.length === 0) {
+      return [];
+    }
+
+    // 整批寫入包在單一 transaction:任何一筆失敗即全部回滾,
+    // 不會留下半套月薪資料(run 狀態由呼叫端另行標記 failed)。
+    return db.transaction(async (tx) => {
+      const results: SalaryRecord[] = [];
+
+      for (const item of items) {
+        if (item.existingId != null) {
+          const [updated] = await tx
+            .update(salaryRecords)
+            .set(item.record as typeof salaryRecords.$inferInsert)
+            .where(eq(salaryRecords.id, item.existingId))
+            .returning();
+          if (!updated) {
+            throw new Error(`Salary record ${item.existingId} disappeared during atomic batch write`);
+          }
+          results.push(updated);
+        } else {
+          const { id, ...recordWithoutId } = item.record as any;
+          const [created] = await tx.insert(salaryRecords).values(recordWithoutId).returning();
+          results.push(created);
+        }
+      }
+
+      return results;
+    });
   }
 
   async deleteSalaryRecord(id: number): Promise<boolean> {
