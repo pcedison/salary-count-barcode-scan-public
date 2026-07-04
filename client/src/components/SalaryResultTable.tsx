@@ -1,4 +1,5 @@
 import { formatCurrency, getMonthName, cn } from '@/lib/utils';
+import { Pencil, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
 import { useToast } from "@/hooks/use-toast";
@@ -220,7 +221,11 @@ export default function SalaryResultTable({ result, settings, onFinalize }: Sala
             className="flex items-center text-sm text-warning hover:text-amber-600"
             onClick={isEditingNotes ? handleSaveNotes : handleEditNotes}
           >
-            <span className="material-icons mr-1 text-sm">{isEditingNotes ? 'save' : 'edit'}</span>
+            {isEditingNotes ? (
+              <Save className="mr-1 h-4 w-4" aria-hidden="true" />
+            ) : (
+              <Pencil className="mr-1 h-4 w-4" aria-hidden="true" />
+            )}
             {isEditingNotes ? '儲存' : '編輯'}
           </button>
         </div>

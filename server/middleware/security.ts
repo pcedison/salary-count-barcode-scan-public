@@ -82,9 +82,10 @@ export function setupSecurity(app: Express): void {
             directives: {
               defaultSrc: ["'self'"],
               scriptSrc: ["'self'", ...lineCspOrigins],
-              styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+              // 字型全數自架(@fontsource,由 Vite 打包),不再允許任何外部字型/樣式來源
+              styleSrc: ["'self'", "'unsafe-inline'"],
               imgSrc: ["'self'", 'data:', 'https:'],
-              fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+              fontSrc: ["'self'", 'data:'],
               connectSrc: ["'self'", ...lineCspOrigins],
               objectSrc: ["'none'"],
               baseUri: ["'self'"],

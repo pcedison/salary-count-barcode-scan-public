@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { calculateOvertime, cn } from '@/lib/utils';
-import { Loader2, XCircle } from 'lucide-react';
+import { Check, Loader2, Pencil, Trash2, X, XCircle } from 'lucide-react';
 import ConfirmationModal from '@/components/ConfirmationModal';
 
 interface AttendanceTableProps {
@@ -348,14 +348,14 @@ export default function AttendanceTable({
             className="bg-blue-600 text-white hover:bg-blue-700"
             size="sm"
           >
-            <span className="material-icons text-sm">check</span>
+            <Check className="h-4 w-4" aria-hidden="true" />
           </Button>
           <Button
             onClick={handleCancelEdit}
             variant="secondary"
             size="sm"
           >
-            <span className="material-icons text-sm">close</span>
+            <X className="h-4 w-4" aria-hidden="true" />
           </Button>
         </div>
       );
@@ -371,7 +371,7 @@ export default function AttendanceTable({
           data-testid={`button-edit-${row.record.id}`}
           aria-label="編輯考勤記錄"
         >
-          <span className="material-icons text-sm">edit</span>
+          <Pencil className="h-4 w-4" aria-hidden="true" />
         </Button>
         <Button
           variant="ghost"
@@ -381,7 +381,7 @@ export default function AttendanceTable({
           data-testid={`button-delete-${row.record.id}`}
           aria-label="刪除考勤記錄"
         >
-          <span className="material-icons text-sm">delete</span>
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
     );
