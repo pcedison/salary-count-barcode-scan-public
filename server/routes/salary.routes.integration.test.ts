@@ -65,6 +65,12 @@ const salaryCalculatorMock = vi.hoisted(() => ({
 }));
 
 const storageMock = vi.hoisted(() => ({
+  getSettings: vi.fn(async () => salaryState.settings),
+  getTemporaryAttendance: vi.fn(async () => []),
+  getTemporaryAttendanceByEmployeeAndMonth: vi.fn(async () => []),
+}));
+
+const salaryRepositoryMock = vi.hoisted(() => ({
   getAllSalaryRecords: vi.fn(async () => salaryState.records),
   getAllSalaryRecordsPage: vi.fn(async (page: number, limit: number) => ({
     rows: salaryState.records.slice(0, limit),
@@ -79,9 +85,9 @@ const storageMock = vi.hoisted(() => ({
   getSalaryRecordById: vi.fn(async (id: number) =>
     salaryState.records.find((record) => record.id === id)
   ),
-  getSettings: vi.fn(async () => salaryState.settings),
-  getTemporaryAttendance: vi.fn(async () => []),
-  getTemporaryAttendanceByEmployeeAndMonth: vi.fn(async () => []),
+  getSalaryRecordsByIds: vi.fn(async (ids: number[]) =>
+    salaryState.records.filter((record) => ids.includes(record.id))
+  ),
   updateSalaryRecord: vi.fn(async (id: number, data: Record<string, unknown>) => {
     salaryState.lastUpdate = { id, data };
     const record = salaryState.records.find((item) => item.id === id);
@@ -97,6 +103,10 @@ const storageMock = vi.hoisted(() => ({
 
 vi.mock('../storage', () => ({
   storage: storageMock
+}));
+
+vi.mock('../repositories/salaryRepository', () => ({
+  salaryRepository: salaryRepositoryMock,
 }));
 
 vi.mock('../utils/salaryCalculator', () => salaryCalculatorMock);
@@ -230,8 +240,8 @@ describe('salary routes integration', () => {
           pages: 1
         }
       });
-      expect(storageMock.getAllSalaryRecordsPage).toHaveBeenCalledWith(1, 50);
-      expect(storageMock.getAllSalaryRecords).not.toHaveBeenCalled();
+      expect(salaryRepositoryMock.getAllSalaryRecordsPage).toHaveBeenCalledWith(1, 50);
+      expect(salaryRepositoryMock.getAllSalaryRecords).not.toHaveBeenCalled();
 
       const detailResult = await jsonRequest<Record<string, unknown>>(
         server.baseUrl,
@@ -290,7 +300,7 @@ describe('salary routes integration', () => {
         total: 1,
         pages: 1
       });
-      expect(storageMock.getAllSalaryRecordsPage).toHaveBeenCalledWith(2, 25, {
+      expect(salaryRepositoryMock.getAllSalaryRecordsPage).toHaveBeenCalledWith(2, 25, {
         employeeId: 5,
         salaryYear: 2026,
         salaryMonth: 3,
@@ -326,7 +336,7 @@ describe('salary routes integration', () => {
 
       expect(result.response.status).toBe(200);
       expect(result.body).toEqual({ years: [2026, 2025] });
-      expect(storageMock.getSalaryRecordYears).toHaveBeenCalledWith({
+      expect(salaryRepositoryMock.getSalaryRecordYears).toHaveBeenCalledWith({
         employeeId: 5,
         search: 'Alpha'
       });
@@ -403,7 +413,7 @@ describe('salary routes integration', () => {
       );
       expect(storageMock.getTemporaryAttendance).not.toHaveBeenCalled();
       expect(salaryCalculatorMock.calculateSalary).not.toHaveBeenCalled();
-      expect(storageMock.updateSalaryRecord).toHaveBeenCalledWith(
+      expect(salaryRepositoryMock.updateSalaryRecord).toHaveBeenCalledWith(
         7,
         expect.objectContaining({
           baseSalary: 31000,
@@ -471,7 +481,7 @@ describe('salary routes integration', () => {
         0,
         5
       );
-      expect(storageMock.updateSalaryRecord).toHaveBeenCalledWith(
+      expect(salaryRepositoryMock.updateSalaryRecord).toHaveBeenCalledWith(
         7,
         expect.objectContaining({
           baseSalary: 31000,

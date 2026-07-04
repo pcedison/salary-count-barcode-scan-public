@@ -41,12 +41,15 @@ const state = vi.hoisted(() => ({
 }));
 
 const storageMock = vi.hoisted(() => ({
-  updateMonthlySalaryRun: vi.fn(async (id: number, data: Record<string, any>) => {
-    const run = state.salaryRuns.find((item) => item.id === id);
-    if (!run) return undefined;
-    Object.assign(run, data);
-    return run;
-  }),
+  getSettings: vi.fn(async () => state.settings),
+  getAllEmployees: vi.fn(async () => state.employees),
+  getTemporaryAttendanceByEmployeeAndMonth: vi.fn(async (employeeId: number) =>
+    state.attendance.filter((record) => record.employeeId === employeeId)
+  ),
+  getTemporaryAttendanceByMonth: vi.fn(async () => state.attendance),
+}));
+
+const salaryRepositoryMock = vi.hoisted(() => ({
   getSalaryRecordsByYearMonth: vi.fn(async (year: number, month: number) =>
     state.salaryRecords.filter((record) => record.salaryYear === year && record.salaryMonth === month)
   ),
@@ -58,12 +61,6 @@ const storageMock = vi.hoisted(() => ({
         record.employeeId === employeeId
     )
   ),
-  getSettings: vi.fn(async () => state.settings),
-  getAllEmployees: vi.fn(async () => state.employees),
-  getTemporaryAttendanceByEmployeeAndMonth: vi.fn(async (employeeId: number) =>
-    state.attendance.filter((record) => record.employeeId === employeeId)
-  ),
-  getTemporaryAttendanceByMonth: vi.fn(async () => state.attendance),
   createSalaryRecord: vi.fn(async (record: Record<string, any>) => {
     const created = { ...record, id: state.salaryRecords.length + 1, createdAt: new Date() };
     state.salaryRecords.push(created);
@@ -146,6 +143,12 @@ const monthlySalaryRunRepositoryMock = vi.hoisted(() => ({
       return { run: created };
     }
   ),
+  updateMonthlySalaryRun: vi.fn(async (id: number, data: Record<string, any>) => {
+    const run = state.salaryRuns.find((item) => item.id === id);
+    if (!run) return undefined;
+    Object.assign(run, data);
+    return run;
+  }),
 }));
 
 const buildCalculatedSalaryRecord = vi.hoisted(() =>
@@ -165,6 +168,9 @@ const sendMonthlySalaryEmail = vi.hoisted(() =>
 vi.mock('../storage', () => ({ storage: storageMock }));
 vi.mock('../repositories/monthlySalaryRunRepository', () => ({
   monthlySalaryRunRepository: monthlySalaryRunRepositoryMock,
+}));
+vi.mock('../repositories/salaryRepository', () => ({
+  salaryRepository: salaryRepositoryMock,
 }));
 vi.mock('../routes/salary.routes', () => ({ buildCalculatedSalaryRecord }));
 vi.mock('./salaryPdf', () => ({ generateMonthlySalaryPdf }));
@@ -224,7 +230,7 @@ describe('monthly salary automation', () => {
 
     expect(result.status).toBe('dry-run');
     expect(result.calculatedRecords).toHaveLength(1);
-    expect(storageMock.createSalaryRecord).not.toHaveBeenCalled();
+    expect(salaryRepositoryMock.createSalaryRecord).not.toHaveBeenCalled();
     expect(generateMonthlySalaryPdf).not.toHaveBeenCalled();
     expect(sendMonthlySalaryEmail).not.toHaveBeenCalled();
   });
@@ -273,20 +279,20 @@ describe('monthly salary automation', () => {
       expect(result.persistedRecords).toHaveLength(2);
 
       // 整月資料一次預載,而非每員工各查一次
-      expect(storageMock.getSalaryRecordsByYearMonth).toHaveBeenCalledTimes(1);
+      expect(salaryRepositoryMock.getSalaryRecordsByYearMonth).toHaveBeenCalledTimes(1);
       expect(storageMock.getTemporaryAttendanceByMonth).toHaveBeenCalledTimes(1);
       expect(storageMock.getTemporaryAttendanceByMonth).toHaveBeenCalledWith(2026, 4);
-      expect(storageMock.getSalaryRecordByYearMonthEmployee).not.toHaveBeenCalled();
+      expect(salaryRepositoryMock.getSalaryRecordByYearMonthEmployee).not.toHaveBeenCalled();
       expect(storageMock.getTemporaryAttendanceByEmployeeAndMonth).not.toHaveBeenCalled();
 
       // 全部寫入集中於單一原子批次
-      expect(storageMock.saveSalaryRecordsAtomically).toHaveBeenCalledTimes(1);
-      expect(storageMock.saveSalaryRecordsAtomically).toHaveBeenCalledWith([
+      expect(salaryRepositoryMock.saveSalaryRecordsAtomically).toHaveBeenCalledTimes(1);
+      expect(salaryRepositoryMock.saveSalaryRecordsAtomically).toHaveBeenCalledWith([
         expect.objectContaining({ record: expect.objectContaining({ employeeId: 9 }) }),
         expect.objectContaining({ record: expect.objectContaining({ employeeId: 10 }) }),
       ]);
-      expect(storageMock.createSalaryRecord).not.toHaveBeenCalled();
-      expect(storageMock.updateSalaryRecord).not.toHaveBeenCalled();
+      expect(salaryRepositoryMock.createSalaryRecord).not.toHaveBeenCalled();
+      expect(salaryRepositoryMock.updateSalaryRecord).not.toHaveBeenCalled();
     } finally {
       state.employees.pop();
       state.attendance.pop();
@@ -318,7 +324,7 @@ describe('monthly salary automation', () => {
       expect.any(Object)
     );
     expect(sendMonthlySalaryEmail).toHaveBeenCalledTimes(1);
-    expect(storageMock.updateMonthlySalaryRun).toHaveBeenLastCalledWith(
+    expect(monthlySalaryRunRepositoryMock.updateMonthlySalaryRun).toHaveBeenLastCalledWith(
       1,
       expect.objectContaining({
         status: 'succeeded',

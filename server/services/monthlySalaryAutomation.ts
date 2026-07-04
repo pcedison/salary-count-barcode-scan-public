@@ -14,8 +14,9 @@ import {
   isSalaryEmailConfigured,
   type SalaryAutomationConfig,
 } from '../config/salaryAutomation';
-import { storage, type SalaryRecordWrite } from '../storage';
+import { storage } from '../storage';
 import { monthlySalaryRunRepository } from '../repositories/monthlySalaryRunRepository';
+import { salaryRepository, type SalaryRecordWrite } from '../repositories/salaryRepository';
 import { createLogger } from '../utils/logger';
 import { buildCalculatedSalaryRecord } from '../routes/salary.routes';
 import { sendMonthlySalaryEmail } from './salaryEmail';
@@ -214,7 +215,7 @@ async function markRunFailed(run: MonthlySalaryRun | undefined, error: unknown) 
   }
 
   const message = error instanceof Error ? error.message : String(error);
-  return storage.updateMonthlySalaryRun(run.id, {
+  return monthlySalaryRunRepository.updateMonthlySalaryRun(run.id, {
     status: 'failed',
     errorMessage: message,
     completedAt: new Date(),
@@ -251,7 +252,7 @@ export async function runMonthlySalaryAutomation(
           reason: acquireResult.skipReason,
           run,
           calculatedRecords,
-          persistedRecords: await storage.getSalaryRecordsByYearMonth(target.year, target.month),
+          persistedRecords: await salaryRepository.getSalaryRecordsByYearMonth(target.year, target.month),
           skippedEmployees,
           emailRecipients: run?.emailTo ?? [],
         };
@@ -266,7 +267,7 @@ export async function runMonthlySalaryAutomation(
     // 整月資料一次預載(固定 3 次查詢,與員工數無關),避免每員工 N+1 round-trip
     const employees = (await storage.getAllEmployees()).filter(isActivePayrollEmployee);
     const existingRecordsByEmployee = new Map<number, SalaryRecord>();
-    for (const record of await storage.getSalaryRecordsByYearMonth(target.year, target.month)) {
+    for (const record of await salaryRepository.getSalaryRecordsByYearMonth(target.year, target.month)) {
       if (record.employeeId != null) {
         existingRecordsByEmployee.set(record.employeeId, record);
       }
@@ -324,7 +325,7 @@ export async function runMonthlySalaryAutomation(
 
     if (pendingWrites.length > 0) {
       // 單一 transaction:任何一筆失敗即全部回滾,不留半套月薪資料
-      persistedRecords.push(...(await storage.saveSalaryRecordsAtomically(pendingWrites)));
+      persistedRecords.push(...(await salaryRepository.saveSalaryRecordsAtomically(pendingWrites)));
     }
 
     if (options.dryRun) {
@@ -340,7 +341,7 @@ export async function runMonthlySalaryAutomation(
 
     if (persistedRecords.length === 0) {
       const updatedRun = run
-        ? await storage.updateMonthlySalaryRun(run.id, {
+        ? await monthlySalaryRunRepository.updateMonthlySalaryRun(run.id, {
             status: 'skipped',
             recordCount: 0,
             skippedCount: skippedEmployees.length,
@@ -379,7 +380,7 @@ export async function runMonthlySalaryAutomation(
     }
 
     const updatedRun = run
-      ? await storage.updateMonthlySalaryRun(run.id, {
+      ? await monthlySalaryRunRepository.updateMonthlySalaryRun(run.id, {
           status: 'succeeded',
           recordCount: persistedRecords.length,
           skippedCount: skippedEmployees.length,
