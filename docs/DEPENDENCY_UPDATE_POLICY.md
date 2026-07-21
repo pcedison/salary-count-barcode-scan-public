@@ -10,7 +10,7 @@ be current with `main`, conflict-free, and pass the protected `required-checks` 
 `docker-smoke` jobs before GitHub merges it.
 
 This applies to security, version, Docker, and GitHub Actions updates, including major
-updates. A failed check, merge conflict, draft state, fork, or maintainer-authored
+updates. A failed required check, merge conflict, draft state, fork, or maintainer-authored
 commit prevents automatic merging. Merging is not a production deployment; runtime
 and major updates still require the deployment review and canary steps below before
 they are released to production.

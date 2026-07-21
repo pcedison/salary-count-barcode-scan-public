@@ -21,8 +21,10 @@ concurrency:
 jobs:
   enable-auto-merge:
     if: >-
+      github.actor == 'dependabot[bot]' &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/') &&
       github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
