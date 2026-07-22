@@ -127,6 +127,7 @@ export default function AttendanceTable({
   const [updatingHolidayType, setUpdatingHolidayType] = useState<number | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   const handleEdit = (record: AttendanceRecord) => {
     setEditingId(record.id);
@@ -211,8 +212,9 @@ export default function AttendanceTable({
   };
 
   const handleConfirmDelete = async () => {
-    if (deleteTargetId === null) return;
+    if (deleteTargetId === null || isDeleting) return;
 
+    setIsDeleting(true);
     try {
       await onDeleteAttendance(deleteTargetId);
       toast({
@@ -227,6 +229,7 @@ export default function AttendanceTable({
         variant: "destructive"
       });
     } finally {
+      setIsDeleting(false);
       setIsDeleteModalOpen(false);
       setDeleteTargetId(null);
     }
@@ -347,6 +350,7 @@ export default function AttendanceTable({
             onClick={handleSaveEdit}
             className="bg-blue-600 text-white hover:bg-blue-700"
             size="sm"
+            aria-label="儲存考勤變更"
           >
             <Check className="h-4 w-4" aria-hidden="true" />
           </Button>
@@ -354,6 +358,7 @@ export default function AttendanceTable({
             onClick={handleCancelEdit}
             variant="secondary"
             size="sm"
+            aria-label="取消編輯考勤"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </Button>
@@ -699,12 +704,14 @@ export default function AttendanceTable({
     <ConfirmationModal
       isOpen={isDeleteModalOpen}
       onClose={() => {
+        if (isDeleting) return;
         setIsDeleteModalOpen(false);
         setDeleteTargetId(null);
       }}
       onConfirm={handleConfirmDelete}
       title="刪除考勤記錄"
       message="確定要刪除此考勤記錄嗎？此操作無法復原。"
+      isProcessing={isDeleting}
     />
     </>
   );

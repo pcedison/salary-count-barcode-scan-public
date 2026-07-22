@@ -47,6 +47,11 @@ interface UnlockTokenResponse {
   expiresAt: string;
 }
 
+interface BarcodeScanResponse extends Partial<ScanResult> {
+  error?: string;
+  idNumber?: string;
+}
+
 const STATUS_AUTO_CLEAR_DELAY_MS = 6000;
 const KIOSK_CHALLENGE_STORAGE_KEY = 'barcode-kiosk-challenge';
 
@@ -338,7 +343,7 @@ export function useBarcodeScanner() {
         return;
       }
 
-      const payload = await parseJsonSafely<any>(response);
+      const payload = await parseJsonSafely<BarcodeScanResponse>(response);
       if (!response.ok) {
         const message = payload?.message || payload?.error || '打卡失敗，請稍後再試。';
         setLastScan(createErrorScanResult(message));
