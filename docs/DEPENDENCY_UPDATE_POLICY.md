@@ -2,6 +2,19 @@
 
 This project treats dependency updates and runtime updates as release work, not as background noise.
 
+## Dependabot Auto-Merge
+
+Unmodified Dependabot pull requests targeting `main` are automatically enrolled in
+GitHub auto-merge. Auto-merge never bypasses repository rules: the pull request must
+be current with `main`, conflict-free, and pass the protected `required-checks` and
+`docker-smoke` jobs before GitHub merges it.
+
+This applies to security, version, Docker, and GitHub Actions updates, including major
+updates. A failed required check, merge conflict, draft state, fork, or maintainer-authored
+commit prevents automatic merging. Merging is not a production deployment; runtime
+and major updates still require the deployment review and canary steps below before
+they are released to production.
+
 ## Alert Sources
 
 Automated update signals:
@@ -35,11 +48,10 @@ Minor and patch dependency updates:
 
 Major dependency updates:
 
-- Use a local branch first.
-- Read the package migration notes.
-- Update tests or code intentionally.
-- Run `npm run verify:release`.
-- Run any affected manual smoke checks before pushing the branch.
+- Dependabot pull requests may merge automatically only after the protected checks pass.
+- Before deploying, read the package migration notes and review the production impact.
+- Update tests or code intentionally if the automated pull request fails a protected check.
+- Run any affected manual smoke checks before production deployment.
 
 Runtime updates:
 
