@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { calculateOvertime, cn } from '@/lib/utils';
-import { Loader2, XCircle } from 'lucide-react';
+import { Check, Loader2, Pencil, Trash2, X, XCircle } from 'lucide-react';
 import ConfirmationModal from '@/components/ConfirmationModal';
 
 interface AttendanceTableProps {
@@ -127,6 +127,7 @@ export default function AttendanceTable({
   const [updatingHolidayType, setUpdatingHolidayType] = useState<number | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   const handleEdit = (record: AttendanceRecord) => {
     setEditingId(record.id);
@@ -211,8 +212,9 @@ export default function AttendanceTable({
   };
 
   const handleConfirmDelete = async () => {
-    if (deleteTargetId === null) return;
+    if (deleteTargetId === null || isDeleting) return;
 
+    setIsDeleting(true);
     try {
       await onDeleteAttendance(deleteTargetId);
       toast({
@@ -227,6 +229,7 @@ export default function AttendanceTable({
         variant: "destructive"
       });
     } finally {
+      setIsDeleting(false);
       setIsDeleteModalOpen(false);
       setDeleteTargetId(null);
     }
@@ -347,15 +350,17 @@ export default function AttendanceTable({
             onClick={handleSaveEdit}
             className="bg-blue-600 text-white hover:bg-blue-700"
             size="sm"
+            aria-label="儲存考勤變更"
           >
-            <span className="material-icons text-sm">check</span>
+            <Check className="h-4 w-4" aria-hidden="true" />
           </Button>
           <Button
             onClick={handleCancelEdit}
             variant="secondary"
             size="sm"
+            aria-label="取消編輯考勤"
           >
-            <span className="material-icons text-sm">close</span>
+            <X className="h-4 w-4" aria-hidden="true" />
           </Button>
         </div>
       );
@@ -371,7 +376,7 @@ export default function AttendanceTable({
           data-testid={`button-edit-${row.record.id}`}
           aria-label="編輯考勤記錄"
         >
-          <span className="material-icons text-sm">edit</span>
+          <Pencil className="h-4 w-4" aria-hidden="true" />
         </Button>
         <Button
           variant="ghost"
@@ -381,7 +386,7 @@ export default function AttendanceTable({
           data-testid={`button-delete-${row.record.id}`}
           aria-label="刪除考勤記錄"
         >
-          <span className="material-icons text-sm">delete</span>
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
     );
@@ -699,12 +704,14 @@ export default function AttendanceTable({
     <ConfirmationModal
       isOpen={isDeleteModalOpen}
       onClose={() => {
+        if (isDeleting) return;
         setIsDeleteModalOpen(false);
         setDeleteTargetId(null);
       }}
       onConfirm={handleConfirmDelete}
       title="刪除考勤記錄"
       message="確定要刪除此考勤記錄嗎？此操作無法復原。"
+      isProcessing={isDeleting}
     />
     </>
   );

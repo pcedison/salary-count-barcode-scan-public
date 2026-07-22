@@ -104,8 +104,8 @@ export function useSettings(options: UseSettingsOptions = {}) {
     mutationFn: async (id: number) => {
       try {
         return await apiRequest("DELETE", `/api/holidays/${id}`);
-      } catch (error: any) {
-        if (typeof error?.message === "string" && error.message.startsWith("404")) {
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("404")) {
           return null;
         }
 

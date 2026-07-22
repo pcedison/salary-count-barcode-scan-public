@@ -12,6 +12,8 @@ import {
   Loader2,
   Save,
   AlertCircle,
+  CheckCircle2,
+  RefreshCw,
   DollarSign,
   CalendarDays,
   Settings,
@@ -477,9 +479,7 @@ export default function SettingsPage() {
                     <div className="flex items-center text-sm">
                       {connectionStatus === "connected" && (
                         <>
-                          <span className="material-icons text-success text-sm mr-1">
-                            check_circle
-                          </span>
+                          <CheckCircle2 className="text-success mr-1 h-4 w-4" aria-hidden="true" />
                           <span className="text-success">
                             {databaseModeLabel} 連線正常
                           </span>
@@ -487,9 +487,7 @@ export default function SettingsPage() {
                       )}
                       {connectionStatus === "disconnected" && (
                         <>
-                          <span className="material-icons text-error text-sm mr-1">
-                            error
-                          </span>
+                          <AlertCircle className="text-error mr-1 h-4 w-4" aria-hidden="true" />
                           <span className="text-error">
                             {databaseModeLabel} 連線異常
                           </span>
@@ -497,9 +495,7 @@ export default function SettingsPage() {
                       )}
                       {connectionStatus === "testing" && (
                         <>
-                          <span className="material-icons text-warning text-sm mr-1 animate-spin">
-                            sync
-                          </span>
+                          <RefreshCw className="text-warning mr-1 h-4 w-4 animate-spin" aria-hidden="true" />
                           <span className="text-warning">檢查中...</span>
                         </>
                       )}

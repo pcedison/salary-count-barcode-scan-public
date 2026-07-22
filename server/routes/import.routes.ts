@@ -3,6 +3,7 @@ import type { Express } from 'express';
 import { strictLimiter } from '../middleware/rateLimiter';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { storage } from '../storage';
+import { salaryRepository } from '../repositories/salaryRepository';
 import { createLogger } from '../utils/logger';
 
 import {
@@ -24,14 +25,14 @@ class AmbiguousSalaryImportError extends Error {
 
 async function findExistingSalaryImportRecord(salaryRecord: SalaryRecordImportPayload) {
   if (salaryRecord.employeeId) {
-    return storage.getSalaryRecordByYearMonthEmployee(
+    return salaryRepository.getSalaryRecordByYearMonthEmployee(
       salaryRecord.salaryYear,
       salaryRecord.salaryMonth,
       salaryRecord.employeeId
     );
   }
 
-  const recordsForMonth = await storage.getSalaryRecordsByYearMonth(
+  const recordsForMonth = await salaryRepository.getSalaryRecordsByYearMonth(
     salaryRecord.salaryYear,
     salaryRecord.salaryMonth
   );
@@ -103,7 +104,7 @@ export function registerImportRoutes(app: Express): void {
       const existingRecord = await findExistingSalaryImportRecord(salaryRecord);
 
       if (existingRecord) {
-        const updatedRecord = await storage.updateSalaryRecord(existingRecord.id, salaryRecordPayload);
+        const updatedRecord = await salaryRepository.updateSalaryRecord(existingRecord.id, salaryRecordPayload);
         return res.json({
           success: true,
           message: `成功更新 ${salaryRecord.salaryYear}年${salaryRecord.salaryMonth}月 的薪資記錄，包含 ${salaryRecord.attendanceData.length} 筆考勤記錄`,
@@ -111,7 +112,7 @@ export function registerImportRoutes(app: Express): void {
         });
       }
 
-      const createdRecord = await storage.createSalaryRecord(salaryRecordPayload);
+      const createdRecord = await salaryRepository.createSalaryRecord(salaryRecordPayload);
       return res.json({
         success: true,
         message: `成功匯入 ${salaryRecord.salaryYear}年${salaryRecord.salaryMonth}月 的薪資記錄，包含 ${salaryRecord.attendanceData.length} 筆考勤記錄`,

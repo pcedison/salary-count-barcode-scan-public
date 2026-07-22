@@ -238,7 +238,13 @@ export default function AttendancePage() {
     // 訂閱條碼掃描事件
     const unsubscribeScan = eventBus.on(
       EventNames.BARCODE_SCANNED,
-      (data: any) => {
+      (payload: unknown) => {
+        // 事件匯流排 payload 為 unknown,於邊界收斂為掃描結果型別
+        const data = payload as {
+          employeeName?: string;
+          action?: 'clock-in' | 'clock-out';
+          attendance?: { date?: string };
+        };
         debugLog("條碼掃描事件接收成功:", data);
 
         // 設置最近活動信息
@@ -276,7 +282,8 @@ export default function AttendancePage() {
     // 訂閱考勤更新事件
     const unsubscribeUpdate = eventBus.on(
       EventNames.ATTENDANCE_UPDATED,
-      (data: any) => {
+      (payload: unknown) => {
+        const data = payload as { complete?: boolean };
         debugLog("考勤更新事件接收成功:", data);
         // 立即刷新考勤數據
         invalidateAttendanceQueries(queryClient);

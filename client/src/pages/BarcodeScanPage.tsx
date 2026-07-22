@@ -306,7 +306,7 @@ export default function BarcodeScanPage() {
                     {incompleteRecords.map((record) => (
                       <Card
                         key={record.id}
-                        className="bg-amber-50 dark:bg-amber-950/20"
+                        className="bg-amber-50"
                       >
                         <CardContent className="p-3">
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

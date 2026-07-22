@@ -108,7 +108,11 @@ const storageMock = vi.hoisted(() => ({
     return true;
   }),
 
-  // salary layer
+  // settings layer
+  getSettings: vi.fn(async () => state.settings),
+}));
+
+const salaryRepositoryMock = vi.hoisted(() => ({
   getAllSalaryRecords: vi.fn(async () => state.salaryRecords),
   getAllSalaryRecordsPage: vi.fn(async (page: number, limit: number) => ({
     rows: state.salaryRecords.slice(0, limit),
@@ -130,12 +134,12 @@ const storageMock = vi.hoisted(() => ({
     Object.assign(record, data);
     return record;
   }),
-
-  // settings layer
-  getSettings: vi.fn(async () => state.settings),
 }));
 
 vi.mock('../storage', () => ({ storage: storageMock }));
+vi.mock('../repositories/salaryRepository', () => ({
+  salaryRepository: salaryRepositoryMock,
+}));
 vi.mock('../utils/salaryCalculator', () => salaryCalculatorMock);
 vi.mock('../middleware/requireAdmin', () => ({
   requireAdmin: () =>
@@ -334,7 +338,7 @@ describe('e2e salary flow', () => {
       );
 
       // Verify the salary record was stored with correct employeeId
-      expect(storageMock.createSalaryRecord).toHaveBeenCalledWith(
+      expect(salaryRepositoryMock.createSalaryRecord).toHaveBeenCalledWith(
         expect.objectContaining({
           employeeId: 2,
           employeeName: 'Employee Alpha',

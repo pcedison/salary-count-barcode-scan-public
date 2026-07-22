@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { getSalaryAutomationConfig, getSalaryAutomationConfigWarnings } from '../config/salaryAutomation';
 import { requireAdmin } from '../middleware/requireAdmin';
-import { storage } from '../storage';
+import { monthlySalaryRunRepository } from '../repositories/monthlySalaryRunRepository';
 import { runMonthlySalaryAutomation } from '../services/monthlySalaryAutomation';
 import { sendSalaryAutomationTestEmail } from '../services/salaryEmail';
 import { handleRouteError } from './route-helpers';
@@ -41,7 +41,7 @@ export function registerSalaryAutomationRoutes(app: Express): void {
   app.get('/api/salary-automation/runs', requireAdmin(), async (req, res) => {
     try {
       const limit = Math.min(50, Math.max(1, Number.parseInt(String(req.query.limit ?? '12'), 10) || 12));
-      const runs = await storage.getRecentMonthlySalaryRuns(limit);
+      const runs = await monthlySalaryRunRepository.getRecentMonthlySalaryRuns(limit);
       return res.json(runs);
     } catch (err) {
       return handleRouteError(err, res);

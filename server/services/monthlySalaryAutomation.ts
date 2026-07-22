@@ -16,6 +16,7 @@ import {
 } from '../config/salaryAutomation';
 import { storage } from '../storage';
 import { monthlySalaryRunRepository } from '../repositories/monthlySalaryRunRepository';
+import { salaryRepository, type SalaryRecordWrite } from '../repositories/salaryRepository';
 import { createLogger } from '../utils/logger';
 import { buildCalculatedSalaryRecord } from '../routes/salary.routes';
 import { sendMonthlySalaryEmail } from './salaryEmail';
@@ -214,7 +215,7 @@ async function markRunFailed(run: MonthlySalaryRun | undefined, error: unknown) 
   }
 
   const message = error instanceof Error ? error.message : String(error);
-  return storage.updateMonthlySalaryRun(run.id, {
+  return monthlySalaryRunRepository.updateMonthlySalaryRun(run.id, {
     status: 'failed',
     errorMessage: message,
     completedAt: new Date(),
@@ -251,7 +252,7 @@ export async function runMonthlySalaryAutomation(
           reason: acquireResult.skipReason,
           run,
           calculatedRecords,
-          persistedRecords: await storage.getSalaryRecordsByYearMonth(target.year, target.month),
+          persistedRecords: await salaryRepository.getSalaryRecordsByYearMonth(target.year, target.month),
           skippedEmployees,
           emailRecipients: run?.emailTo ?? [],
         };
@@ -263,13 +264,32 @@ export async function runMonthlySalaryAutomation(
       throw new Error('Salary settings are not configured.');
     }
 
+    // 整月資料一次預載(固定 3 次查詢,與員工數無關),避免每員工 N+1 round-trip
     const employees = (await storage.getAllEmployees()).filter(isActivePayrollEmployee);
+    const existingRecordsByEmployee = new Map<number, SalaryRecord>();
+    for (const record of await salaryRepository.getSalaryRecordsByYearMonth(target.year, target.month)) {
+      if (record.employeeId != null) {
+        existingRecordsByEmployee.set(record.employeeId, record);
+      }
+    }
+    const attendanceByEmployee = new Map<number, TemporaryAttendance[]>();
+    for (const record of await storage.getTemporaryAttendanceByMonth(target.year, target.month)) {
+      if (record.employeeId == null) {
+        continue;
+      }
+      const list = attendanceByEmployee.get(record.employeeId);
+      if (list) {
+        list.push(record);
+      } else {
+        attendanceByEmployee.set(record.employeeId, [record]);
+      }
+    }
+
+    // 迴圈只做純計算,寫入意圖先收集、迴圈後一次原子批次寫入
+    const pendingWrites: SalaryRecordWrite[] = [];
+
     for (const employee of employees) {
-      const existingRecord = await storage.getSalaryRecordByYearMonthEmployee(
-        target.year,
-        target.month,
-        employee.id
-      );
+      const existingRecord = existingRecordsByEmployee.get(employee.id);
 
       if (existingRecord && !options.force) {
         persistedRecords.push(existingRecord);
@@ -281,11 +301,7 @@ export async function runMonthlySalaryAutomation(
         continue;
       }
 
-      const attendance = await storage.getTemporaryAttendanceByEmployeeAndMonth(
-        employee.id,
-        target.year,
-        target.month
-      );
+      const attendance = attendanceByEmployee.get(employee.id) ?? [];
       const specialLeaveInfo = getSpecialLeaveInfoForMonth(employee, settings, target);
       if (attendance.length === 0 && !specialLeaveInfo) {
         skippedEmployees.push({
@@ -304,13 +320,12 @@ export async function runMonthlySalaryAutomation(
         continue;
       }
 
-      const persistedRecord = existingRecord
-        ? await storage.updateSalaryRecord(existingRecord.id, finalRecord)
-        : await storage.createSalaryRecord(finalRecord);
+      pendingWrites.push({ existingId: existingRecord?.id, record: finalRecord });
+    }
 
-      if (persistedRecord) {
-        persistedRecords.push(persistedRecord);
-      }
+    if (pendingWrites.length > 0) {
+      // 單一 transaction:任何一筆失敗即全部回滾,不留半套月薪資料
+      persistedRecords.push(...(await salaryRepository.saveSalaryRecordsAtomically(pendingWrites)));
     }
 
     if (options.dryRun) {
@@ -326,7 +341,7 @@ export async function runMonthlySalaryAutomation(
 
     if (persistedRecords.length === 0) {
       const updatedRun = run
-        ? await storage.updateMonthlySalaryRun(run.id, {
+        ? await monthlySalaryRunRepository.updateMonthlySalaryRun(run.id, {
             status: 'skipped',
             recordCount: 0,
             skippedCount: skippedEmployees.length,
@@ -365,7 +380,7 @@ export async function runMonthlySalaryAutomation(
     }
 
     const updatedRun = run
-      ? await storage.updateMonthlySalaryRun(run.id, {
+      ? await monthlySalaryRunRepository.updateMonthlySalaryRun(run.id, {
           status: 'succeeded',
           recordCount: persistedRecords.length,
           skippedCount: skippedEmployees.length,

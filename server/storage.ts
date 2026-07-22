@@ -8,8 +8,6 @@ import {
 import {
   temporaryAttendance, type TemporaryAttendance, type InsertTemporaryAttendance,
   settings, type Settings, type InsertSettings,
-  salaryRecords, type SalaryRecord, type InsertSalaryRecord,
-  monthlySalaryRuns, type MonthlySalaryRun, type InsertMonthlySalaryRun,
   holidays, type Holiday, type InsertHoliday,
   employees, type Employee, type InsertEmployee,
   pendingBindings, type PendingBinding, type InsertPendingBinding,
@@ -40,15 +38,6 @@ export interface TemporaryAttendancePageFilters {
   month?: string;
   search?: string;
 }
-
-export interface SalaryRecordPageFilters {
-  employeeId?: number;
-  salaryYear?: number;
-  salaryMonth?: number;
-  search?: string;
-}
-
-export type SalaryRecordYearFilters = Omit<SalaryRecordPageFilters, 'salaryYear'>;
 
 export type AttendanceScanUpsertResult =
   | {
@@ -126,39 +115,6 @@ function buildTemporaryAttendancePageWhere(filters?: TemporaryAttendancePageFilt
   return conditions.length > 0 ? and(...conditions) : undefined;
 }
 
-function buildSalaryRecordPageWhere(filters?: SalaryRecordPageFilters): SQL | undefined {
-  if (!filters) {
-    return undefined;
-  }
-
-  const conditions: SQL[] = [];
-
-  if (filters.employeeId !== undefined) {
-    conditions.push(eq(salaryRecords.employeeId, filters.employeeId));
-  }
-
-  if (filters.salaryYear !== undefined) {
-    conditions.push(eq(salaryRecords.salaryYear, filters.salaryYear));
-  }
-
-  if (filters.salaryMonth !== undefined) {
-    conditions.push(eq(salaryRecords.salaryMonth, filters.salaryMonth));
-  }
-
-  if (filters.search?.trim()) {
-    const pattern = toLikePattern(filters.search);
-    conditions.push(
-      or(
-        ilike(salaryRecords.employeeName, pattern),
-        drizzleSql`${salaryRecords.salaryYear}::text like ${pattern}`,
-        drizzleSql`${salaryRecords.salaryMonth}::text like ${pattern}`
-      )!
-    );
-  }
-
-  return conditions.length > 0 ? and(...conditions) : undefined;
-}
-
 export interface IStorage {
   // Employee methods - for barcode scanning
   getAllEmployees(): Promise<Employee[]>;
@@ -173,7 +129,6 @@ export interface IStorage {
   restoreEmployee(id: number): Promise<Employee | undefined>;
   purgeEmployee(id: number): Promise<{ purged: boolean; anonymizedSalaryRecords: number }>;
   purgeExpiredDeletedEmployees(): Promise<{ purgedEmployeeIds: number[]; anonymizedSalaryRecords: number }>;
-  purgeExpiredRetainedSalaryRecords(): Promise<number>;
 
   // Temporary attendance methods
   getTemporaryAttendance(): Promise<TemporaryAttendance[]>;
@@ -182,6 +137,7 @@ export interface IStorage {
   getTemporaryAttendanceByDate(date: string): Promise<TemporaryAttendance[]>; // 查詢特定日期的所有考勤記錄
   getTemporaryAttendanceByEmployeeAndDate(employeeId: number, date: string): Promise<TemporaryAttendance[]>; // 查詢特定員工特定日期的考勤記錄
   getTemporaryAttendanceByEmployeeAndMonth(employeeId: number, year: number, month: number): Promise<TemporaryAttendance[]>;
+  getTemporaryAttendanceByMonth(year: number, month: number): Promise<TemporaryAttendance[]>;
   upsertTemporaryAttendanceScan(input: AttendanceScanUpsertInput): Promise<AttendanceScanUpsertResult>;
   createTemporaryAttendance(attendance: InsertTemporaryAttendance): Promise<TemporaryAttendance>;
   updateTemporaryAttendance(id: number, attendance: Partial<InsertTemporaryAttendance>): Promise<TemporaryAttendance | undefined>;
@@ -193,27 +149,9 @@ export interface IStorage {
   getSettings(): Promise<Settings | undefined>;
   createOrUpdateSettings(newSettings: InsertSettings): Promise<Settings>;
 
-  // Salary record methods
-  getAllSalaryRecords(): Promise<SalaryRecord[]>;
-  getAllSalaryRecordsPage(page: number, limit: number, filters?: SalaryRecordPageFilters): Promise<{ rows: SalaryRecord[]; total: number }>;
-  getSalaryRecordYears(filters?: SalaryRecordYearFilters): Promise<number[]>;
-  getSalaryRecordById(id: number): Promise<SalaryRecord | undefined>;
-  getSalaryRecordsByIds(ids: number[]): Promise<SalaryRecord[]>;
-  getSalaryRecordByYearMonth(year: number, month: number): Promise<SalaryRecord | undefined>;
-  getSalaryRecordsByYearMonth(year: number, month: number): Promise<SalaryRecord[]>;
-  getSalaryRecordByYearMonthEmployee(year: number, month: number, employeeId: number): Promise<SalaryRecord | undefined>;
-  createSalaryRecord(record: InsertSalaryRecord): Promise<SalaryRecord>;
-  updateSalaryRecord(id: number, record: Partial<InsertSalaryRecord>): Promise<SalaryRecord | undefined>;
-  deleteSalaryRecord(id: number): Promise<boolean>;
-
-  // Monthly salary automation methods
-  getMonthlySalaryRun(year: number, month: number): Promise<MonthlySalaryRun | undefined>;
-  getRecentMonthlySalaryRuns(limit?: number): Promise<MonthlySalaryRun[]>;
-  createMonthlySalaryRun(run: InsertMonthlySalaryRun): Promise<MonthlySalaryRun>;
-  updateMonthlySalaryRun(id: number, run: Partial<InsertMonthlySalaryRun> & {
-    completedAt?: Date | null;
-    emailSentAt?: Date | null;
-  }): Promise<MonthlySalaryRun | undefined>;
+  // Salary records and monthly salary runs live in
+  // server/repositories/salaryRepository.ts and
+  // server/repositories/monthlySalaryRunRepository.ts — import those directly.
 
   // Holiday methods
   getAllHolidays(): Promise<Holiday[]>;
@@ -306,22 +244,6 @@ export class DatabaseStorage implements IStorage {
 
   async purgeExpiredDeletedEmployees(): Promise<{ purgedEmployeeIds: number[]; anonymizedSalaryRecords: number }> {
     return this.employeeRepository.purgeExpiredDeletedEmployees();
-  }
-
-  async purgeExpiredRetainedSalaryRecords(): Promise<number> {
-    const now = new Date();
-    const deleted = await db
-      .delete(salaryRecords)
-      .where(
-        and(
-          isNotNull(salaryRecords.anonymizedAt),
-          isNotNull(salaryRecords.retentionUntil),
-          lte(salaryRecords.retentionUntil, now)
-        )
-      )
-      .returning({ id: salaryRecords.id });
-
-    return deleted.length;
   }
 
   // Temporary attendance methods
@@ -421,6 +343,19 @@ export class DatabaseStorage implements IStorage {
           eq(temporaryAttendance.employeeId, employeeId),
           drizzleSql`(${temporaryAttendance.date} like ${slashPrefix} or ${temporaryAttendance.date} like ${dashPrefix})`
         )
+      );
+  }
+
+  async getTemporaryAttendanceByMonth(year: number, month: number): Promise<TemporaryAttendance[]> {
+    const normalizedMonth = String(month).padStart(2, '0');
+    const slashPrefix = `${year}/${normalizedMonth}/%`;
+    const dashPrefix = `${year}-${normalizedMonth}-%`;
+
+    return db
+      .select()
+      .from(temporaryAttendance)
+      .where(
+        drizzleSql`(${temporaryAttendance.date} like ${slashPrefix} or ${temporaryAttendance.date} like ${dashPrefix})`
       );
   }
 
@@ -557,171 +492,6 @@ export class DatabaseStorage implements IStorage {
         .returning();
       return createdSettings;
     }
-  }
-
-  // Salary record methods
-  async getAllSalaryRecords(): Promise<SalaryRecord[]> {
-    return await db
-      .select()
-      .from(salaryRecords)
-      .orderBy(desc(salaryRecords.salaryYear), desc(salaryRecords.salaryMonth));
-  }
-
-  async getAllSalaryRecordsPage(page: number, limit: number, filters?: SalaryRecordPageFilters): Promise<{ rows: SalaryRecord[]; total: number }> {
-    const offset = (page - 1) * limit;
-    const whereClause = buildSalaryRecordPageWhere(filters);
-
-    if (whereClause) {
-      const [rows, [{ count }]] = await Promise.all([
-        db.select().from(salaryRecords)
-          .where(whereClause)
-          .orderBy(desc(salaryRecords.salaryYear), desc(salaryRecords.salaryMonth), desc(salaryRecords.id))
-          .limit(limit).offset(offset),
-        db.select({ count: drizzleSql<number>`count(*)::int` }).from(salaryRecords).where(whereClause)
-      ]);
-      return { rows, total: count };
-    }
-
-    const [rows, [{ count }]] = await Promise.all([
-      db.select().from(salaryRecords)
-        .orderBy(desc(salaryRecords.salaryYear), desc(salaryRecords.salaryMonth), desc(salaryRecords.id))
-        .limit(limit).offset(offset),
-      db.select({ count: drizzleSql<number>`count(*)::int` }).from(salaryRecords)
-    ]);
-    return { rows, total: count };
-  }
-
-  async getSalaryRecordYears(filters?: SalaryRecordYearFilters): Promise<number[]> {
-    const whereClause = buildSalaryRecordPageWhere(filters);
-    const rows = whereClause
-      ? await db
-          .selectDistinct({ salaryYear: salaryRecords.salaryYear })
-          .from(salaryRecords)
-          .where(whereClause)
-          .orderBy(desc(salaryRecords.salaryYear))
-      : await db
-          .selectDistinct({ salaryYear: salaryRecords.salaryYear })
-          .from(salaryRecords)
-          .orderBy(desc(salaryRecords.salaryYear));
-
-    return rows.map((row) => row.salaryYear);
-  }
-
-  async getSalaryRecordById(id: number): Promise<SalaryRecord | undefined> {
-    const [record] = await db.select().from(salaryRecords).where(eq(salaryRecords.id, id));
-    return record;
-  }
-
-  async getSalaryRecordsByIds(ids: number[]): Promise<SalaryRecord[]> {
-    if (ids.length === 0) {
-      return [];
-    }
-    return db.select().from(salaryRecords).where(inArray(salaryRecords.id, ids));
-  }
-
-  async getSalaryRecordByYearMonth(year: number, month: number): Promise<SalaryRecord | undefined> {
-    const [record] = await db
-      .select()
-      .from(salaryRecords)
-      .where(
-        and(
-          eq(salaryRecords.salaryYear, year),
-          eq(salaryRecords.salaryMonth, month)
-        )
-      );
-    return record;
-  }
-
-  async getSalaryRecordsByYearMonth(year: number, month: number): Promise<SalaryRecord[]> {
-    return db
-      .select()
-      .from(salaryRecords)
-      .where(
-        and(
-          eq(salaryRecords.salaryYear, year),
-          eq(salaryRecords.salaryMonth, month)
-        )
-      )
-      .orderBy(desc(salaryRecords.id));
-  }
-
-  async getSalaryRecordByYearMonthEmployee(year: number, month: number, employeeId: number): Promise<SalaryRecord | undefined> {
-    const [record] = await db
-      .select()
-      .from(salaryRecords)
-      .where(
-        and(
-          eq(salaryRecords.salaryYear, year),
-          eq(salaryRecords.salaryMonth, month),
-          eq(salaryRecords.employeeId, employeeId)
-        )
-      );
-    return record;
-  }
-
-  async createSalaryRecord(record: InsertSalaryRecord): Promise<SalaryRecord> {
-    // 確保移除 ID 欄位以避免主鍵衝突
-    const { id, ...recordWithoutId } = record as any;
-    const [newRecord] = await db.insert(salaryRecords).values(recordWithoutId).returning();
-    return newRecord;
-  }
-
-  async updateSalaryRecord(id: number, record: Partial<InsertSalaryRecord>): Promise<SalaryRecord | undefined> {
-    const [updatedRecord] = await db
-      .update(salaryRecords)
-      .set(record as typeof salaryRecords.$inferInsert)
-      .where(eq(salaryRecords.id, id))
-      .returning();
-    return updatedRecord;
-  }
-
-  async deleteSalaryRecord(id: number): Promise<boolean> {
-    const [deleted] = await db
-      .delete(salaryRecords)
-      .where(eq(salaryRecords.id, id))
-      .returning();
-    return !!deleted;
-  }
-
-  async getMonthlySalaryRun(year: number, month: number): Promise<MonthlySalaryRun | undefined> {
-    const [run] = await db
-      .select()
-      .from(monthlySalaryRuns)
-      .where(
-        and(
-          eq(monthlySalaryRuns.salaryYear, year),
-          eq(monthlySalaryRuns.salaryMonth, month)
-        )
-      );
-    return run;
-  }
-
-  async getRecentMonthlySalaryRuns(limit = 12): Promise<MonthlySalaryRun[]> {
-    return db
-      .select()
-      .from(monthlySalaryRuns)
-      .orderBy(desc(monthlySalaryRuns.startedAt))
-      .limit(limit);
-  }
-
-  async createMonthlySalaryRun(run: InsertMonthlySalaryRun): Promise<MonthlySalaryRun> {
-    const [createdRun] = await db.insert(monthlySalaryRuns).values(run).returning();
-    return createdRun;
-  }
-
-  async updateMonthlySalaryRun(
-    id: number,
-    run: Partial<InsertMonthlySalaryRun> & {
-      completedAt?: Date | null;
-      emailSentAt?: Date | null;
-    }
-  ): Promise<MonthlySalaryRun | undefined> {
-    const [updatedRun] = await db
-      .update(monthlySalaryRuns)
-      .set(run as typeof monthlySalaryRuns.$inferInsert)
-      .where(eq(monthlySalaryRuns.id, id))
-      .returning();
-    return updatedRun;
   }
 
   // Holiday methods

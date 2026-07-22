@@ -23,6 +23,7 @@ import type { Employee, TemporaryAttendance } from '@shared/schema';
 import { decrypt as decryptAes, isAESEncrypted } from '@shared/utils/encryption';
 
 import { storage } from './storage';
+import { salaryRepository } from './repositories/salaryRepository';
 import { db } from './db';
 import { registerScanRoutes } from './routes/scan.routes';
 import { getTaiwanDateTimeParts } from './routes/scan-helpers';
@@ -747,12 +748,12 @@ describe('real database — settings', () => {
 
 describe('real database — salary records', () => {
   it('lists salary records without error', async () => {
-    const records = await storage.getAllSalaryRecords();
+    const records = await salaryRepository.getAllSalaryRecords();
     expect(Array.isArray(records)).toBe(true);
   });
 
   it('looks up salary record by year/month', async () => {
-    const record = await storage.getSalaryRecordByYearMonth(2099, 1);
+    const record = await salaryRepository.getSalaryRecordByYearMonth(2099, 1);
     expect(record === undefined || typeof record.id === 'number').toBe(true);
   });
 });

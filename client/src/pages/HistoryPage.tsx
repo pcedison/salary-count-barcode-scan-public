@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { useHistoryData } from "@/hooks/useHistoryData";
+import { useHistoryData , type SalaryRecord
+} from "@/hooks/useHistoryData";
 import { useAdmin } from "@/hooks/useAdmin";
 import { useEmployees } from "@/hooks/useEmployees";
 import HistoryTable from "@/components/HistoryTable";
 import ConfirmationModal from "@/components/ConfirmationModal";
 import AdminLoginDialog from "@/components/AdminLoginDialog";
-import EditHistoryRecordModal from "@/components/EditHistoryRecordModal";
+import EditHistoryRecordModal, { type HistoryRecordUpdatePayload } from "@/components/EditHistoryRecordModal";
 import { CsvImportModal } from "@/components/CsvImportModal";
 import { Input } from "@/components/ui/input";
 import {
@@ -55,7 +56,7 @@ export default function HistoryPage() {
   const { activeEmployees, isLoading: isLoadingEmployees } = useEmployees();
 
   const [recordToDelete, setRecordToDelete] = useState<number | null>(null);
-  const [recordToEdit, setRecordToEdit] = useState<any>(null);
+  const [recordToEdit, setRecordToEdit] = useState<SalaryRecord | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState<boolean>(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
@@ -107,7 +108,7 @@ export default function HistoryPage() {
   // 已移除查看詳情功能
 
   // CSV下載功能 - 使用正確的exportSalaryRecordAsCsv函數
-  const handleDownloadPdf = (record: any) => {
+  const handleDownloadPdf = (record: SalaryRecord) => {
     debugLog("Downloading CSV for record:", record);
 
     // 調用真正的CSV下載功能
@@ -154,7 +155,7 @@ export default function HistoryPage() {
   };
 
   // 處理編輯歷史紀錄（直接在歷史記錄頁面編輯，不需恢復到考勤頁面）
-  const handleEditClick = (record: any) => {
+  const handleEditClick = (record: SalaryRecord) => {
     if (!isAdmin) {
       toast({
         title: "需要管理員權限",
@@ -172,7 +173,7 @@ export default function HistoryPage() {
   };
 
   // 保存編輯的歷史記錄 - 支援編輯所有欄位
-  const handleSaveEditedRecord = async (id: number, updatedData: any) => {
+  const handleSaveEditedRecord = async (id: number, updatedData: HistoryRecordUpdatePayload) => {
     try {
       // 更新所有可編輯欄位
       await updateSalaryRecord(id, updatedData);
