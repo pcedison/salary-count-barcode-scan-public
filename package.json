@@ -44,7 +44,7 @@
     "db:employee-recycle-bin:apply": "node scripts/apply-employee-recycle-bin-schema.mjs --apply",
     "verify:ops": "npm run verify:core && npm run restore:check",
     "verify:baseline": "npm run check && npm run build",
-    "verify:ci": "npm run check && npm test && npm run build",
+    "verify:ci": "npm run check && npm run runtime:update:audit && npm test && npm run build",
     "verify:release": "npm run verify:ci && npm run test:smoke && npm run restore:check",
     "verify:core": "npm test && npm run verify:baseline",
     "db:push": "drizzle-kit push"
@@ -101,7 +101,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "4.17.21",
     "@types/express-session": "^1.18.0",
-    "@types/node": "26.1.1",
+    "@types/node": "24.13.3",
     "@types/nodemailer": "^8.0.1",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.11",

@@ -61,15 +61,18 @@ jobs:
 
     steps:
       - name: Checkout repository
+        if: env.DATABASE_URL != ''
         uses: actions/checkout@v7
 
       - name: Set up Node.js
+        if: env.DATABASE_URL != ''
         uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
 
       - name: Install dependencies
+        if: env.DATABASE_URL != ''
         run: npm ci --include=dev
 
       - name: Run real database tests

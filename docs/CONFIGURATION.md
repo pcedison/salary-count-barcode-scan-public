@@ -128,7 +128,8 @@ Never store a plaintext `SUPER_ADMIN_PIN` in Zeabur production variables.
 
 Repository CI now runs `npm run verify:release` plus `git diff --check`.
 
-Runtime and dependency freshness is tracked separately through Dependabot and:
+Runtime and dependency freshness is enforced by `verify:ci` and can also be run
+directly with:
 
 ```bash
 npm run runtime:update:audit
@@ -140,3 +141,4 @@ Before public launch, enable GitHub branch protection so at least these checks a
 
 - `required-checks`
 - `docker-smoke`
+- `Mobile UI structural checks`

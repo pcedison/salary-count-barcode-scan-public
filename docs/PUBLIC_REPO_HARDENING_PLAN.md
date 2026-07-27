@@ -27,20 +27,20 @@ Already in place:
 - public clean-room repository history
 - `LICENSE`
 - release verification commands and CI
+- active `protect-main` ruleset with required CI, Docker, and mobile UI checks
 - public-release checklist, deployment guide, and operations runbooks
 - runtime env validation, session guardrails, and production secret requirements
 
 Still missing or needing improvement:
 
 - lightweight automated public-release hygiene scan
-- branch-protection enforcement in GitHub settings
 - explicit release ownership and canary confirmation outside the repo
 
 ## Execution Phases
 
 ### P0: Immediate public-governance baseline
 
-Status: `Baseline landed in repo; external controls still pending`
+Status: `Baseline and branch controls active; operator canary still pending`
 
 Completed in this branch:
 
@@ -57,8 +57,6 @@ Completed in this branch:
 
 Still pending outside the repo:
 
-- enable branch protection on `main`
-- require `required-checks` and `docker-smoke`
 - complete operator-side canary validation on the live deployment
 
 Definition of done:

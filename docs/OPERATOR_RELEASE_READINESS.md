@@ -42,7 +42,7 @@ Latest known results:
 | Backup readiness | Pass | Create a fresh manual backup before widening traffic. |
 | Operator observability | Pass | Monitor `/api/dashboard/operational-metrics` during canary. |
 | Production secret rotation | Required | Rotate secrets in the deployment platform. |
-| Branch protection on `main` | Pass | `required-checks` and `docker-smoke` are enforced on `main`, including admins. |
+| Branch protection on `main` | Pass | `required-checks`, `docker-smoke`, and `Mobile UI structural checks` are enforced on `main`, including admins. |
 | Public documentation set | Pass | Publish using the updated operator and deployment docs. |
 | Legacy doc cleanup | Follow-up | Archive or rewrite remaining historical docs over time. |
 
@@ -55,6 +55,7 @@ These items must be completed by an operator outside repository code:
 3. Keep GitHub checks on `main` enforced:
    - `required-checks`
    - `docker-smoke`
+   - `Mobile UI structural checks`
 4. Keep direct pushes to `main` restricted except for a documented incident process.
 
 ## Pre-Publish Checklist
