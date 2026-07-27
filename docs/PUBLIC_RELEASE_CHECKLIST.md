@@ -20,9 +20,11 @@ Use this checklist before expanding from internal or limited rollout to broader 
 
 - Confirm GitHub Actions `required-checks` is green.
 - Confirm GitHub Actions `docker-smoke` is green.
+- Confirm GitHub Actions `Mobile UI structural checks` is green.
 - Enable branch protection on `main` and require:
   - `required-checks`
   - `docker-smoke`
+  - `Mobile UI structural checks`
 - Disallow direct pushes to `main` unless there is an explicit incident procedure.
 
 ## Monitoring and rollback

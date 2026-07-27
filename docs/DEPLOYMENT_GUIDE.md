@@ -27,7 +27,8 @@ Before deploying, confirm all of the following:
 - production secrets are stored in the deployment platform
 - `APP_RUNTIME_DIR`, `APP_BACKUP_DIR`, and `APP_LOG_DIR` resolve outside the repository workspace
 - the latest backup passes `npm run restore:check`
-- GitHub Actions `required-checks` and `docker-smoke` are green
+- GitHub Actions `required-checks`, `docker-smoke`, and
+  `Mobile UI structural checks` are green
 
 Operator sign-off lives in [OPERATOR_RELEASE_READINESS.md](OPERATOR_RELEASE_READINESS.md).
 
@@ -184,5 +185,6 @@ Rollback procedure:
 These items are not fully enforceable from repository code alone and must be completed by the operator:
 
 - rotate production secrets in the deployment platform
-- require `required-checks` and `docker-smoke` on `main`
+- require `required-checks`, `docker-smoke`, and `Mobile UI structural checks`
+  on `main`
 - restrict direct pushes to `main` except for a documented incident procedure

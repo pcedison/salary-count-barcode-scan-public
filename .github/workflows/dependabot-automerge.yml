@@ -21,7 +21,6 @@ concurrency:
 jobs:
   enable-auto-merge:
     if: >-
-      github.actor == 'dependabot[bot]' &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.event.pull_request.head.ref, 'dependabot/') &&
@@ -30,13 +29,40 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: Clear any prior auto-merge request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          if [ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" = "true" ]; then
+            gh pr merge --disable-auto "$PR_URL"
+          fi
+
       - name: Verify Dependabot metadata
         id: metadata
+        if: github.actor == 'dependabot[bot]'
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
           github-token: ${{ github.token }}
 
+      - name: Enforce manual review for other update types
+        if: >-
+          always() &&
+          (github.actor != 'dependabot[bot]' ||
+          steps.metadata.outcome != 'success' ||
+          (steps.metadata.outputs.update-type != 'version-update:semver-minor' &&
+          steps.metadata.outputs.update-type != 'version-update:semver-patch'))
+        env:
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+        run: |
+          echo "::notice title=Manual dependency review required::Dependabot update type '${UPDATE_TYPE:-unknown}' is not eligible for auto-merge. Follow docs/DEPENDENCY_UPDATE_POLICY.md."
+
       - name: Enable squash auto-merge
+        if: >-
+          github.actor == 'dependabot[bot]' &&
+          steps.metadata.outcome == 'success' &&
+          (steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-patch')
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
