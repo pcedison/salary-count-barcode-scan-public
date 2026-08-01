@@ -20,6 +20,7 @@ import {
   ScanLine,
 } from "lucide-react";
 import AdminLoginDialog from "@/components/AdminLoginDialog";
+import SalaryAutomationPanel from "@/components/SalaryAutomationPanel";
 
 export default function SettingsPage() {
   const { toast } = useToast();
@@ -260,6 +261,8 @@ export default function SettingsPage() {
             </div>
           )}
         </div>
+
+        <SalaryAutomationPanel hasUnsavedSettings={hasUnsavedChanges} />
 
         {showChangePin && (
           <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">

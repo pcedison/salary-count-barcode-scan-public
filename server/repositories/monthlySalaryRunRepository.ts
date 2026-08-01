@@ -24,10 +24,10 @@ export interface AcquireMonthlySalaryRunResult {
 export class DatabaseMonthlySalaryRunRepository {
   /**
    * Atomically creates the run row for (year, month) or, if one already exists,
-   * updates it to `running` — unless it's already `running` or `succeeded` (and
-   * `force` isn't set), in which case the row is left untouched and a
-   * `skipReason` is returned. This is a single INSERT ... ON CONFLICT statement,
-   * so two concurrent callers can never both acquire the same month.
+   * updates it to `running`. A `running` row is never taken over, including by
+   * forced reruns; `force` only permits reacquiring completed runs such as
+   * `succeeded`, `failed`, or `skipped`. This is a single INSERT ... ON CONFLICT
+   * statement, so two concurrent callers can never both acquire the same month.
    */
   async acquireRun(params: AcquireMonthlySalaryRunParams): Promise<AcquireMonthlySalaryRunResult> {
     const { year, month, runKey, force, emailRecipients } = params;
@@ -59,14 +59,12 @@ export class DatabaseMonthlySalaryRunRepository {
       .onConflictDoUpdate({
         target: [monthlySalaryRuns.salaryYear, monthlySalaryRuns.salaryMonth],
         set: updateSet,
-        ...(force
-          ? {}
-          : {
-              setWhere: and(
-                ne(monthlySalaryRuns.status, 'running'),
-                ne(monthlySalaryRuns.status, 'succeeded')
-              )!,
-            }),
+        setWhere: force
+          ? ne(monthlySalaryRuns.status, 'running')
+          : and(
+              ne(monthlySalaryRuns.status, 'running'),
+              ne(monthlySalaryRuns.status, 'succeeded')
+            )!,
       })
       .returning();
 

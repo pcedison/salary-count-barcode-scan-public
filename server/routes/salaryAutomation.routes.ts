@@ -4,7 +4,10 @@ import { z } from 'zod';
 import { getSalaryAutomationConfig, getSalaryAutomationConfigWarnings } from '../config/salaryAutomation';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { monthlySalaryRunRepository } from '../repositories/monthlySalaryRunRepository';
-import { runMonthlySalaryAutomation } from '../services/monthlySalaryAutomation';
+import {
+  getPreviousSalaryMonthTarget,
+  runMonthlySalaryAutomation,
+} from '../services/monthlySalaryAutomation';
 import { sendSalaryAutomationTestEmail } from '../services/salaryEmail';
 import { handleRouteError } from './route-helpers';
 
@@ -27,6 +30,7 @@ export function registerSalaryAutomationRoutes(app: Express): void {
     return res.json({
       enabled: config.enabled,
       timeZone: config.timeZone,
+      previousTarget: getPreviousSalaryMonthTarget(new Date(), config.timeZone),
       runHour: config.runHour,
       runMinute: config.runMinute,
       intervalMs: config.intervalMs,
@@ -65,7 +69,12 @@ export function registerSalaryAutomationRoutes(app: Express): void {
       });
 
       if (result.status === 'failed') {
-        return res.status(500).json(result);
+        return res.status(500).json({
+          status: 'failed',
+          code: 'salary_automation_failed',
+          message: 'Salary automation did not complete. Check the run history before retrying.',
+          target: result.target,
+        });
       }
 
       return res.json(result);

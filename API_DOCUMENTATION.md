@@ -69,6 +69,17 @@ Salary totals are recalculated from the standard calculator plus any active data
 | `GET` | `/api/salary-records/:id/pdf` | Admin session | Redirects to the printable salary view. |
 | `GET` | `/api/test-salary-calculation` | Admin session, non-production only | Debug endpoint for formula checks. Do not treat as a public contract. |
 
+## Monthly Salary Automation
+
+The System Management page exposes a guarded admin action for rerunning the previous month's salary automation. A forced run recalculates and overwrites that month's salary records before regenerating the PDF and sending email, so the UI requires a second confirmation and disables repeated clicks while the request is active.
+
+| Method | Path | Access | Notes |
+| --- | --- | --- | --- |
+| `GET` | `/api/salary-automation/config` | Admin session | Returns non-secret scheduler readiness, timezone, server-calculated `previousTarget`, SMTP readiness, recipient list, and configuration warnings. |
+| `GET` | `/api/salary-automation/runs` | Admin session | Returns recent monthly automation runs. Optional `limit` is bounded to 1–50. |
+| `POST` | `/api/salary-automation/run` | Admin session | Runs salary automation. The manual UI sends an explicit `year`, `month`, `force: true`, and `sendEmail: true`. |
+| `POST` | `/api/salary-automation/test-email` | Admin session | Sends a configuration test email without running salary calculation. |
+
 ## Settings And Database Status
 `GET /api/settings` returns the public settings payload only. The admin variant includes deductions and allowances.
 
