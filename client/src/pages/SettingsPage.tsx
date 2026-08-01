@@ -426,7 +426,7 @@ export default function SettingsPage() {
               <Button
                 onClick={handleSaveSettings}
                 disabled={isSaving || !isAdmin || !hasUnsavedChanges}
-                className={`${hasUnsavedChanges ? "bg-success hover:bg-green-600" : "bg-gray-400"} w-full px-8 py-3 font-medium text-white sm:w-auto`}
+                className="settings-save-button h-11 w-full rounded-xl px-8 font-semibold sm:w-auto"
               >
                 {isSaving ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

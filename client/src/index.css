@@ -173,3 +173,31 @@ body {
     display: none;
   }
 }
+
+/* Keep the primary settings action visible without relying on utility color order. */
+.settings-save-button {
+  border: 1px solid var(--sage-deep);
+  background-color: var(--sage-deep);
+  color: #fff;
+  box-shadow: 0 4px 12px rgb(79 115 101 / 20%);
+  transition: transform 200ms ease, background-color 200ms ease, box-shadow 200ms ease;
+}
+
+.settings-save-button:hover:not(:disabled) {
+  background-color: #3f5f53;
+  box-shadow: 0 6px 16px rgb(79 115 101 / 28%);
+  transform: translateY(-1px);
+}
+
+.settings-save-button:active:not(:disabled) {
+  box-shadow: 0 2px 8px rgb(79 115 101 / 20%);
+  transform: translateY(0);
+}
+
+.settings-save-button:disabled {
+  border-color: #cbd5e1;
+  background-color: #e2e8f0;
+  color: #475569;
+  box-shadow: none;
+  opacity: 1;
+}
