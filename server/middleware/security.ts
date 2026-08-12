@@ -1,4 +1,4 @@
-import cors from 'cors';
+import cors, { type CorsOptionsDelegate } from 'cors';
 import type { Express, Request } from 'express';
 import helmet from 'helmet';
 
@@ -21,7 +21,11 @@ function normalizeOrigin(origin: string): string {
   try {
     return new URL(trimmedOrigin).origin;
   } catch {
-    return trimmedOrigin.replace(/\/+$/, '');
+    let end = trimmedOrigin.length;
+    while (end > 0 && trimmedOrigin.charCodeAt(end - 1) === 47) {
+      end -= 1;
+    }
+    return trimmedOrigin.slice(0, end);
   }
 }
 
@@ -67,6 +71,24 @@ export function setupSecurity(app: Express): void {
       'X-Scan-Device-Token'
     ]
   };
+  const apiCorsOptions: CorsOptionsDelegate<Request> = (req, callback) => {
+    const origin = req.get('origin');
+    const originAllowed =
+      !origin ||
+      isSameOriginRequest(req, origin) ||
+      (!isProduction && allowedOrigins.length === 0) ||
+      allowedOrigins.includes(normalizeOrigin(origin));
+
+    if (!originAllowed) {
+      callback(new Error('Origin is not allowed'));
+      return;
+    }
+
+    callback(null, {
+      ...corsOptions,
+      origin: true
+    });
+  };
 
   if (isProduction && allowedOrigins.length === 0) {
     log.warn(
@@ -77,28 +99,27 @@ export function setupSecurity(app: Express): void {
 
   app.use(
     helmet({
-      contentSecurityPolicy: isProduction
-        ? {
-            directives: {
-              defaultSrc: ["'self'"],
-              scriptSrc: ["'self'", ...lineCspOrigins],
-              // 字型全數自架(@fontsource,由 Vite 打包),不再允許任何外部字型/樣式來源
-              styleSrc: ["'self'", "'unsafe-inline'"],
-              imgSrc: ["'self'", 'data:', 'https:'],
-              fontSrc: ["'self'", 'data:'],
-              connectSrc: ["'self'", ...lineCspOrigins],
-              objectSrc: ["'none'"],
-              baseUri: ["'self'"],
-              formAction: ["'self'"],
-              frameAncestors: ["'self'"],
-              frameSrc: ["'self'", ...lineCspOrigins],
-              manifestSrc: ["'self'"],
-              mediaSrc: ["'self'", 'data:'],
-              workerSrc: ["'self'", 'blob:'],
-              upgradeInsecureRequests: []
-            }
-          }
-        : false,
+      contentSecurityPolicy: {
+        reportOnly: !isProduction,
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", ...lineCspOrigins],
+          // 字型全數自架(@fontsource,由 Vite 打包),不再允許任何外部字型/樣式來源
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'https:'],
+          fontSrc: ["'self'", 'data:'],
+          connectSrc: ["'self'", ...lineCspOrigins],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+          formAction: ["'self'"],
+          frameAncestors: ["'self'"],
+          frameSrc: ["'self'", ...lineCspOrigins],
+          manifestSrc: ["'self'"],
+          mediaSrc: ["'self'", 'data:'],
+          workerSrc: ["'self'", 'blob:'],
+          upgradeInsecureRequests: isProduction ? [] : null
+        }
+      },
       // HSTS: 1 year, include subdomains, eligible for browser preload list.
       // Only enable in production (HTTPS). Helmet default is 180 days without preload.
       hsts: isProduction
@@ -108,42 +129,7 @@ export function setupSecurity(app: Express): void {
     })
   );
 
-  app.use(
-    '/api',
-    (req, _res, next) => {
-      const origin = req.get('origin');
-
-      if (!origin) {
-        next();
-        return;
-      }
-
-      if (isSameOriginRequest(req, origin)) {
-        next();
-        return;
-      }
-
-      if (!isProduction && allowedOrigins.length === 0) {
-        next();
-        return;
-      }
-
-      if (allowedOrigins.includes(normalizeOrigin(origin))) {
-        next();
-        return;
-      }
-
-      next(new Error('Origin is not allowed'));
-    }
-  );
-
-  app.use(
-    '/api',
-    cors({
-      ...corsOptions,
-      origin: true
-    })
-  );
+  app.use('/api', cors(apiCorsOptions));
 
   app.use((req, res, next) => {
     if (req.path.startsWith('/api')) {

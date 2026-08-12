@@ -148,6 +148,7 @@ describe('security middleware', () => {
         expect(result.response.headers.get('x-powered-by')).toBeNull();
         // Helmet sets x-frame-options
         expect(result.response.headers.get('x-frame-options')).toBeTruthy();
+        expect(result.response.headers.get('content-security-policy-report-only')).toBeTruthy();
       } finally {
         await server.close();
       }

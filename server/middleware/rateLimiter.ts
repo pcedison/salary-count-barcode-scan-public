@@ -20,6 +20,16 @@ export const publicApiLimiter = rateLimit({
   }
 });
 
+// Static responses still perform filesystem reads. Keep this deliberately broad so
+// normal asset bursts are unaffected while a single client cannot trigger unbounded I/O.
+export const staticAssetLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: isDevelopment() ? 10_000 : 2_000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many static asset requests. Please try again later.'
+});
+
 export const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: isDevelopment() ? 100 : 5,
