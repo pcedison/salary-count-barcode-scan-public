@@ -100,6 +100,7 @@ export function setupSecurity(app: Express): void {
   app.use(
     helmet({
       contentSecurityPolicy: {
+        reportOnly: !isProduction,
         directives: {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'", ...lineCspOrigins],
