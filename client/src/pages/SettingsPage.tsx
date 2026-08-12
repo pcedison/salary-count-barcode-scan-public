@@ -20,6 +20,7 @@ import {
   ScanLine,
 } from "lucide-react";
 import AdminLoginDialog from "@/components/AdminLoginDialog";
+import SalaryAutomationPanel from "@/components/SalaryAutomationPanel";
 
 export default function SettingsPage() {
   const { toast } = useToast();
@@ -261,6 +262,8 @@ export default function SettingsPage() {
           )}
         </div>
 
+        <SalaryAutomationPanel hasUnsavedSettings={hasUnsavedChanges} />
+
         {showChangePin && (
           <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
             <h4 className="font-medium mb-4">更改管理員PIN碼</h4>
@@ -426,7 +429,7 @@ export default function SettingsPage() {
               <Button
                 onClick={handleSaveSettings}
                 disabled={isSaving || !isAdmin || !hasUnsavedChanges}
-                className={`${hasUnsavedChanges ? "bg-success hover:bg-green-600" : "bg-gray-400"} w-full px-8 py-3 font-medium text-white sm:w-auto`}
+                className="settings-save-button h-11 w-full rounded-xl px-8 font-semibold sm:w-auto"
               >
                 {isSaving ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

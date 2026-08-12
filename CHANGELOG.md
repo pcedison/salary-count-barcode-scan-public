@@ -8,6 +8,13 @@ This repository follows Keep a Changelog style and uses the clean-room public hi
 
 - No unreleased notes yet.
 
+## [2.2.1] - 2026-08-01
+
+### Added
+
+- The admin-only System Management page now provides a guarded action to recalculate the previous month's salary records, regenerate the PDF, and email the configured recipients.
+- The action checks email readiness, shows the exact server-timezone target month, requires explicit confirmation, and prevents duplicate clicks while the run is active.
+
 ## [2.1.8] - 2026-04-15
 
 ### Fixed

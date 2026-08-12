@@ -17,6 +17,7 @@ beforeAll(() => {
 beforeAll(async () => {
   ({ db } = await import('../db'));
   ({ monthlySalaryRunRepository } = await import('./monthlySalaryRunRepository'));
+  await db.delete(monthlySalaryRuns).where(eq(monthlySalaryRuns.salaryYear, TEST_YEAR));
 });
 
 afterAll(async () => {
@@ -75,6 +76,62 @@ describe('monthlySalaryRunRepository.acquireRun (real database)', () => {
     expect(rows[0].status).toBe('running');
   });
 
+  it('does not let force take over a run that is still running', async () => {
+    const first = await monthlySalaryRunRepository.acquireRun({
+      year: TEST_YEAR,
+      month: 4,
+      runKey: `${TEST_YEAR}-04`,
+      force: false,
+      emailRecipients: [],
+    });
+
+    const forced = await monthlySalaryRunRepository.acquireRun({
+      year: TEST_YEAR,
+      month: 4,
+      runKey: `${TEST_YEAR}-04`,
+      force: true,
+      emailRecipients: [],
+    });
+
+    expect(first.skipReason).toBeUndefined();
+    expect(forced.skipReason).toBe('monthly salary run is already running');
+    expect(forced.run?.id).toBe(first.run?.id);
+    expect(forced.run?.status).toBe('running');
+  });
+
+  it('only lets one of two concurrent forced callers acquire the same month', async () => {
+    const results = await Promise.all([
+      monthlySalaryRunRepository.acquireRun({
+        year: TEST_YEAR,
+        month: 5,
+        runKey: `${TEST_YEAR}-05`,
+        force: true,
+        emailRecipients: [],
+      }),
+      monthlySalaryRunRepository.acquireRun({
+        year: TEST_YEAR,
+        month: 5,
+        runKey: `${TEST_YEAR}-05`,
+        force: true,
+        emailRecipients: [],
+      }),
+    ]);
+
+    expect(results.filter((result) => !result.skipReason)).toHaveLength(1);
+    expect(results.filter((result) => result.skipReason)).toHaveLength(1);
+    expect(results.find((result) => result.skipReason)?.skipReason).toBe(
+      'monthly salary run is already running'
+    );
+
+    const rows = await db
+      .select()
+      .from(monthlySalaryRuns)
+      .where(and(eq(monthlySalaryRuns.salaryYear, TEST_YEAR), eq(monthlySalaryRuns.salaryMonth, 5)));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('running');
+  });
+
   it('skips a succeeded run without force, and re-acquires with force', async () => {
     await monthlySalaryRunRepository.acquireRun({
       year: TEST_YEAR,
@@ -107,5 +164,34 @@ describe('monthlySalaryRunRepository.acquireRun (real database)', () => {
     });
     expect(withForce.skipReason).toBeUndefined();
     expect(withForce.run?.status).toBe('running');
+  });
+
+  it.each([
+    { status: 'failed' as const, month: 6 },
+    { status: 'skipped' as const, month: 7 },
+  ])('re-acquires a completed $status run with force', async ({ status, month }) => {
+    await monthlySalaryRunRepository.acquireRun({
+      year: TEST_YEAR,
+      month,
+      runKey: `${TEST_YEAR}-${String(month).padStart(2, '0')}`,
+      force: false,
+      emailRecipients: [],
+    });
+
+    await db
+      .update(monthlySalaryRuns)
+      .set({ status })
+      .where(and(eq(monthlySalaryRuns.salaryYear, TEST_YEAR), eq(monthlySalaryRuns.salaryMonth, month)));
+
+    const result = await monthlySalaryRunRepository.acquireRun({
+      year: TEST_YEAR,
+      month,
+      runKey: `${TEST_YEAR}-${String(month).padStart(2, '0')}`,
+      force: true,
+      emailRecipients: [],
+    });
+
+    expect(result.skipReason).toBeUndefined();
+    expect(result.run?.status).toBe('running');
   });
 });
