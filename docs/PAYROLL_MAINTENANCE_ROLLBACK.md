@@ -1,6 +1,6 @@
-# 薪資相容維護 artifact 2.2.2（75ab955）
+# 薪資相容維護 artifact 2.2.2（61bed23）
 
-相容維護 artifact 的確切 commit 是 `75ab95577040d5354a61594659d8f74435e66a95`，來源基底是公開部署 repository 的 `6d819f03fefe33d3daa5905c5510d7c23afeb604`。本文件描述該 2.2.2 artifact 的啟動限制與回退操作；它不表示 2.2.3 feature release 必須永久暫停寫入。正式操作前應另核對實際部署 image 與平台 SHA，不能只依版本號。
+相容維護 artifact 的確切 commit 是 `61bed23e682cf5c3ce43b1cd14e87c0ac458981e`，來源基底是公開部署 repository 的 `6d819f03fefe33d3daa5905c5510d7c23afeb604`。本文件描述該 2.2.2 artifact 的啟動限制與回退操作；它不表示 2.2.3 feature release 必須永久暫停寫入。正式操作前應另核對實際部署 image 與平台 SHA，不能只依版本號。
 
 2.2.3 feature release 保留已驗證的 feature 程式與完整 journal 備份還原能力；`PAYROLL_WRITES_PAUSED` 可供維護時使用，沒有 2.2.2 maintenance-only startup 的強制 true 限制。需要回退時必須部署上述確切的 2.2.2 artifact。舊版 binary 不會辨識維護環境變數，不能代替此 artifact；把這份文件合入 feature branch 也不會把 feature artifact 變成維護版本。
 
