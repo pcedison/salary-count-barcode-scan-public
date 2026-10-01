@@ -13,6 +13,7 @@ import {
 import { isAESEncrypted } from '@shared/utils/encryption';
 
 import { db } from '../db';
+import { assertPayrollWritesEnabled } from '../config/payrollWrites';
 import {
   EMPLOYEE_RECYCLE_RETENTION_DAYS,
   SALARY_RETENTION_POLICY,
@@ -276,6 +277,7 @@ export class DatabaseEmployeeRepository {
   }
 
   async purgeEmployee(id: number): Promise<{ purged: boolean; anonymizedSalaryRecords: number }> {
+    assertPayrollWritesEnabled();
     const result = await db.transaction(async (tx) => {
       const [employee] = await tx
         .select()
@@ -320,6 +322,7 @@ export class DatabaseEmployeeRepository {
     purgedEmployeeIds: number[];
     anonymizedSalaryRecords: number;
   }> {
+    assertPayrollWritesEnabled();
     const now = new Date();
     const expiredEmployees = await db
       .select({ id: employees.id })

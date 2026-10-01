@@ -2,6 +2,8 @@ import express, { type Express, type NextFunction, type Request, type Response }
 
 import { loadEnvironment } from '../config/loadEnv';
 import { validateEnv } from '../config/envValidator';
+import { assertMaintenanceStartup } from '../config/payrollWrites';
+import { payrollWritePause } from '../middleware/payrollWritePause';
 import { publicApiLimiter } from '../middleware/rateLimiter';
 import { setupSecurity, setupTrustProxy } from '../middleware/security';
 import { setupAdminSession } from '../session';
@@ -46,6 +48,7 @@ function installApiRequestLogging(app: Express): void {
 
 export function createConfiguredApp(): Express {
   loadEnvironment();
+  assertMaintenanceStartup();
   validateEnv();
 
   const app = express();
@@ -63,6 +66,8 @@ export function createConfiguredApp(): Express {
   app.use('/api/admin/import', express.json({ limit: '5mb' }));
   app.use(express.json({ limit: '512kb' }));
   app.use(express.urlencoded({ extended: false, limit: '512kb' }));
+
+  app.use(payrollWritePause);
 
   installApiRequestLogging(app);
 

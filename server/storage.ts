@@ -17,6 +17,7 @@ import {
 } from "@shared/schema";
 
 import { db } from './db';
+import { assertPayrollWritesEnabled } from './config/payrollWrites';
 import { DatabaseEmployeeRepository } from './repositories/employeeRepository';
 import { compareAttendanceByLatestEvent } from './routes/scan-helpers';
 
@@ -239,10 +240,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async purgeEmployee(id: number): Promise<{ purged: boolean; anonymizedSalaryRecords: number }> {
+    assertPayrollWritesEnabled();
     return this.employeeRepository.purgeEmployee(id);
   }
 
   async purgeExpiredDeletedEmployees(): Promise<{ purgedEmployeeIds: number[]; anonymizedSalaryRecords: number }> {
+    assertPayrollWritesEnabled();
     return this.employeeRepository.purgeExpiredDeletedEmployees();
   }
 

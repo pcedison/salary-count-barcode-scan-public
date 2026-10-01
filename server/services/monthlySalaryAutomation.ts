@@ -15,6 +15,7 @@ import {
   type SalaryAutomationConfig,
 } from '../config/salaryAutomation';
 import { storage } from '../storage';
+import { assertPayrollWritesEnabled } from '../config/payrollWrites';
 import { monthlySalaryRunRepository } from '../repositories/monthlySalaryRunRepository';
 import { salaryRepository, type SalaryRecordWrite } from '../repositories/salaryRepository';
 import { createLogger } from '../utils/logger';
@@ -225,6 +226,7 @@ async function markRunFailed(run: MonthlySalaryRun | undefined, error: unknown) 
 export async function runMonthlySalaryAutomation(
   options: MonthlySalaryAutomationOptions = {}
 ): Promise<MonthlySalaryAutomationResult> {
+  assertPayrollWritesEnabled();
   const config = options.config ?? getSalaryAutomationConfig();
   const target = options.target ?? getPreviousSalaryMonthTarget(options.now, config.timeZone);
   const sendEmail = options.sendEmail ?? true;

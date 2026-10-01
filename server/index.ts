@@ -3,6 +3,7 @@ import { attachApiFallbackHandlers, createConfiguredApp } from './bootstrap/crea
 import { installGracefulShutdown } from './bootstrap/graceful-shutdown';
 import { installProcessErrorHandlers } from './bootstrap/process-error-handlers';
 import { startRuntimeServices } from './bootstrap/runtime-services';
+import { arePayrollWritesPaused } from './config/payrollWrites';
 import { registerRoutes } from './routes';
 import { serveStatic } from './static';
 import { createLogger } from './utils/logger';
@@ -50,7 +51,9 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 
       logOperation(
         OperationType.SYSTEM_CONFIG,
-        '系統已啟動，資料庫監控、備份與保留排程已開始執行',
+        arePayrollWritesPaused()
+          ? '維護版本已啟動，薪資寫入、JSON 備份、月結與保留排程已停用；資料庫監控保持啟用'
+          : '系統已啟動，資料庫監控、備份與保留排程已開始執行',
         { success: true }
       );
     }

@@ -3,10 +3,14 @@ import { ZodError } from 'zod';
 import { fromZodError } from 'zod-validation-error';
 
 import { createLogger } from '../utils/logger';
+import { AdminRestoreEpochChangedError } from '../config/adminRestoreEpoch';
 
 const log = createLogger('api');
 
 export function handleRouteError(err: unknown, res: Response) {
+  if (err instanceof AdminRestoreEpochChangedError) {
+    return res.status(err.status).json({ message: err.message, code: err.code });
+  }
   log.error('API Error:', err);
 
   if (err instanceof ZodError) {

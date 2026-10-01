@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { sql } from 'drizzle-orm';
 import { db } from './db';
+import { arePayrollWritesPaused, assertLegacyBackupWritesEnabled } from './config/payrollWrites';
 import { storage } from './storage';
 import { salaryRepository } from './repositories/salaryRepository';
 import * as schema from '@shared/schema';
@@ -1461,6 +1462,7 @@ export async function createDatabaseBackup(
   type: BackupType = BackupType.MANUAL,
   description?: string
 ): Promise<string> {
+  assertLegacyBackupWritesEnabled();
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupId = `backup-${timestamp}`;
   // Choose the backup directory for the requested type.
@@ -1670,7 +1672,8 @@ export async function getBackupsList(type?: BackupType): Promise<BackupListEntry
 /**
  * Start the automatic backup scheduler.
  */
-export function setupAutomaticBackups(): NodeJS.Timeout {
+export function setupAutomaticBackups(): NodeJS.Timeout | null {
+  if (arePayrollWritesPaused()) return null;
   void ensureBackupDirectories().catch((error) => {
     log.error('Failed to prepare backup directories', error);
   });
@@ -1697,7 +1700,7 @@ export function setupAutomaticBackups(): NodeJS.Timeout {
   return automaticBackupTimer;
 }
 
-export function stopAutomaticBackups(timerId?: NodeJS.Timeout): void {
+export function stopAutomaticBackups(timerId?: NodeJS.Timeout | null): void {
   const targetTimer = timerId ?? automaticBackupTimer;
 
   if (!targetTimer) {
@@ -1727,6 +1730,7 @@ export async function restoreFromBackup(
   backupType?: BackupType,
   options: RestoreFromBackupOptions = {}
 ): Promise<boolean> {
+  assertLegacyBackupWritesEnabled();
   try {
     const backupPath = await resolveBackupPathAsync(backupId, backupType);
     const { inspection, payload } = await readBackupInspectionFromPathAsync(backupPath, {
@@ -1764,6 +1768,7 @@ export async function rehearseRestoreFromBackup(
   backupId: string,
   backupType?: BackupType
 ): Promise<RestoreRehearsalResult> {
+  assertLegacyBackupWritesEnabled();
   try {
     const backupPath = await resolveBackupPathAsync(backupId, backupType);
     const { inspection, payload } = await readBackupInspectionFromPathAsync(backupPath, {
@@ -1824,6 +1829,7 @@ export async function deleteBackup(
   backupId: string,
   backupType?: BackupType
 ): Promise<boolean> {
+  assertLegacyBackupWritesEnabled();
   const backupPath = await resolveBackupPathAsync(backupId, backupType);
 
   try {
