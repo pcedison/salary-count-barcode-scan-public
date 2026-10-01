@@ -7,6 +7,7 @@ import {
 } from '@shared/schema';
 
 import { db } from '../db';
+import { assertPayrollWritesEnabled } from '../config/payrollWrites';
 
 export interface AcquireMonthlySalaryRunParams {
   year: number;
@@ -30,6 +31,7 @@ export class DatabaseMonthlySalaryRunRepository {
    * statement, so two concurrent callers can never both acquire the same month.
    */
   async acquireRun(params: AcquireMonthlySalaryRunParams): Promise<AcquireMonthlySalaryRunResult> {
+    assertPayrollWritesEnabled();
     const { year, month, runKey, force, emailRecipients } = params;
 
     const insertValues: InsertMonthlySalaryRun = {
@@ -110,6 +112,7 @@ export class DatabaseMonthlySalaryRunRepository {
   }
 
   async createMonthlySalaryRun(run: InsertMonthlySalaryRun): Promise<MonthlySalaryRun> {
+    assertPayrollWritesEnabled();
     const [createdRun] = await db.insert(monthlySalaryRuns).values(run).returning();
     return createdRun;
   }
@@ -121,6 +124,7 @@ export class DatabaseMonthlySalaryRunRepository {
       emailSentAt?: Date | null;
     }
   ): Promise<MonthlySalaryRun | undefined> {
+    assertPayrollWritesEnabled();
     const [updatedRun] = await db
       .update(monthlySalaryRuns)
       .set(run as typeof monthlySalaryRuns.$inferInsert)

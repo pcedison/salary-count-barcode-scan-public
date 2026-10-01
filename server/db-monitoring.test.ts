@@ -353,11 +353,13 @@ describe('db-monitoring scheduler guards', () => {
     expect(getAllEmployeesMock).toHaveBeenCalledTimes(1);
   });
 
-  it('delays the bootstrap daily backup in production to avoid startup memory pressure', async () => {
+  it('does not start legacy JSON backup scheduling in production maintenance', async () => {
     const originalNodeEnv = process.env.NODE_ENV;
+    const originalPaused = process.env.PAYROLL_WRITES_PAUSED;
 
     try {
       process.env.NODE_ENV = 'production';
+      process.env.PAYROLL_WRITES_PAUSED = 'true';
 
       const timer = { kind: 'backup-timer-delayed' } as unknown as NodeJS.Timeout;
       const startupTimer = {
@@ -372,21 +374,14 @@ describe('db-monitoring scheduler guards', () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      expect(setupResult).toBe(timer);
-      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
-      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 10 * 60 * 1000);
+      expect(setupResult).toBeNull();
+      expect(setIntervalSpy).not.toHaveBeenCalled();
+      expect(setTimeoutSpy).not.toHaveBeenCalled();
       expect(getAllEmployeesMock).not.toHaveBeenCalled();
-
-      const delayedBackupCallback = setTimeoutSpy.mock.calls[0]?.[0];
-      expect(typeof delayedBackupCallback).toBe('function');
-      (delayedBackupCallback as () => void)();
-
-      await Promise.resolve();
-      await Promise.resolve();
-
-      expect(getAllEmployeesMock).toHaveBeenCalledTimes(1);
     } finally {
       process.env.NODE_ENV = originalNodeEnv;
+      if (originalPaused === undefined) delete process.env.PAYROLL_WRITES_PAUSED;
+      else process.env.PAYROLL_WRITES_PAUSED = originalPaused;
     }
   });
 

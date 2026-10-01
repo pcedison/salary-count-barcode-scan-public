@@ -7,6 +7,7 @@ import {
 } from '@shared/schema';
 
 import { db } from '../db';
+import { assertPayrollWritesEnabled } from '../config/payrollWrites';
 
 export interface SalaryRecordPageFilters {
   employeeId?: number;
@@ -161,6 +162,7 @@ export class DatabaseSalaryRepository {
   }
 
   async createSalaryRecord(record: InsertSalaryRecord): Promise<SalaryRecord> {
+    assertPayrollWritesEnabled();
     // Strip any incoming id to avoid primary-key conflicts.
     const { id, ...recordWithoutId } = record as any;
     const [newRecord] = await db.insert(salaryRecords).values(recordWithoutId).returning();
@@ -168,6 +170,7 @@ export class DatabaseSalaryRepository {
   }
 
   async updateSalaryRecord(id: number, record: Partial<InsertSalaryRecord>): Promise<SalaryRecord | undefined> {
+    assertPayrollWritesEnabled();
     const [updatedRecord] = await db
       .update(salaryRecords)
       .set(record as typeof salaryRecords.$inferInsert)
@@ -177,6 +180,7 @@ export class DatabaseSalaryRepository {
   }
 
   async saveSalaryRecordsAtomically(items: SalaryRecordWrite[]): Promise<SalaryRecord[]> {
+    assertPayrollWritesEnabled();
     if (items.length === 0) {
       return [];
     }
@@ -209,6 +213,7 @@ export class DatabaseSalaryRepository {
   }
 
   async deleteSalaryRecord(id: number): Promise<boolean> {
+    assertPayrollWritesEnabled();
     const [deleted] = await db
       .delete(salaryRecords)
       .where(eq(salaryRecords.id, id))
@@ -217,6 +222,7 @@ export class DatabaseSalaryRepository {
   }
 
   async purgeExpiredRetainedSalaryRecords(): Promise<number> {
+    assertPayrollWritesEnabled();
     const now = new Date();
     const deleted = await db
       .delete(salaryRecords)
