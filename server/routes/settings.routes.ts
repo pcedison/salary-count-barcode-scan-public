@@ -2,6 +2,7 @@ import crypto from "crypto";
 import type { Express, Response } from "express";
 
 import { insertSettingsSchema, type InsertSettings } from "@shared/schema";
+import { validatePin } from "@shared/utils/passwordValidator";
 import {
   DEFAULT_ADMIN_SETTINGS,
   toAdminSettingsPayload,
@@ -15,12 +16,13 @@ import { strictLimiter } from "../middleware/rateLimiter";
 import { requireAdmin } from "../middleware/requireAdmin";
 import { hasAdminSession } from "../session";
 import { storage } from "../storage";
-import { hashAdminPin, isHashedPin } from "../utils/adminPinAuth";
+import { AdminPinBusyError, hashAdminPinAsync, isHashedPin } from "../utils/adminPinAuth";
 import { createLogger } from "../utils/logger";
 
 import { handleRouteError } from "./route-helpers";
 
 const log = createLogger("settings");
+const updateSettingsSchema = insertSettingsSchema.partial({ adminPin: true });
 
 const DEFAULT_BOOTSTRAP_DEDUCTIONS = [
   { name: "勞保", amount: 525, description: "員工勞保自付額" },
@@ -31,14 +33,21 @@ function setNoStore(res: Response) {
   res.setHeader("Cache-Control", "no-store");
 }
 
-function normalizeAdminPinForStorage<T extends InsertSettings>(settings: T): T {
+function handleSettingsError(error: unknown, res: Response) {
+  if (error instanceof AdminPinBusyError) {
+    return res.set("Retry-After", "1").status(503).json({ success: false, code: error.code, message: error.message });
+  }
+  return handleRouteError(error, res);
+}
+
+async function normalizeAdminPinForStorage<T extends InsertSettings>(settings: T): Promise<T> {
   if (!settings.adminPin || isHashedPin(settings.adminPin)) {
     return settings;
   }
 
   return {
     ...settings,
-    adminPin: hashAdminPin(settings.adminPin),
+    adminPin: await hashAdminPinAsync(settings.adminPin),
   };
 }
 
@@ -56,7 +65,7 @@ async function ensureSettings() {
     );
 
     settings = await storage.createOrUpdateSettings(
-      normalizeAdminPinForStorage({
+      await normalizeAdminPinForStorage({
         ...DEFAULT_ADMIN_SETTINGS,
         adminPin: defaultPin,
         deductions: DEFAULT_BOOTSTRAP_DEDUCTIONS,
@@ -73,7 +82,7 @@ export function registerSettingsRoutes(app: Express): void {
       const settings = await ensureSettings();
       return res.json(toPublicSettingsPayload(settings));
     } catch (err) {
-      return handleRouteError(err, res);
+      return handleSettingsError(err, res);
     }
   });
 
@@ -83,20 +92,22 @@ export function registerSettingsRoutes(app: Express): void {
       const settings = await ensureSettings();
       return res.json(toAdminSettingsPayload(settings));
     } catch (err) {
-      return handleRouteError(err, res);
+      return handleSettingsError(err, res);
     }
   });
 
   app.post("/api/settings", requireAdmin(), async (req, res) => {
     try {
       setNoStore(res);
-      const requestedAdminPinChange = typeof req.body?.adminPin === "string" && req.body.adminPin.trim().length > 0;
-      const currentSettings = await ensureSettings();
+      const validatedData = updateSettingsSchema.parse(req.body);
+      const requestedAdminPinChange = validatedData.adminPin !== undefined;
 
-      const validatedData = insertSettingsSchema.parse({
-        ...req.body,
-        adminPin: requestedAdminPinChange ? req.body.adminPin : currentSettings.adminPin,
-      });
+      if (requestedAdminPinChange && !validatedData.adminPin?.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Admin PIN must not be empty. Omit adminPin to keep the current credential.",
+        });
+      }
 
       if (requestedAdminPinChange && !hasAdminSession(req, PermissionLevel.SUPER)) {
         return res.status(403).json({
@@ -105,12 +116,33 @@ export function registerSettingsRoutes(app: Express): void {
         });
       }
 
+      if (requestedAdminPinChange) {
+        const validation = validatePin(validatedData.adminPin!);
+        if (!validation.valid) {
+          return res.status(400).json({
+            success: false,
+            message: "New PIN does not meet security requirements",
+            errors: validation.errors,
+          });
+        }
+      }
+
+      const currentSettings = await storage.getSettings();
+      if (!requestedAdminPinChange && !currentSettings?.adminPin) {
+        return res.status(409).json({
+          success: false,
+          message: "Settings must have an administrator credential before they can be updated.",
+        });
+      }
+
       const isDisablingBarcode =
         currentSettings?.barcodeEnabled !== false &&
         validatedData.barcodeEnabled === false;
 
       const settings = await storage.createOrUpdateSettings(
-        normalizeAdminPinForStorage(validatedData),
+        requestedAdminPinChange
+          ? await normalizeAdminPinForStorage({ ...validatedData, adminPin: validatedData.adminPin! })
+          : validatedData,
       );
 
       let migrationResult: { migrated: number; skipped: number } | undefined;
@@ -124,7 +156,7 @@ export function registerSettingsRoutes(app: Express): void {
       const payload = toAdminSettingsPayload(settings);
       return res.json(migrationResult ? { ...payload, migrationResult } : payload);
     } catch (err) {
-      return handleRouteError(err, res);
+      return handleSettingsError(err, res);
     }
   });
 

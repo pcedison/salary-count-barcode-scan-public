@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   salaryRuns: [] as Array<Record<string, any>>,
@@ -188,7 +188,19 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+afterEach(() => vi.unstubAllEnvs());
+
 describe('monthly salary automation', () => {
+  it('skips forced reruns before acquisition and output while maintenance is active', async () => {
+    vi.stubEnv('PAYROLL_WRITES_PAUSED', 'true');
+    const result = await moduleUnderTest.runMonthlySalaryAutomation({ target: { year: 2026, month: 9 }, force: true, sendEmail: true });
+    expect(result.status).toBe('skipped');
+    expect(result.reason).toBe('payroll_writes_paused');
+    for (const method of [...Object.values(storageMock), ...Object.values(salaryRepositoryMock)]) expect(method).not.toHaveBeenCalled();
+    expect(buildCalculatedSalaryRecord).not.toHaveBeenCalled();
+    expect(generateMonthlySalaryPdf).not.toHaveBeenCalled();
+    expect(sendMonthlySalaryEmail).not.toHaveBeenCalled();
+  });
   it('selects the previous salary month across a year boundary', () => {
     expect(moduleUnderTest.getPreviousSalaryMonthTarget(new Date('2026-01-02T00:00:00.000Z'), 'UTC')).toEqual({
       year: 2025,

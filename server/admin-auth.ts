@@ -6,8 +6,11 @@ import { ensureAuditLogDirExists, getAuditLogDir } from './config/runtimePaths';
 import { storage } from './storage';
 import {
   hashAdminPin,
+  hashAdminPinAsync,
+  AdminPinBusyError,
   isHashedPin,
-  verifyStoredAdminPin
+  isSupportedPinInput,
+  verifyStoredAdminPinAsync
 } from './utils/adminPinAuth';
 import { createLogger } from './utils/logger';
 
@@ -75,25 +78,34 @@ export async function verifyAdminPermission(
   pin: string,
   _requiredLevel: PermissionLevel = PermissionLevel.ADMIN
 ): Promise<boolean> {
+  return (await verifyAdminCredential(pin)) !== null;
+}
+
+/** Retain the exact hash that was verified for a later atomic credential update. */
+export async function verifyAdminCredential(pin: string): Promise<{ storedHash: string } | null> {
+  if (!isSupportedPinInput(pin)) return null;
   try {
     const settings = await storage.getSettings();
 
     if (!settings?.adminPin) {
-      return false;
+      return null;
     }
 
-    return verifyStoredAdminPin(settings.adminPin, pin);
+    const storedHash = settings.adminPin;
+    return await verifyStoredAdminPinAsync(storedHash, pin) ? { storedHash } : null;
   } catch (error) {
-    log.error('Failed to verify admin permission', error);
-    return false;
+    if (error instanceof AdminPinBusyError) throw error;
+    log.error('Failed to verify admin permission', { name: error instanceof Error ? error.name : 'UnknownError' });
+    return null;
   }
 }
 
 export async function verifySuperAdminPermission(pin: string): Promise<boolean> {
+  if (!isSupportedPinInput(pin)) return false;
   const configuredSuperPin = getConfiguredSuperAdminPin();
   if (configuredSuperPin) {
     if (isHashedPin(configuredSuperPin)) {
-      return verifyStoredAdminPin(configuredSuperPin, pin);
+      return verifyStoredAdminPinAsync(configuredSuperPin, pin);
     }
 
     if (process.env.NODE_ENV === 'production') {
@@ -110,10 +122,7 @@ export async function verifySuperAdminPermission(pin: string): Promise<boolean> 
     );
   }
 
-  // Fallback to the regular admin PIN only in automated test runs. Development
-  // and staging must configure SUPER_ADMIN_PIN explicitly, so a mislabelled
-  // NODE_ENV can never turn a regular admin PIN into a SUPER elevation.
-  if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') {
+  if (process.env.NODE_ENV !== 'production') {
     return verifyAdminPermission(pin, PermissionLevel.SUPER);
   }
 
@@ -242,4 +251,8 @@ export async function getAvailableLogDates(): Promise<{ date: Date; count: numbe
 
 export function hashPassword(password: string): string {
   return hashAdminPin(password);
+}
+
+export async function hashPasswordAsync(password: string): Promise<string> {
+  return hashAdminPinAsync(password);
 }

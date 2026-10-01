@@ -1,596 +1,100 @@
-import { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { DateTimePicker } from '@/components/ui/date-time-picker';
-import { Switch } from '@/components/ui/switch';
+import { useEffect, useRef, useState } from 'react';
+import { Loader2, Plus, Trash2 } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from '@/components/ui/textarea';
 import { formatCurrency } from '@/lib/utils';
-import { calculateHistoryRecordTotals } from '@/lib/historyRecordMath';
-import { Loader2, Save, XCircle, Plus, Trash2, Calendar, DollarSign, Clock } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { calculateHistoryRecordTotals, initialHistoryAllowances, type HistoryAllowanceItem, type HistoryDeductionItem, type HistorySpecialLeaveInfo } from '@/lib/historyRecordMath';
+import { correctionErrorMessage, holidayTypeLabels, paymentHandlingLabels, type PaymentHandling } from '@/lib/holidayCorrection';
+import type { SalaryRecord } from '@/hooks/useHistoryData';
 
-interface Allowance {
-  name: string;
-  amount: number;
-  description?: string;
-}
-
-interface Deduction {
-  name: string;
-  amount: number;
-}
-
-interface SpecialLeaveInfo {
-  usedDays: number;
-  usedDates: string[];
-  cashDays: number;
-  cashAmount: number;
-  notes?: string;
-}
-
-interface EditableAttendanceEntry {
-  date: string;
-  clockIn: string;
-  clockOut: string;
-  isHoliday: boolean;
-  holidayType?: string;
-  employeeId?: number;
-}
-
-interface EditableHistoryRecord {
-  id: number;
-  salaryYear: number;
-  salaryMonth: number;
-  baseSalary?: number;
-  housingAllowance?: number;
-  totalOvertimePay?: number;
-  totalHolidayPay?: number;
-  attendanceData?: EditableAttendanceEntry[];
-  allowances?: Allowance[];
-  deductions?: Deduction[];
-  specialLeaveInfo?: SpecialLeaveInfo | null;
-}
-
-export interface HistoryRecordUpdatePayload {
-  attendanceData: EditableAttendanceEntry[];
-  allowances: Allowance[];
-  deductions: Deduction[];
-  housingAllowance: number;
-  baseSalary: number;
-  welfareAllowance: number;
-  totalDeductions: number;
-  grossSalary: number;
-  netSalary: number;
-  specialLeaveInfo: SpecialLeaveInfo | null;
-}
-
-interface EditHistoryRecordModalProps {
-  record: EditableHistoryRecord | null;
+interface Props {
+  record: SalaryRecord | null;
   isOpen: boolean;
   onClose: () => void;
-  onSave: (id: number, updatedData: HistoryRecordUpdatePayload) => Promise<void>;
+  onReload?: (id: number) => void;
+  onSave: (id: number, data: Record<string, unknown>) => Promise<void>;
   isSaving: boolean;
 }
+const emptyLeave = (): HistorySpecialLeaveInfo => ({ usedDays: 0, usedDates: [], cashDays: 0, cashAmount: 0 });
 
-export default function EditHistoryRecordModal({
-  record,
-  isOpen,
-  onClose,
-  onSave,
-  isSaving
-}: EditHistoryRecordModalProps) {
-  const [attendanceData, setAttendanceData] = useState<EditableAttendanceEntry[]>([]);
-  const [allowances, setAllowances] = useState<Allowance[]>([]);
-  const [deductions, setDeductions] = useState<Deduction[]>([]);
-  const [housingAllowance, setHousingAllowance] = useState<number>(0);
-  const [baseSalary, setBaseSalary] = useState<number>(0);
-  const [specialLeaveInfo, setSpecialLeaveInfo] = useState<SpecialLeaveInfo | null>(null);
+export default function EditHistoryRecordModal({ record, isOpen, onClose, onReload, onSave, isSaving }: Props) {
+  const [allowances, setAllowances] = useState<HistoryAllowanceItem[]>([]);
+  const [allowancesTouched, setAllowancesTouched] = useState(false);
+  const [deductions, setDeductions] = useState<HistoryDeductionItem[]>([]);
+  const [baseSalary, setBaseSalary] = useState(0);
+  const [housingAllowance, setHousingAllowance] = useState(0);
+  const [specialLeaveInfo, setSpecialLeaveInfo] = useState<HistorySpecialLeaveInfo | null>(null);
+  const [reason, setReason] = useState('');
+  const [paymentHandling, setPaymentHandling] = useState<PaymentHandling | ''>('');
+  const [confirmed, setConfirmed] = useState(false);
+  const [error, setError] = useState('');
+  const [conflict, setConflict] = useState(false);
+  const inFlight = useRef(false);
+  const idempotencyKey = useRef('');
+  const pendingRequest = useRef<Record<string, unknown> | null>(null);
 
   useEffect(() => {
-    if (record && isOpen) {
-      setAttendanceData(JSON.parse(JSON.stringify(record.attendanceData || [])));
-      setAllowances(JSON.parse(JSON.stringify(record.allowances || [])));
-      setDeductions(JSON.parse(JSON.stringify(record.deductions || [])));
-      setHousingAllowance(record.housingAllowance || 0);
-      setBaseSalary(record.baseSalary || 0);
-      setSpecialLeaveInfo(record.specialLeaveInfo || null);
-    }
+    if (!record || !isOpen) return;
+    setAllowances(initialHistoryAllowances(record));
+    setAllowancesTouched(false);
+    setDeductions(structuredClone(record.deductions || []));
+    setBaseSalary(record.baseSalary);
+    setHousingAllowance(record.housingAllowance || 0);
+    setSpecialLeaveInfo(record.specialLeaveInfo ? structuredClone(record.specialLeaveInfo) : null);
+    setReason(''); setPaymentHandling(''); setConfirmed(false); setError(''); setConflict(false);
+    idempotencyKey.current = crypto.randomUUID();
+    pendingRequest.current = null;
   }, [record, isOpen]);
-
-  const updateAttendanceField = (index: number, field: keyof EditableAttendanceEntry, value: string | boolean) => {
-    const updatedData = [...attendanceData];
-    updatedData[index] = { ...updatedData[index], [field]: value };
-    setAttendanceData(updatedData);
-  };
-
-  const updateAllowance = (index: number, field: keyof Allowance, value: string) => {
-    const updated = [...allowances];
-    updated[index] = { ...updated[index], [field]: field === 'amount' ? parseFloat(value) || 0 : value };
-    setAllowances(updated);
-  };
-
-  const addAllowance = () => {
-    setAllowances([...allowances, { name: '', amount: 0, description: '' }]);
-  };
-
-  const removeAllowance = (index: number) => {
-    setAllowances(allowances.filter((_, i) => i !== index));
-  };
-
-  const updateDeduction = (index: number, field: keyof Deduction, value: string) => {
-    const updated = [...deductions];
-    updated[index] = { ...updated[index], [field]: field === 'amount' ? parseFloat(value) || 0 : value };
-    setDeductions(updated);
-  };
-
-  const addDeduction = () => {
-    setDeductions([...deductions, { name: '', amount: 0 }]);
-  };
-
-  const removeDeduction = (index: number) => {
-    setDeductions(deductions.filter((_, i) => i !== index));
-  };
-
-  const calculateTotals = () => {
-    return calculateHistoryRecordTotals({
-      allowances,
-      deductions,
-      baseSalary,
-      housingAllowance,
-      totalOvertimePay: record?.totalOvertimePay || 0,
-      totalHolidayPay: record?.totalHolidayPay || 0,
-      specialLeaveInfo
-    });
-  };
-
+  if (!record) return null;
+  const totals = calculateHistoryRecordTotals({ allowances: allowancesTouched ? allowances : [{ name: '原結算福利津貼', amount: record.welfareAllowance ?? 0 }], deductions, baseSalary, housingAllowance, specialLeaveInfo, totalOvertimePay: record.totalOvertimePay, totalHolidayPay: record.totalHolidayPay });
+  const originalAllowanceDifference = (record.welfareAllowance ?? 0) - (record.allowances ?? []).reduce((sum, row) => sum + row.amount, 0);
+  const delta = totals.netSalary - record.netSalary;
+  // On an uncertain save, keep the exact request and key for a safe retry.
+  const locked = isSaving || conflict || pendingRequest.current !== null;
   const handleSave = async () => {
-    if (!record) return;
-
-    const { totalAllowances, totalDeductions, welfareAllowance, grossSalary, netSalary } = calculateTotals();
-
-    await onSave(record.id, {
-      attendanceData,
-      allowances,
-      deductions,
-      housingAllowance,
-      baseSalary,
-      welfareAllowance,
-      totalDeductions,
-      grossSalary,
-      netSalary,
-      specialLeaveInfo
-    });
+    if (inFlight.current || conflict || !confirmed) return;
+    if (!reason.trim()) { setError('請填寫更正原因。'); return; }
+    if (!paymentHandling) { setError('請選擇發薪狀態與差額處理方式。'); return; }
+    inFlight.current = true;
+    setError('');
+    if (!pendingRequest.current) pendingRequest.current = {
+      revision: record.revision,
+      baseSalary, housingAllowance, ...(allowancesTouched ? { allowances } : {}), deductions, specialLeaveInfo,
+      reason: reason.trim(), paymentHandling, idempotencyKey: idempotencyKey.current,
+    };
+    try { await onSave(record.id, pendingRequest.current); }
+    catch (err) {
+      setError(correctionErrorMessage(err));
+      if (err instanceof Error && err.message.startsWith('409:')) setConflict(true);
+      // Validation/auth failures are definitive; edits can be fixed before retrying.
+      else if (err instanceof Error && /^(400|401|403|422):/.test(err.message)) pendingRequest.current = null;
+    } finally { inFlight.current = false; }
   };
 
-  if (!record) {
-    return null;
-  }
-
-  const { totalAllowances, totalDeductions, grossSalary, netSalary } = calculateTotals();
-
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-5xl">
-        <DialogHeader>
-          <DialogTitle className="text-lg font-medium text-gray-900">
-            編輯 {record.salaryYear}年{record.salaryMonth}月 薪資記錄
-          </DialogTitle>
-          <DialogDescription className="sr-only">
-            編輯歷史薪資記錄的所有欄位
-          </DialogDescription>
-        </DialogHeader>
-
-        <Tabs defaultValue="attendance" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
-            <TabsTrigger value="attendance" className="flex items-center gap-1 text-xs sm:text-sm">
-              <Clock className="w-4 h-4" />
-              考勤記錄
-            </TabsTrigger>
-            <TabsTrigger value="allowances" className="flex items-center gap-1 text-xs sm:text-sm">
-              <Plus className="w-4 h-4" />
-              津貼項目
-            </TabsTrigger>
-            <TabsTrigger value="deductions" className="flex items-center gap-1 text-xs sm:text-sm">
-              <DollarSign className="w-4 h-4" />
-              扣款項目
-            </TabsTrigger>
-            <TabsTrigger value="special" className="flex items-center gap-1 text-xs sm:text-sm">
-              <Calendar className="w-4 h-4" />
-              特別假
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="attendance" className="space-y-4">
-            <div className="grid grid-cols-1 gap-4 rounded-md bg-gray-50 p-3 sm:grid-cols-2">
-              <div>
-                <Label className="text-sm text-gray-500">基本薪資</Label>
-                <Input
-                  type="number"
-                  value={baseSalary}
-                  onChange={(e) => setBaseSalary(parseFloat(e.target.value) || 0)}
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label className="text-sm text-gray-500">住宿津貼</Label>
-                <Input
-                  type="number"
-                  value={housingAllowance}
-                  onChange={(e) => setHousingAllowance(parseFloat(e.target.value) || 0)}
-                  className="mt-1"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-3 md:hidden">
-              {attendanceData.length === 0 ? (
-                <div className="rounded-md border py-4 text-center text-gray-500">
-                  沒有考勤記錄
-                </div>
-              ) : (
-                attendanceData.map((item, index) => (
-                  <div key={index} className="space-y-3 rounded-lg border bg-white p-4 shadow-sm">
-                    <div>
-                      <Label className="text-xs text-gray-500">日期</Label>
-                      <DateTimePicker
-                        mode="date"
-                        value={item.date}
-                        onChange={(value) => updateAttendanceField(index, 'date', value)}
-                        className="mt-1 w-full"
-                      />
-                    </div>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div>
-                        <Label className="text-xs text-gray-500">上班時間</Label>
-                        <DateTimePicker
-                          mode="time"
-                          value={item.clockIn}
-                          onChange={(value) => updateAttendanceField(index, 'clockIn', value)}
-                          className="mt-1 w-full"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs text-gray-500">下班時間</Label>
-                        <DateTimePicker
-                          mode="time"
-                          value={item.clockOut}
-                          onChange={(value) => updateAttendanceField(index, 'clockOut', value)}
-                          className="mt-1 w-full"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-gray-500">假日類型</Label>
-                      <Select
-                        value={item.holidayType || (item.isHoliday ? 'worked' : 'normal')}
-                        onValueChange={(value) => {
-                          updateAttendanceField(index, 'holidayType', value);
-                          updateAttendanceField(index, 'isHoliday', value !== 'normal');
-                        }}
-                      >
-                        <SelectTrigger className="mt-1 w-full">
-                          <SelectValue placeholder="選擇類型" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="normal">一般工作日</SelectItem>
-                          <SelectItem value="worked">假日出勤</SelectItem>
-                          <SelectItem value="national_holiday">國定假日</SelectItem>
-                          <SelectItem value="sick_leave">病假</SelectItem>
-                          <SelectItem value="personal_leave">事假</SelectItem>
-                          <SelectItem value="typhoon_leave">颱風假</SelectItem>
-                          <SelectItem value="temporary_stop_work_and_classes">臨時停止上班上課</SelectItem>
-                          <SelectItem value="special_leave">特別假</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="hidden max-h-[300px] overflow-auto rounded-md border md:block">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50 sticky top-0">
-                  <tr>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">日期</th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">上班時間</th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">下班時間</th>
-                    <th className="px-3 py-2 text-center text-xs font-medium text-gray-500">假日類型</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {attendanceData.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="px-3 py-4 text-center text-gray-500">
-                        沒有考勤記錄
-                      </td>
-                    </tr>
-                  ) : (
-                    attendanceData.map((item, index) => (
-                      <tr key={index} className="hover:bg-gray-50">
-                        <td className="px-3 py-2 whitespace-nowrap font-['Roboto_Mono'] text-sm">
-                          <DateTimePicker
-                            mode="date"
-                            value={item.date}
-                            onChange={(value) => updateAttendanceField(index, 'date', value)}
-                            className="w-full"
-                          />
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap font-['Roboto_Mono'] text-sm">
-                          <DateTimePicker
-                            mode="time"
-                            value={item.clockIn}
-                            onChange={(value) => updateAttendanceField(index, 'clockIn', value)}
-                            className="w-full"
-                          />
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap font-['Roboto_Mono'] text-sm">
-                          <DateTimePicker
-                            mode="time"
-                            value={item.clockOut}
-                            onChange={(value) => updateAttendanceField(index, 'clockOut', value)}
-                            className="w-full"
-                          />
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-center">
-                          <Select
-                            value={item.holidayType || (item.isHoliday ? 'worked' : 'normal')}
-                            onValueChange={(value) => {
-                              updateAttendanceField(index, 'holidayType', value);
-                              updateAttendanceField(index, 'isHoliday', value !== 'normal');
-                            }}
-                          >
-                            <SelectTrigger className="w-[130px]">
-                              <SelectValue placeholder="選擇類型" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="normal">一般工作日</SelectItem>
-                              <SelectItem value="worked">假日出勤</SelectItem>
-                              <SelectItem value="national_holiday">國定假日</SelectItem>
-                              <SelectItem value="sick_leave">病假</SelectItem>
-                              <SelectItem value="personal_leave">事假</SelectItem>
-                              <SelectItem value="typhoon_leave">颱風假</SelectItem>
-                              <SelectItem value="temporary_stop_work_and_classes">臨時停止上班上課</SelectItem>
-                              <SelectItem value="special_leave">特別假</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="allowances" className="space-y-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <h3 className="text-sm font-medium">津貼項目</h3>
-              <Button size="sm" variant="outline" onClick={addAllowance} className="w-full sm:w-auto">
-                <Plus className="w-4 h-4 mr-1" />
-                新增津貼
-              </Button>
-            </div>
-
-            <div className="space-y-3">
-              {allowances.length === 0 ? (
-                <div className="text-center text-gray-500 py-4 border rounded-md">
-                  沒有津貼項目，點擊「新增津貼」開始添加
-                </div>
-              ) : (
-                allowances.map((allowance, index) => (
-                  <div key={index} className="flex flex-col gap-3 rounded-md border bg-green-50/50 p-3 sm:flex-row sm:items-end">
-                    <div className="flex-1">
-                      <Label className="text-xs text-gray-500">項目名稱</Label>
-                      <Input
-                        value={allowance.name}
-                        onChange={(e) => updateAllowance(index, 'name', e.target.value)}
-                        placeholder="例：住宿福利金"
-                        className="mt-1"
-                      />
-                    </div>
-                    <div className="sm:w-32">
-                      <Label className="text-xs text-gray-500">金額</Label>
-                      <Input
-                        type="number"
-                        value={allowance.amount}
-                        onChange={(e) => updateAllowance(index, 'amount', e.target.value)}
-                        className="mt-1"
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <Label className="text-xs text-gray-500">說明</Label>
-                      <Input
-                        value={allowance.description || ''}
-                        onChange={(e) => updateAllowance(index, 'description', e.target.value)}
-                        placeholder="選填"
-                        className="mt-1"
-                      />
-                    </div>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="w-full text-red-500 hover:text-red-700 sm:mt-5 sm:w-auto"
-                      onClick={() => removeAllowance(index)}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="bg-green-100 p-3 rounded-md text-right">
-              <span className="text-sm text-gray-600">津貼總計：</span>
-              <span className="ml-2 font-bold text-green-700">{formatCurrency(totalAllowances)}</span>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="deductions" className="space-y-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <h3 className="text-sm font-medium">扣款項目</h3>
-              <Button size="sm" variant="outline" onClick={addDeduction} className="w-full sm:w-auto">
-                <Plus className="w-4 h-4 mr-1" />
-                新增扣款
-              </Button>
-            </div>
-
-            <div className="space-y-3">
-              {deductions.length === 0 ? (
-                <div className="text-center text-gray-500 py-4 border rounded-md">
-                  沒有扣款項目，點擊「新增扣款」開始添加
-                </div>
-              ) : (
-                deductions.map((deduction, index) => (
-                  <div key={index} className="flex flex-col gap-3 rounded-md border bg-red-50/50 p-3 sm:flex-row sm:items-end">
-                    <div className="flex-1">
-                      <Label className="text-xs text-gray-500">項目名稱</Label>
-                      <Input
-                        value={deduction.name}
-                        onChange={(e) => updateDeduction(index, 'name', e.target.value)}
-                        placeholder="例：勞保費"
-                        className="mt-1"
-                      />
-                    </div>
-                    <div className="sm:w-32">
-                      <Label className="text-xs text-gray-500">金額</Label>
-                      <Input
-                        type="number"
-                        value={deduction.amount}
-                        onChange={(e) => updateDeduction(index, 'amount', e.target.value)}
-                        className="mt-1"
-                      />
-                    </div>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="w-full text-red-500 hover:text-red-700 sm:mt-5 sm:w-auto"
-                      onClick={() => removeDeduction(index)}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="bg-red-100 p-3 rounded-md text-right">
-              <span className="text-sm text-gray-600">扣款總計：</span>
-              <span className="ml-2 font-bold text-red-700">-{formatCurrency(totalDeductions)}</span>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="special" className="space-y-4">
-            <div className="bg-blue-50 p-4 rounded-md">
-              <h3 className="text-sm font-medium mb-3">特別假使用記錄</h3>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <Label className="text-xs text-gray-500">已使用特別假天數</Label>
-                  <Input
-                    type="number"
-                    value={specialLeaveInfo?.usedDays || 0}
-                    onChange={(e) => setSpecialLeaveInfo({
-                      ...specialLeaveInfo || { usedDays: 0, usedDates: [], cashDays: 0, cashAmount: 0 },
-                      usedDays: parseInt(e.target.value) || 0
-                    })}
-                    className="mt-1"
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs text-gray-500">折抵日薪天數</Label>
-                  <Input
-                    type="number"
-                    value={specialLeaveInfo?.cashDays || 0}
-                    onChange={(e) => {
-                      const days = parseInt(e.target.value) || 0;
-                      const dailySalary = baseSalary / 30;
-                      setSpecialLeaveInfo({
-                        ...specialLeaveInfo || { usedDays: 0, usedDates: [], cashDays: 0, cashAmount: 0 },
-                        cashDays: days,
-                        cashAmount: Math.round(days * dailySalary)
-                      });
-                    }}
-                    className="mt-1"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-3">
-                <Label className="text-xs text-gray-500">折抵金額</Label>
-                <div className="text-lg font-bold text-blue-700 mt-1">
-                  {formatCurrency(specialLeaveInfo?.cashAmount || 0)}
-                </div>
-              </div>
-
-              <div className="mt-3">
-                <Label className="text-xs text-gray-500">備註</Label>
-                <Input
-                  value={specialLeaveInfo?.notes || ''}
-                  onChange={(e) => setSpecialLeaveInfo({
-                    ...specialLeaveInfo || { usedDays: 0, usedDates: [], cashDays: 0, cashAmount: 0 },
-                    notes: e.target.value
-                  })}
-                  placeholder="特別假相關備註"
-                  className="mt-1"
-                />
-              </div>
-            </div>
-          </TabsContent>
-        </Tabs>
-
-        <div className="border-t pt-4 mt-4">
-          <div className="mb-4 grid grid-cols-2 gap-3 text-center xl:grid-cols-4">
-            <div className="bg-gray-100 p-2 rounded">
-              <div className="text-xs text-gray-500">基本薪資</div>
-              <div className="font-medium">{formatCurrency(baseSalary)}</div>
-            </div>
-            <div className="bg-green-100 p-2 rounded">
-              <div className="text-xs text-gray-500">總津貼</div>
-              <div className="font-medium text-green-700">+{formatCurrency(totalAllowances + housingAllowance)}</div>
-            </div>
-            <div className="bg-red-100 p-2 rounded">
-              <div className="text-xs text-gray-500">總扣款</div>
-              <div className="font-medium text-red-700">-{formatCurrency(totalDeductions)}</div>
-            </div>
-            <div className="bg-blue-100 p-2 rounded">
-              <div className="text-xs text-gray-500">實發金額</div>
-              <div className="font-bold text-blue-700">{formatCurrency(netSalary)}</div>
-            </div>
-          </div>
-
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button
-              variant="outline"
-              onClick={onClose}
-              disabled={isSaving}
-              className="w-full sm:w-auto"
-            >
-              <XCircle className="w-4 h-4 mr-1" />
-              取消
-            </Button>
-            <Button
-              onClick={handleSave}
-              disabled={isSaving}
-              className="w-full bg-blue-600 hover:bg-blue-700 sm:w-auto"
-            >
-              {isSaving ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                  儲存中...
-                </>
-              ) : (
-                <>
-                  <Save className="w-4 h-4 mr-1" />
-                  儲存變更
-                </>
-              )}
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
+  return <Dialog open={isOpen} onOpenChange={(open) => { if (!open && !inFlight.current) onClose(); }}>
+    <DialogContent className="max-w-4xl w-[calc(100%-1rem)] max-h-[90dvh] overflow-y-auto p-4 sm:p-6">
+      <DialogHeader><DialogTitle>歷史薪資金額更正</DialogTitle><DialogDescription>{record.employeeName || `員工 #${record.employeeId ?? '未指定'}`} · {record.salaryYear} 年 {record.salaryMonth} 月 · 修訂 {record.revision}</DialogDescription></DialogHeader>
+      <p className="rounded-md bg-amber-50 p-3 text-sm text-amber-900">此處更正金額項目並保留原有加班與假日計算。新增或變更假日請回到歷史列表選擇「假日更正」。已發薪或待核對的差額需人工處理，系統不會付款或通知員工。</p>
+      {error && <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+      {conflict && onReload && <Button type="button" variant="outline" onClick={() => onReload(record.id)}>重新讀取最新紀錄</Button>}
+{originalAllowanceDifference !== 0 && <p className="rounded-md bg-muted p-3 text-sm">原結算福利津貼 {formatCurrency(record.welfareAllowance ?? 0)} 與舊津貼明細合計不同。未修改津貼時保留原結算金額；明確修改津貼後，將按目前明細合計重算並在下方預覽。</p>}
+      <form className="space-y-5" onSubmit={(event) => { event.preventDefault(); void handleSave(); }}>
+        <fieldset disabled={locked} className="space-y-5">
+          <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="edit-base-salary">基本薪資</Label><Input id="edit-base-salary" type="number" min={0} step="0.01" required value={baseSalary} onChange={(event) => { setBaseSalary(Number(event.target.value)); setConfirmed(false); }} /></div><div className="space-y-1"><Label htmlFor="edit-housing">住宿津貼</Label><Input id="edit-housing" type="number" min={0} step="0.01" required value={housingAllowance} onChange={(event) => { setHousingAllowance(Number(event.target.value)); setConfirmed(false); }} /></div></div>
+          <section className="space-y-3"><h3 className="font-semibold">津貼項目</h3>{allowances.map((allowance, index) => <div key={index} className="grid grid-cols-[minmax(0,1fr)_7rem_auto] gap-2"><div><Label htmlFor={`edit-allowance-name-${index}`} className="sr-only">津貼 {index + 1} 名稱</Label><Input id={`edit-allowance-name-${index}`} value={allowance.name} maxLength={100} required onChange={(event) => { setAllowances((rows) => rows.map((row, i) => i === index ? { ...row, name: event.target.value } : row)); setAllowancesTouched(true); setConfirmed(false); }} /></div><div><Label htmlFor={`edit-allowance-amount-${index}`} className="sr-only">津貼 {index + 1} 金額</Label><Input id={`edit-allowance-amount-${index}`} type="number" min={0} step="0.01" value={allowance.amount} required onChange={(event) => { setAllowances((rows) => rows.map((row, i) => i === index ? { ...row, amount: Number(event.target.value) } : row)); setAllowancesTouched(true); setConfirmed(false); }} /></div><Button type="button" variant="ghost" aria-label={`移除津貼 ${index + 1}`} onClick={() => { setAllowances((rows) => rows.filter((_, i) => i !== index)); setAllowancesTouched(true); setConfirmed(false); }}><Trash2 className="h-4 w-4" /></Button></div>)}<Button type="button" variant="outline" size="sm" onClick={() => { setAllowances((rows) => [...rows, { name: '', amount: 0 }]); setAllowancesTouched(true); setConfirmed(false); }}><Plus className="mr-1 h-4 w-4" />新增津貼</Button></section>
+          <section className="space-y-3"><h3 className="font-semibold">扣款項目</h3>{deductions.map((deduction, index) => <div key={index} className="grid grid-cols-[minmax(0,1fr)_7rem_auto] gap-2"><div><Label htmlFor={`edit-deduction-name-${index}`} className="sr-only">扣款 {index + 1} 名稱</Label><Input id={`edit-deduction-name-${index}`} value={deduction.name} maxLength={100} required onChange={(event) => { setDeductions((rows) => rows.map((row, i) => i === index ? { ...row, name: event.target.value } : row)); setConfirmed(false); }} /></div><div><Label htmlFor={`edit-deduction-amount-${index}`} className="sr-only">扣款 {index + 1} 金額</Label><Input id={`edit-deduction-amount-${index}`} type="number" min={0} step="0.01" value={deduction.amount} required onChange={(event) => { setDeductions((rows) => rows.map((row, i) => i === index ? { ...row, amount: Number(event.target.value) } : row)); setConfirmed(false); }} /></div><Button type="button" variant="ghost" aria-label={`移除扣款 ${index + 1}`} onClick={() => { setDeductions((rows) => rows.filter((_, i) => i !== index)); setConfirmed(false); }}><Trash2 className="h-4 w-4" /></Button></div>)}<Button type="button" variant="outline" size="sm" onClick={() => { setDeductions((rows) => [...rows, { name: '', amount: 0 }]); setConfirmed(false); }}><Plus className="mr-1 h-4 w-4" />新增扣款</Button></section>
+          <section className="space-y-3"><h3 className="font-semibold">特休結算快照</h3><p className="text-sm text-muted-foreground">已使用天數 {specialLeaveInfo?.usedDays ?? 0}，日期 {(specialLeaveInfo?.usedDates ?? []).join('、') || '無'}。</p><div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="edit-cash-days">折現天數</Label><Input id="edit-cash-days" type="number" min={0} step="0.5" value={specialLeaveInfo?.cashDays ?? 0} onChange={(event) => { setSpecialLeaveInfo({ ...(specialLeaveInfo ?? emptyLeave()), cashDays: Number(event.target.value) }); setConfirmed(false); }} /></div><div className="space-y-1"><Label htmlFor="edit-cash-amount">折現金額</Label><Input id="edit-cash-amount" type="number" min={0} step="0.01" value={specialLeaveInfo?.cashAmount ?? 0} onChange={(event) => { setSpecialLeaveInfo({ ...(specialLeaveInfo ?? emptyLeave()), cashAmount: Number(event.target.value) }); setConfirmed(false); }} /></div></div></section>
+          <div className="space-y-1"><Label htmlFor="edit-correction-reason">更正原因（必填）</Label><Textarea id="edit-correction-reason" required maxLength={1000} value={reason} onChange={(event) => { setReason(event.target.value); setConfirmed(false); }} /></div>
+          <div className="space-y-1"><Label htmlFor="edit-payment-handling">發薪狀態與差額處理（必選）</Label><select id="edit-payment-handling" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" required value={paymentHandling} onChange={(event) => { setPaymentHandling(event.target.value as PaymentHandling); setConfirmed(false); }}><option value="" disabled>請核對後選擇</option>{Object.entries(paymentHandlingLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
+        </fieldset>
+        <details className="rounded-md border p-3"><summary className="cursor-pointer text-sm font-medium">查看已封存的出勤與假日（唯讀）</summary><div className="mt-3 overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b"><th className="p-2 text-left">日期</th><th className="p-2 text-left">上班</th><th className="p-2 text-left">下班</th><th className="p-2 text-left">假日類別</th></tr></thead><tbody>{(record.attendanceData ?? []).map((attendance, index) => <tr className="border-b" key={`${attendance.date}-${index}`}><td className="p-2">{attendance.date}</td><td className="p-2">{attendance.clockIn || '無'}</td><td className="p-2">{attendance.clockOut || '無'}</td><td className="p-2">{holidayTypeLabels[attendance.holidayType as keyof typeof holidayTypeLabels] || attendance.holidayType || (attendance.isHoliday ? '假日出勤' : '一般出勤')}</td></tr>)}</tbody></table></div></details>
+        <section className="rounded-md border bg-muted/30 p-3"><h3 className="mb-3 font-semibold">金額更正預覽</h3><div className="grid gap-3 text-sm tabular-nums sm:grid-cols-3"><p>更正前應付薪資<br /><strong className="text-lg">{formatCurrency(record.netSalary)}</strong></p><p>更正後應付薪資<br /><strong className="text-lg">{formatCurrency(totals.netSalary)}</strong></p><p>應付差額<br /><strong className="text-lg">{delta > 0 ? '+' : ''}{formatCurrency(delta)}</strong></p></div><p className="mt-3 text-sm">總薪資 {formatCurrency(totals.grossSalary)} · 扣款 {formatCurrency(totals.totalDeductions)} · 原加班費 {formatCurrency(record.totalOvertimePay)} · 原假日加給 {formatCurrency(record.totalHolidayPay)}</p></section>
+        <Label className="flex items-start gap-2 leading-6"><input type="checkbox" className="mt-1 h-4 w-4" checked={confirmed} disabled={isSaving || conflict} onChange={(event) => setConfirmed(event.target.checked)} />我已核對金額、原因與發薪狀態，確認保存本次金額更正。</Label>
+        <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" disabled={isSaving} onClick={onClose}>取消</Button><Button type="submit" disabled={isSaving || conflict || !confirmed}>{isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}確認保存金額更正</Button></div>
+      </form>
+    </DialogContent>
+  </Dialog>;
 }

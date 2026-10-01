@@ -5,6 +5,7 @@ import { validateEnv } from '../config/envValidator';
 import { publicApiLimiter } from '../middleware/rateLimiter';
 import { setupSecurity, setupTrustProxy } from '../middleware/security';
 import { setupAdminSession } from '../session';
+import { payrollWritePause } from '../middleware/payrollWritePause';
 import { buildApiRequestLog, getApiRequestLogLevel } from '../utils/httpLogging';
 import { createLogger } from '../utils/logger';
 
@@ -53,6 +54,7 @@ export function createConfiguredApp(): Express {
   setupTrustProxy(app);
   setupSecurity(app);
   setupAdminSession(app);
+  app.use(payrollWritePause);
 
   app.use('/api', publicApiLimiter);
 

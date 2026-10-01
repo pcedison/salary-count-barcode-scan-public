@@ -31,6 +31,7 @@ const transactionMock = vi.hoisted(() =>
     callback({
       delete: txDeleteMock,
       insert: txInsertMock,
+      select: selectMock,
       execute: txExecuteMock
     })
   )
@@ -163,6 +164,8 @@ function getSchemaTableForPayloadKey(payloadKey: (typeof AUTHORITATIVE_RESTORE_D
       return schema.holidays;
     case 'salaryRecords':
       return schema.salaryRecords;
+    case 'salaryCorrections':
+      return schema.salaryCorrections;
     case 'temporaryAttendance':
       return schema.temporaryAttendance;
     case 'calculationRules':
@@ -236,7 +239,7 @@ describe('db-monitoring scheduler guards', () => {
     expect(first).toBe(timer);
     expect(second).toBe(timer);
     expect(setIntervalSpy).toHaveBeenCalledTimes(1);
-    expect(getAllEmployeesMock).toHaveBeenCalledTimes(1);
+    expect(transactionMock).toHaveBeenCalledTimes(1);
 
     stopAutomaticBackups();
     expect(clearIntervalSpy).toHaveBeenCalledWith(timer);
@@ -350,7 +353,7 @@ describe('db-monitoring scheduler guards', () => {
     await Promise.resolve();
 
     expect(setupResult).toBe(timer);
-    expect(getAllEmployeesMock).toHaveBeenCalledTimes(1);
+    expect(transactionMock).toHaveBeenCalledTimes(1);
   });
 
   it('delays the bootstrap daily backup in production to avoid startup memory pressure', async () => {
@@ -375,7 +378,7 @@ describe('db-monitoring scheduler guards', () => {
       expect(setupResult).toBe(timer);
       expect(setIntervalSpy).toHaveBeenCalledTimes(1);
       expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 10 * 60 * 1000);
-      expect(getAllEmployeesMock).not.toHaveBeenCalled();
+      expect(transactionMock).not.toHaveBeenCalled();
 
       const delayedBackupCallback = setTimeoutSpy.mock.calls[0]?.[0];
       expect(typeof delayedBackupCallback).toBe('function');
@@ -384,7 +387,7 @@ describe('db-monitoring scheduler guards', () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      expect(getAllEmployeesMock).toHaveBeenCalledTimes(1);
+      expect(transactionMock).toHaveBeenCalledTimes(1);
     } finally {
       process.env.NODE_ENV = originalNodeEnv;
     }
@@ -498,6 +501,7 @@ describe('db-monitoring scheduler guards', () => {
 describe('db-monitoring restore safety', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    selectFromMock.mockResolvedValue([]);
     existsSyncMock.mockImplementation(() => true);
     readFileSyncMock.mockReturnValue('{}');
   });
@@ -576,6 +580,7 @@ describe('db-monitoring restore safety', () => {
           rejectReason: null
         }
       ],
+      salaryCorrections: [],
       salaryRecords: [
         {
           id: 9,
@@ -669,7 +674,7 @@ describe('db-monitoring restore safety', () => {
         }
       ]
     ]);
-    expect(txExecuteMock).toHaveBeenCalledTimes(AUTHORITATIVE_SEQUENCE_TABLES.length);
+    expect(txExecuteMock).toHaveBeenCalledTimes(AUTHORITATIVE_SEQUENCE_TABLES.length + 2);
     expect(createEmployeeMock).not.toHaveBeenCalled();
     expect(createOrUpdateSettingsMock).not.toHaveBeenCalled();
     expect(createHolidayMock).not.toHaveBeenCalled();
@@ -702,6 +707,7 @@ describe('db-monitoring restore safety', () => {
         ],
         pendingBindings: [],
         salaryRecords: [],
+        salaryCorrections: [],
         temporaryAttendance: [],
         calculationRules: [],
         taiwanHolidays: []
@@ -761,7 +767,8 @@ describe('db-monitoring restore safety', () => {
           }
         ],
         pendingBindings: [],
-        salaryRecords: [
+        salaryCorrections: [],
+      salaryRecords: [
           {
             id: 9,
             salaryYear: 2026,
@@ -876,6 +883,7 @@ describe('db-monitoring restore safety', () => {
           }
         ],
         salaryRecords: [],
+        salaryCorrections: [],
         temporaryAttendance: [],
         calculationRules: [],
         taiwanHolidays: []
@@ -919,7 +927,8 @@ describe('db-monitoring restore safety', () => {
         settings: null,
         holidays: [],
         pendingBindings: [],
-        salaryRecords: [
+        salaryCorrections: [],
+      salaryRecords: [
           {
             id: 9,
             salaryYear: 2026,
@@ -1052,6 +1061,7 @@ describe('db-monitoring restore safety', () => {
         pendingBindings: [],
         holidays: [],
         salaryRecords: [],
+        salaryCorrections: [],
         temporaryAttendance: [],
         calculationRules: [],
         taiwanHolidays: []
@@ -1059,18 +1069,19 @@ describe('db-monitoring restore safety', () => {
     );
     readFileMock.mockResolvedValue(readFileSyncMock());
 
-    executeMock
-      .mockResolvedValueOnce([{ count: 2 }])
-      .mockResolvedValueOnce([{ count: 1 }])
-      .mockResolvedValueOnce([{ count: 1 }])
-      .mockResolvedValueOnce([{ count: 1 }])
-      .mockResolvedValueOnce([{ count: 4 }])
-      .mockResolvedValueOnce([{ count: 3 }])
-      .mockResolvedValueOnce([{ count: 2 }])
-      .mockResolvedValueOnce([{ count: 10 }]);
+    selectFromMock.mockImplementation(async table => {
+      const counts = new Map([[schema.employees, 2], [schema.settings, 1], [schema.pendingBindings, 1],
+        [schema.holidays, 1], [schema.salaryRecords, 4], [schema.salaryCorrections, 0],
+        [schema.temporaryAttendance, 3], [schema.calculationRules, 2], [schema.taiwanHolidays, 10]]);
+      return Array.from({ length: counts.get(table) ?? 0 }, (_, id) => ({ id: id + 1,
+        ...(table === schema.salaryRecords ? { revision: 0, grossSalary: 0, totalDeductions: 0, netSalary: 0 } : {}) }));
+    });
 
     txExecuteMock
+      .mockResolvedValueOnce([]) // Restore table lock.
+      .mockResolvedValueOnce([]) // Transactional administrator-session invalidation.
       .mockResolvedValueOnce([{ count: 1 }])
+      .mockResolvedValueOnce([{ count: 0 }])
       .mockResolvedValueOnce([{ count: 0 }])
       .mockResolvedValueOnce([{ count: 0 }])
       .mockResolvedValueOnce([{ count: 0 }])
@@ -1089,6 +1100,7 @@ describe('db-monitoring restore safety', () => {
       pendingBindings: 0,
       holidays: 0,
       salaryRecords: 0,
+      salaryCorrections: 0,
       temporaryAttendance: 0,
       calculationRules: 0,
       taiwanHolidays: 0
@@ -1099,6 +1111,7 @@ describe('db-monitoring restore safety', () => {
       pendingBindings: 1,
       holidays: 1,
       salaryRecords: 4,
+      salaryCorrections: 0,
       temporaryAttendance: 3,
       calculationRules: 2,
       taiwanHolidays: 10
@@ -1109,6 +1122,7 @@ describe('db-monitoring restore safety', () => {
       pendingBindings: 0,
       holidays: 0,
       salaryRecords: 0,
+      salaryCorrections: 0,
       temporaryAttendance: 0,
       calculationRules: 0,
       taiwanHolidays: 0
@@ -1133,6 +1147,7 @@ describe('db-monitoring restore safety', () => {
         pendingBindings: [],
         holidays: [],
         salaryRecords: [],
+        salaryCorrections: [],
         temporaryAttendance: [],
         calculationRules: [],
         taiwanHolidays: []
@@ -1150,6 +1165,7 @@ describe('db-monitoring restore safety', () => {
         callback({
           delete: txDeleteMock,
           insert: txInsertMock,
+          select: selectMock,
           execute: txExecuteMock
         })
       );

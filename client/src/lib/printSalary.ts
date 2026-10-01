@@ -1,3 +1,25 @@
+import type { ExportSalaryRecord } from '@/lib/historyExport';
+
+export function toPrintableSalarySnapshot(record: ExportSalaryRecord) {
+  return {
+    archived: true, recordId: record.id, revision: record.revision ?? 0,
+    employeeId: record.employeeId ?? undefined, employeeName: record.employeeName ?? undefined,
+    salaryYear: record.salaryYear, salaryMonth: record.salaryMonth,
+    baseSalary: record.baseSalary, grossSalary: record.grossSalary, netSalary: record.netSalary,
+    housingAllowance: record.housingAllowance ?? undefined, welfareAllowance: record.welfareAllowance ?? undefined,
+    allowances: record.allowances ? [...record.allowances] : undefined,
+    totalOT1Hours: record.totalOT1Hours ?? 0, totalOT2Hours: record.totalOT2Hours ?? 0,
+    totalOvertimePay: record.totalOvertimePay ?? 0, holidayDays: record.holidayDays ?? 0,
+    totalHolidayPay: record.totalHolidayPay ?? 0,
+    deductions: [...(record.deductions ?? [])], totalDeductions: record.totalDeductions ?? 0,
+    specialLeaveInfo: record.specialLeaveInfo ?? undefined,
+    attendanceData: (record.attendanceData ?? []).map(row => ({
+      date: row.date, clockIn: row.clockIn ?? '--:--', clockOut: row.clockOut ?? '--:--',
+      isHoliday: row.isHoliday ?? false, holidayType: row.holidayType ?? undefined,
+    })),
+  };
+}
+
 export function parseSalaryRecordId(search: string): number | null {
   const rawId = new URLSearchParams(search).get('id');
 

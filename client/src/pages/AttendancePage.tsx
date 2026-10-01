@@ -304,98 +304,16 @@ export default function AttendancePage() {
 
   // Calculate and show salary result - 改進版，支持單一員工或多員工模式
   const handleCalculateSalary = () => {
-    // 檢查是否有考勤數據可供計算
-    if (filteredAttendanceData.length === 0) {
-      toast({
-        title: "無法計算",
-        description: `${selectedMonthLabel}沒有可結算的考勤記錄。`,
-        variant: "destructive",
-      });
+    if (!isAdmin) { setIsLoginModalOpen(true); return; }
+    if (!selectedEmployeeId || selectedEmployeeId === 'all') {
+      toast({ title: '請選擇一位員工', description: '全部員工模式僅供檢視，計算與結算須核對單一員工與月份。', variant: 'destructive' });
       return;
     }
-
-    // 選擇特定員工時的處理邏輯
-    if (selectedEmployeeId !== "all" && selectedEmployeeId !== "") {
-      // 使用過濾後的特定員工考勤數據
-      if (filteredAttendanceData.length === 0) {
-        toast({
-          title: "無法計算",
-          description: `沒有找到 ${selectedEmployee?.name || "所選員工"} 的考勤記錄，請先新增考勤資料。`,
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // 計算特定員工的薪資
-      const result = calculateSalary(filteredAttendanceData);
-      if (result) {
-        setShowSalaryResult(true);
-      }
+    if (isLoading || !settings || !filteredAttendanceData.length) {
+      toast({ title: '無法計算', description: '所選員工與月份沒有可計算的考勤紀錄，或資料仍在載入。', variant: 'destructive' });
+      return;
     }
-    // 選擇"全部員工"時的處理邏輯
-    else {
-      // 分組員工ID
-      const employeeIds = Array.from(
-        new Set(
-          filteredAttendanceData
-            .map((record) => record.employeeId)
-            .filter((employeeId): employeeId is number => Boolean(employeeId)),
-        ),
-      );
-
-      if (employeeIds.length === 0) {
-        toast({
-          title: "無法計算",
-          description: "沒有包含員工ID的考勤記錄，無法計算薪資。",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      if (employeeIds.length > 1) {
-        // 多員工模式 - 提示用戶將一次性計算多個員工的薪資
-        toast({
-          title: "多員工模式",
-          description: `${selectedMonthLabel}將計算 ${employeeIds.length} 名員工的薪資，每位員工會產生獨立的薪資記錄。`,
-        });
-      }
-
-      try {
-        // 計算第一位員工的薪資並顯示結果
-        // 注意：finalizeAndSave 函數將處理所有員工的薪資結算
-        const firstEmployeeId = employeeIds[0];
-
-        if (!firstEmployeeId) {
-          throw new Error("無法獲取有效的員工ID");
-        }
-
-        const firstEmployeeData = filteredAttendanceData.filter(
-          (record) => record.employeeId === firstEmployeeId,
-        );
-
-        if (firstEmployeeData.length === 0) {
-          throw new Error(`ID為 ${firstEmployeeId} 的員工沒有完整考勤記錄`);
-        }
-
-        const result = calculateSalary(firstEmployeeData);
-
-        if (result) {
-          // 在這裡設置一個標記，表示這是"全部員工"模式
-          setShowSalaryResult(true);
-        }
-      } catch (error) {
-        console.error("計算薪資出錯:", error);
-        toast({
-          title: "計算錯誤",
-          description:
-            error instanceof Error
-              ? error.message
-              : "無法計算薪資，請確認考勤數據是否完整",
-          variant: "destructive",
-        });
-        return;
-      }
-    }
+    if (calculateSalary(filteredAttendanceData)) setShowSalaryResult(true);
   };
 
   // Add a new attendance record
@@ -457,7 +375,7 @@ export default function AttendancePage() {
     setShowConfirmationModal(false);
 
     // 等待結算完成並獲取結果
-    const success = await finalizeAndSave(filteredAttendanceData);
+    const success = await finalizeAndSave();
 
     if (success) {
       setShowSalaryResult(false);
@@ -772,7 +690,7 @@ export default function AttendancePage() {
         onClose={() => setShowConfirmationModal(false)}
         onConfirm={handleFinalize}
         title="確認操作"
-        message={`您確定要結算並清除 ${selectedMonthLabel} 的考勤紀錄嗎？其他月份的未結算紀錄會保留。此操作無法復原。`}
+        message={`確認保存所選員工 ${selectedMonthLabel} 的薪資預覽嗎？原有出勤與假日設定會保留；已結算月份請由歷史薪資更正。`}
       />
 
       {/* Admin Login Dialog */}

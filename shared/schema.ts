@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, json, doublePrecision, varchar, unique, uuid, index } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, json, doublePrecision, varchar, unique, uuid, index, check } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -92,6 +92,8 @@ export type Settings = typeof settings.$inferSelect;
 // Finalized salary records.
 export const salaryRecords = pgTable("salary_records", {
   id: serial("id").primaryKey(),
+  revision: integer("revision").notNull().default(0),
+  holidayCalculationBaseSalary: doublePrecision("holiday_calculation_base_salary"),
   salaryYear: integer("salary_year").notNull(),
   salaryMonth: integer("salary_month").notNull(),
   employeeId: integer("employee_id"),
@@ -134,11 +136,15 @@ export const salaryRecords = pgTable("salary_records", {
 }, (table) => ({
   yearMonthEmployeeIdx: index("sr_year_month_employee_idx").on(table.salaryYear, table.salaryMonth, table.employeeId),
   salaryYearMonthEmpUniq: unique("salary_records_year_month_emp_idx").on(table.salaryYear, table.salaryMonth, table.employeeId),
+  historyOrderIdx: index("sr_history_order_idx").on(table.salaryYear, table.salaryMonth, table.id),
+  employeeHistoryIdx: index("sr_employee_history_idx").on(table.employeeId, table.salaryYear, table.salaryMonth, table.id),
 }));
 
 export const insertSalaryRecordSchema = createInsertSchema(salaryRecords)
   .omit({
     id: true,
+    revision: true,
+    holidayCalculationBaseSalary: true,
     anonymizedAt: true,
     retentionUntil: true,
     employeeSnapshot: true,
@@ -147,6 +153,35 @@ export const insertSalaryRecordSchema = createInsertSchema(salaryRecords)
 
 export type InsertSalaryRecord = z.infer<typeof insertSalaryRecordSchema>;
 export type SalaryRecord = typeof salaryRecords.$inferSelect;
+
+// Append-only correction journal; monetary snapshots retain the original settlement.
+export const salaryCorrections = pgTable("salary_corrections", {
+  id: serial("id").primaryKey(),
+  salaryRecordId: integer("salary_record_id").references(() => salaryRecords.id, { onDelete: "set null" }),
+  originalRecordId: integer("original_record_id").notNull(),
+  revision: integer("revision").notNull(),
+  idempotencyKey: uuid("idempotency_key").notNull(),
+  requestHash: varchar("request_hash", { length: 64 }).notNull(),
+  previewTokenHash: varchar("preview_token_hash", { length: 64 }).notNull(),
+  actorId: varchar("actor_id", { length: 64 }).notNull(),
+  actorRole: text("actor_role").notNull(),
+  reason: text("reason").notNull(),
+  paymentHandling: text("payment_handling", { enum: ["unpaid", "paid_adjustment", "unknown_adjustment"] }).notNull(),
+  holidays: json("holidays").$type<Array<{ date: string; name: string; holidayType: string; mode: string }>>().notNull(),
+  delta: json("delta").$type<{ grossSalary: number; totalDeductions: number; netSalary: number; totalHolidayPay: number; holidayDays: number }>().notNull(),
+  beforeSnapshot: json("before_snapshot").$type<SalaryRecord>().notNull(),
+  afterSnapshot: json("after_snapshot").$type<SalaryRecord>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  recordRevisionUnique: unique("salary_corrections_record_revision_unique").on(table.originalRecordId, table.revision),
+  recordKeyUnique: unique("salary_corrections_record_key_unique").on(table.originalRecordId, table.idempotencyKey),
+  recordLinkIdx: index("salary_corrections_record_link_idx").on(table.salaryRecordId),
+  revisionCheck: check("salary_corrections_revision_check", sql`${table.revision} > 0`),
+  reasonCheck: check("salary_corrections_reason_check", sql`char_length(${table.reason}) BETWEEN 1 AND 1000`),
+  paymentHandlingCheck: check("salary_corrections_payment_handling_check", sql`${table.paymentHandling} IN ('unpaid', 'paid_adjustment', 'unknown_adjustment')`),
+}));
+
+export type SalaryCorrection = typeof salaryCorrections.$inferSelect;
 
 // Monthly automated salary calculation runs.
 export const monthlySalaryRuns = pgTable("monthly_salary_runs", {

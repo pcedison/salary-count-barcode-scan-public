@@ -64,8 +64,8 @@ Salary totals are recalculated from the standard calculator plus any active data
 | `GET` | `/api/salary-records` | Admin session | Salary record list. Always returns `{ data, pagination }`. Optional `page` and `limit` override the defaults. |
 | `GET` | `/api/salary-records/:id` | Admin session | Salary record detail. |
 | `POST` | `/api/salary-records` | Admin session | Create a salary record. Server recalculates derived fields. |
-| `PATCH` | `/api/salary-records/:id` | Admin session | Partial update. Server recalculates unless `x-force-update: true` is sent. |
-| `DELETE` | `/api/salary-records/:id` | Admin session | Delete salary record. |
+| `PATCH` | `/api/salary-records/:id` | Admin session | Audited historical amount correction with revision, reason, payment handling and idempotency key. Derived totals are calculated on the server; force headers are refused. |
+| `DELETE` | `/api/salary-records/:id` | Admin session | Delete an uncorrected salary record. Records with a correction journal are refused. |
 | `GET` | `/api/salary-records/:id/pdf` | Admin session | Redirects to the printable salary view. |
 | `GET` | `/api/test-salary-calculation` | Admin session, non-production only | Debug endpoint for formula checks. Do not treat as a public contract. |
 
@@ -130,7 +130,7 @@ Special cases are data-driven. Add or update rules here instead of relying on ha
 | Method | Path | Access | Notes |
 | --- | --- | --- | --- |
 | `POST` | `/api/admin/import/attendance` | Admin session | Imports attendance CSV from `csvContent`. |
-| `POST` | `/api/admin/import/salary-record` | Admin session | Imports one salary record from `csvContent`. |
+| `POST` | `/api/admin/import/salary-record` | Admin session | Imports a new, uncorrected salary record from `csvContent` with an explicit employee/month target. Existing records and revised snapshots are refused. |
 
 ## Taiwan Holidays
 | Method | Path | Access | Notes |
@@ -169,7 +169,7 @@ Dashboard routes are SUPER-session only and are intended for operational workflo
 | `GET` | `/api/dashboard/connection-history` | SUPER session | Runtime connection history snapshot. |
 | `GET` | `/api/dashboard/backups` | SUPER session | Lists available backups. |
 | `POST` | `/api/dashboard/backups` | SUPER session | Creates a backup. |
-| `POST` | `/api/dashboard/backups/:backupId/restore` | SUPER session | Restores from a validated backup ID. |
+| `POST` | `/api/dashboard/backups/:backupId/restore` | SUPER session | Confirms a current restore preview token; explicit restoration/journal confirmation and production maintenance are required. Successful restore invalidates administrator sessions. |
 | `DELETE` | `/api/dashboard/backups/:backupId` | SUPER session | Deletes a validated backup ID. |
 | `GET` | `/api/dashboard/logs` | SUPER session | Reads structured audit log entries. |
 | `GET` | `/api/dashboard/logs/dates` | SUPER session | Lists available audit log dates. |
@@ -189,3 +189,20 @@ Dashboard routes are SUPER-session only and are intended for operational workflo
 ## Legacy / Archived References
 - `POST /api/login`, `POST /api/logout`, and `GET /api/user` are legacy references from older docs and are not current live routes.
 - If you see older examples in external notes, treat `verify-admin` plus the admin session endpoints above as the current contract.
+
+## Historical Payroll Corrections
+
+| Method | Endpoint | Access | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/salary-records/finalized-months` | Admin session | Finalized employee/month summaries without full salary data. |
+| `GET` | `/api/salary-records/:id/holiday-corrections` | Admin session | Whitelisted correction history. |
+| `POST` | `/api/salary-records/:id/holiday-corrections/preview` | Admin session, same-origin JSON | Read-only before/after/delta preview and a signed, session-bound token. |
+| `POST` | `/api/salary-records/:id/holiday-corrections` | Admin session, same-origin JSON | Atomic revision and journal commit using the current preview and UUID idempotency key. |
+| `GET` | `/api/dashboard/backups/:backupId/restore-preview` | SUPER session | Backup validation, per-record and aggregate amount differences, journal replacement and freshness token. |
+
+See [payroll correction contracts](docs/PAYROLL_CORRECTIONS.md) and the
+[maintenance and recovery runbook](docs/PAYROLL_CORRECTION_RELEASE_RUNBOOK.md).
+`PAYROLL_WRITES_PAUSED=true` blocks salary creation, editing, deletion, correction
+confirmation, salary CSV import, forced monthly runs and salary/employee retention.
+Salary reads and non-saving holiday previews remain available. The application
+makes no payment or email delivery through the correction workflow.

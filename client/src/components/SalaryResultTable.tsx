@@ -258,13 +258,13 @@ export default function SalaryResultTable({ result, settings, onFinalize }: Sala
         <div className="mx-auto max-w-2xl text-center">
           <h3 className="text-lg font-medium">完成薪資結算</h3>
           <p className="mt-2 text-sm text-gray-600 sm:text-base">
-            結算後將清除目前考勤紀錄，並將結果儲存至歷史紀錄中
+            保存已預覽的員工與月份薪資快照至歷史紀錄，保留原有出勤與假日設定。
           </p>
           <Button
             onClick={onFinalize}
             className="mt-4 w-full border-2 border-slate-500 bg-slate-700 px-8 py-3 text-base font-medium text-white hover:bg-slate-800 sm:w-auto sm:text-lg"
           >
-            結算並清除
+            結算並保存
           </Button>
         </div>
       </div>

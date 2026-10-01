@@ -12,6 +12,7 @@ interface HistoryTableProps {
   records: SalaryRecord[];
   isLoading: boolean;
   onDownloadPdf: (record: SalaryRecord) => void;
+  onCorrectHolidays?: (record: SalaryRecord) => void;
   onDeleteRecord?: (id: number) => void;
   onEditRecord?: (record: SalaryRecord) => void;
   isDeleting?: boolean;
@@ -28,6 +29,7 @@ export default function HistoryTable({
   records,
   isLoading,
   onDownloadPdf,
+  onCorrectHolidays,
   onDeleteRecord,
   onEditRecord,
   isDeleting = false,
@@ -143,8 +145,8 @@ export default function HistoryTable({
       <button
         className="rounded-full p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
         onClick={() => onDownloadPdf(record)}
-        title="查看報表"
-        aria-label="查看報表"
+        title="下載最新薪資 CSV"
+        aria-label="下載最新薪資 CSV"
       >
         <Download size={16} />
       </button>
@@ -166,6 +168,13 @@ export default function HistoryTable({
           aria-label="編輯薪資記錄"
         >
           <Edit size={16} />
+        </button>
+      )}
+
+      {onCorrectHolidays && isAdmin && (
+        <button className="rounded-full p-1 text-primary hover:bg-primary/10"
+          onClick={() => onCorrectHolidays(record)} title="假日更正" aria-label="假日更正">
+          <CalendarDays size={16} />
         </button>
       )}
 
@@ -217,6 +226,13 @@ export default function HistoryTable({
         </Button>
       )}
 
+      {onCorrectHolidays && isAdmin && (
+        <Button variant="outline" size="mobile" className="w-full justify-center sm:flex-1"
+          onClick={() => onCorrectHolidays(record)}>
+          <CalendarDays className="h-4 w-4" />假日更正
+        </Button>
+      )}
+
       {onDeleteRecord && isAdmin && (
         <Button
           variant="destructive"
@@ -256,7 +272,8 @@ export default function HistoryTable({
           <span className="text-sm font-medium text-gray-700">批次選取</span>
           <label className="flex items-center gap-2 text-sm text-gray-600">
             <Checkbox
-              checked={records.length > 0 && selectedRecords.length === records.length}
+              aria-label="選取本頁全部紀錄"
+              checked={records.length > 0 && records.every((record) => selectedRecords.includes(record.id))}
               onCheckedChange={(checked) => onSelectAll(checked === true)}
             />
             全選
@@ -336,7 +353,8 @@ export default function HistoryTable({
                 <th className="w-10 py-3 pl-6 pr-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
                   {onSelectAll && (
                     <Checkbox
-                      checked={records.length > 0 && selectedRecords.length === records.length}
+                      aria-label="選取本頁全部紀錄"
+              checked={records.length > 0 && records.every((record) => selectedRecords.includes(record.id))}
                       onCheckedChange={(checked) => onSelectAll(checked === true)}
                     />
                   )}

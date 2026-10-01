@@ -34,7 +34,7 @@ export function getDatabaseProviderInfo(databaseUrl?: string | null): DatabasePr
 
   try {
     const parsedUrl = new URL(databaseUrl);
-    const hostname = parsedUrl.hostname.toLowerCase();
+    const hostname = parsedUrl.hostname.toLowerCase().replace(/^\[|\]$/g, '');
 
     if (hostname.endsWith(".supabase.com")) {
       return {

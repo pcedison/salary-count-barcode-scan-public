@@ -1,6 +1,6 @@
 {
   "name": "rest-express",
-  "version": "2.2.1",
+  "version": "2.2.3",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -47,7 +47,10 @@
     "verify:ci": "npm run check && npm run runtime:update:audit && npm test && npm run build",
     "verify:release": "npm run verify:ci && npm run test:smoke && npm run restore:check",
     "verify:core": "npm test && npm run verify:baseline",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "test:payroll-db": "node scripts/test-payroll-real-db.mjs",
+    "test:payroll-backup-db": "node scripts/test-payroll-backup-real-db.mjs",
+    "restore:invalidate-admin-sessions": "tsx server/scripts/invalidate-restored-admin-sessions.ts"
   },
   "dependencies": {
     "@fontsource/lxgw-wenkai-tc": "^5.3.0",

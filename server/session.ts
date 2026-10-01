@@ -21,6 +21,7 @@ export interface AdminSessionState {
   permissionLevel: PermissionLevel;
   authenticatedAt: number;
   lastVerifiedAt: number;
+  restoreEpoch?: string;
 }
 
 export interface ScanAccessSessionState {
@@ -40,6 +41,7 @@ declare module 'express-session' {
     adminAuth?: AdminSessionState;
     scanAccess?: ScanAccessSessionState;
     lineAuth?: LineAuthSessionState;
+    lineOAuthState?: string;
     // LINE OAuth 暫存資料（callback 後存入，ClockInPage 一次性取出即清除）
     lineTemp?: {
       lineUserId: string;
@@ -130,9 +132,12 @@ function buildPoolSslConfig(
   }
 }
 
+export const PAYROLL_RESTORE_EPOCH_SID = '__payroll_restore_epoch__';
+const requestRestoreEpochs = new WeakMap<Request, string>();
+
 function createSessionStore() {
   if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') {
-    return undefined;
+    return { store: undefined, readRestoreEpoch: async () => '0' };
   }
 
   const PgStore = connectPgSimple(session);
@@ -141,11 +146,25 @@ function createSessionStore() {
     ssl: buildPoolSslConfig(process.env.DATABASE_URL)
   });
 
-  return new PgStore({
+  const store = new PgStore({
     pool,
     tableName: 'user_sessions',
     createTableIfMissing: true
   });
+  return { store, readRestoreEpoch: async () => {
+    // A fresh deployment may not yet have a session table; the store creates it
+    // when the first session is saved. No existing login can survive its absence.
+    const exists = await pool.query<{ present: boolean }>("SELECT to_regclass('public.user_sessions') IS NOT NULL AS present");
+    if (!exists.rows[0]?.present) return '0';
+    const result = await pool.query<{ epoch: string | null }>(
+      "SELECT sess ->> 'payrollRestoreEpoch' AS epoch FROM user_sessions WHERE sid = $1",
+      [PAYROLL_RESTORE_EPOCH_SID]
+    );
+    if (result.rows.length === 0) return '0';
+    const epoch = result.rows[0]?.epoch;
+    if (!epoch || !/^[a-f0-9-]{36}$/.test(epoch)) throw new Error('Invalid administrator session restore epoch.');
+    return epoch;
+  } };
 }
 
 function getBaseCookieOptions() {
@@ -161,8 +180,11 @@ function getScanAccessTimeoutMs(): number {
   return 12 * 60 * 60 * 1000;
 }
 
-export function setupAdminSession(app: Express): void {
+export function setupAdminSession(app: Express, options: { readRestoreEpoch?: () => Promise<string> } = {}): void {
   const sessionPolicy = getAdminSessionPolicy();
+  const sessionStore = createSessionStore();
+  const readRestoreEpoch = options.readRestoreEpoch ?? sessionStore.readRestoreEpoch;
+  app.locals.readAdminRestoreEpoch = readRestoreEpoch;
 
   app.use(
     session({
@@ -172,13 +194,29 @@ export function setupAdminSession(app: Express): void {
       saveUninitialized: false,
       rolling: true,
       proxy: process.env.TRUST_PROXY === 'true',
-      store: createSessionStore(),
+      store: sessionStore.store,
       cookie: {
         ...getBaseCookieOptions(),
         maxAge: sessionPolicy.timeoutMs
       }
     })
   );
+  app.use(async (req, res, next) => {
+    const routePath = req.path.toLowerCase().replace(/\/+$/, '');
+    if (!req.session?.adminAuth && routePath !== '/api/verify-admin') return next();
+    try {
+      const currentEpoch = await readRestoreEpoch();
+      requestRestoreEpochs.set(req, currentEpoch);
+      if (req.session?.adminAuth && (req.session.adminAuth.restoreEpoch ?? '0') !== currentEpoch) {
+        await clearAdminSession(req, res);
+        return res.status(401).json({ code: 'AUTH_RESTORE_CHANGED', message: '資料已還原，請重新登入。' });
+      }
+      next();
+    } catch (error) {
+      // An unavailable epoch must never silently reinstate an old login.
+      next(error);
+    }
+  });
 }
 
 export function hasAdminSession(
@@ -266,12 +304,18 @@ export async function createAdminSession(
     throw new Error('Admin session middleware is not initialized');
   }
 
+  const readRestoreEpoch = req.app.locals.readAdminRestoreEpoch as (() => Promise<string>) | undefined;
+  const restoreEpoch = readRestoreEpoch ? await readRestoreEpoch() : '0';
+  if (requestRestoreEpochs.has(req) && requestRestoreEpochs.get(req) !== restoreEpoch) {
+    throw Object.assign(new Error('資料已還原，請重新登入。'), { status: 409, code: 'AUTH_RESTORE_CHANGED' });
+  }
   await regenerateSession(req);
   req.session.adminAuth = {
     isAdmin: true,
     permissionLevel,
     authenticatedAt: Date.now(),
-    lastVerifiedAt: Date.now()
+    lastVerifiedAt: Date.now(),
+    restoreEpoch,
   };
   await saveSession(req);
 }
@@ -282,6 +326,10 @@ export async function promoteAdminSession(
 ): Promise<void> {
   if (!req.session?.adminAuth) {
     throw new Error('Admin session middleware is not initialized');
+  }
+  const readRestoreEpoch = req.app.locals.readAdminRestoreEpoch as (() => Promise<string>) | undefined;
+  if (readRestoreEpoch && (req.session.adminAuth.restoreEpoch ?? '0') !== await readRestoreEpoch()) {
+    throw Object.assign(new Error('資料已還原，請重新登入。'), { status: 409, code: 'AUTH_RESTORE_CHANGED' });
   }
 
   req.session.adminAuth = {

@@ -1,3 +1,4 @@
+import { assertPayrollWritesEnabled } from '../config/payrollWrites';
 import { and, desc, eq, inArray, isNotNull, isNull, lte } from 'drizzle-orm';
 
 import {
@@ -276,6 +277,7 @@ export class DatabaseEmployeeRepository {
   }
 
   async purgeEmployee(id: number): Promise<{ purged: boolean; anonymizedSalaryRecords: number }> {
+    assertPayrollWritesEnabled();
     const result = await db.transaction(async (tx) => {
       const [employee] = await tx
         .select()
@@ -320,6 +322,7 @@ export class DatabaseEmployeeRepository {
     purgedEmployeeIds: number[];
     anonymizedSalaryRecords: number;
   }> {
+    assertPayrollWritesEnabled();
     const now = new Date();
     const expiredEmployees = await db
       .select({ id: employees.id })
@@ -428,7 +431,8 @@ export class DatabaseEmployeeRepository {
     const records = await executor
       .select()
       .from(salaryRecords)
-      .where(eq(salaryRecords.employeeId, employee.id));
+      .where(eq(salaryRecords.employeeId, employee.id))
+      .for('update');
 
     if (records.length === 0) {
       return 0;

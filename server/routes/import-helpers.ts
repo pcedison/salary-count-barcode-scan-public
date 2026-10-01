@@ -1,4 +1,7 @@
 import { normalizeDateToSlash } from '@shared/utils/specialLeaveSync';
+import { parseCsvRows } from '@shared/utils/csv';
+import { payrollHolidayTypes } from '@shared/payrollCorrection';
+import { parseClockTimeMinutes } from '@shared/utils/salaryMath';
 
 export interface ImportResult {
   success: boolean;
@@ -15,26 +18,33 @@ export interface AttendanceImportRow {
   clockIn: string;
   clockOut: string;
   isHoliday: boolean;
+  holidayType?: string | null;
+  holidayId?: number | null;
+  isBarcodeScanned?: boolean;
 }
 
 export interface SalaryRecordImportPayload {
+  snapshotRevision?: number;
   salaryYear: number;
   salaryMonth: number;
+  baseSalary: number;
   employeeId?: number;
   employeeName?: string;
-  baseSalary: number;
-  housingAllowance: number;
-  welfareAllowance: number;
-  totalOT1Hours: number;
-  totalOT2Hours: number;
-  totalOvertimePay: number;
-  holidayDays: number;
-  holidayDailySalary: number;
-  totalHolidayPay: number;
+  housingAllowance: number | null;
+  welfareAllowance: number | null;
+  allowances?: Array<{ name: string; amount: number; description?: string }>;
+  totalOT1Hours: number | null;
+  totalOT2Hours: number | null;
+  totalOvertimePay: number | null;
+  holidayDays: number | null;
+  holidayDailySalary: number | null;
+  holidayCalculationBaseSalary?: number | null;
+  totalHolidayPay: number | null;
   grossSalary: number;
   deductions: Array<{ name: string; amount: number }>;
-  totalDeductions: number;
+  totalDeductions: number | null;
   netSalary: number;
+  specialLeaveInfo?: { usedDays: number; usedDates: string[]; cashDays: number; cashAmount: number; cashMonth?: string; notes?: string } | null;
   attendanceData: AttendanceImportRow[];
 }
 
@@ -45,14 +55,13 @@ export interface ImportedHistoryAttendanceRow {
   clockOut: string;
   isHoliday: boolean;
   isBarcodeScanned: boolean;
-  employeeId: number | null;
-  holidayId: number | null;
-  holidayType: string | null;
-  createdAt: Date | null;
+  employeeId?: number;
+  holidayId?: number | null;
+  holidayType?: string | null;
+  createdAt?: Date;
 }
 
 const DATE_PATTERN = /^\d{4}[-/](0?[1-9]|1[012])[-/](0?[1-9]|[12][0-9]|3[01])$/;
-const TIME_PATTERN = /^([01]?[0-9]|2[0-3]):([0-5][0-9])$/;
 const MAX_IMPORT_ROWS = 5000;
 
 export function splitCsvLine(line: string): string[] {
@@ -125,38 +134,47 @@ export function validateAttendanceImportRow(row: AttendanceImportRow): Attendanc
   if (!DATE_PATTERN.test(row.date)) {
     throw new Error(`日期格式不正確: ${row.date}`);
   }
+  const [year, month, day] = row.date.split(/[-/]/).map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    throw new Error('日期不是有效的日曆日期');
+  }
+  if (row.holidayType && !(payrollHolidayTypes as readonly string[]).includes(row.holidayType)) {
+    throw new Error('假日類別不正確');
+  }
+  if (row.holidayType && !row.isHoliday) throw new Error('假日類別與假日標記不一致');
+  const missingClock = (value: string) => value === '' || value === '--:--' || value === "'--:--";
+  const absentHoliday = row.isHoliday && row.holidayType !== 'worked' && missingClock(row.clockIn) && missingClock(row.clockOut);
 
-  if (!TIME_PATTERN.test(row.clockIn)) {
+  if (!absentHoliday && parseClockTimeMinutes(row.clockIn) === null) {
     throw new Error(`上班時間格式不正確: ${row.clockIn}`);
   }
 
-  if (!TIME_PATTERN.test(row.clockOut)) {
+  if (!absentHoliday && parseClockTimeMinutes(row.clockOut) === null) {
     throw new Error(`下班時間格式不正確: ${row.clockOut}`);
   }
 
   return {
     ...row,
+    ...(absentHoliday ? { clockIn: '--:--', clockOut: '--:--' } : {}),
     date: normalizeDateToSlash(row.date)
   };
 }
 
 function findRequiredColumnIndex(headers: string[], fieldName: string): number {
-  const index = headers.findIndex(header => header === fieldName);
+  const aliases: Record<string, string> = { '日期': 'Date', '上班時間': 'Clock In', '下班時間': 'Clock Out' };
+  const index = headers.findIndex(header => header === fieldName || header === aliases[fieldName]);
   if (index === -1) {
     throw new Error(`CSV檔案格式不正確，缺少必要欄位 (${fieldName})`);
   }
   return index;
 }
 
-function findOptionalColumnIndex(headers: string[], fieldNames: string[]): number {
-  return headers.findIndex(header => fieldNames.includes(header));
-}
-
 export function parseAttendanceImportCsv(csvContent: string): {
   rows: AttendanceImportRow[];
   result: Required<Pick<ImportResult, 'success' | 'totalRecords' | 'successCount' | 'failCount' | 'errors'>>;
 } {
-  const lines = splitCsvContent(csvContent);
+  const lines = parseCsvRows(csvContent).filter(row => row.some(cell => cell.trim()));
   if (lines.length < 2) {
     throw new Error('CSV檔案格式不正確或內容為空');
   }
@@ -167,11 +185,14 @@ export function parseAttendanceImportCsv(csvContent: string): {
     throw new Error(`CSV 超過最大匯入行數限制（${dataRowCount} 筆，上限 ${MAX_IMPORT_ROWS} 筆）`);
   }
 
-  const headers = splitCsvLine(lines[0]);
+  const headers = lines[0].map(cell => cell.trim());
   const dateIndex = findRequiredColumnIndex(headers, '日期');
   const clockInIndex = findRequiredColumnIndex(headers, '上班時間');
   const clockOutIndex = findRequiredColumnIndex(headers, '下班時間');
-  const isHolidayIndex = headers.findIndex(header => header === '是否假日');
+  const isHolidayIndex = headers.findIndex(header => header === '是否假日' || header === 'Holiday');
+  const holidayTypeIndex = headers.findIndex(header => header === '假日類別' || header === 'Holiday Type');
+  const holidayIdIndex = headers.findIndex(header => header === '假日ID' || header === 'Holiday ID');
+  const barcodeIndex = headers.findIndex(header => header === '條碼掃描' || header === 'Barcode Scanned');
 
   const rows: AttendanceImportRow[] = [];
   const result = {
@@ -183,7 +204,7 @@ export function parseAttendanceImportCsv(csvContent: string): {
   };
 
   for (let lineIndex = 1; lineIndex < lines.length; lineIndex += 1) {
-    const fields = splitCsvLine(lines[lineIndex]);
+    const fields = lines[lineIndex];
     if (fields.length <= Math.max(dateIndex, clockInIndex, clockOutIndex)) {
       result.failCount += 1;
       result.errors.push(`第 ${lineIndex + 1} 行: 欄位數量不足`);
@@ -192,10 +213,13 @@ export function parseAttendanceImportCsv(csvContent: string): {
 
     try {
       const row = validateAttendanceImportRow({
-        date: fields[dateIndex],
-        clockIn: fields[clockInIndex],
-        clockOut: fields[clockOutIndex],
-        isHoliday: isHolidayIndex !== -1 ? parseBooleanCsvValue(fields[isHolidayIndex]) : false
+        date: fields[dateIndex].trim(),
+        clockIn: fields[clockInIndex].trim(),
+        clockOut: fields[clockOutIndex].trim(),
+        isHoliday: isHolidayIndex !== -1 ? parseBooleanCsvValue(fields[isHolidayIndex]) : false,
+        ...(holidayTypeIndex !== -1 ? { holidayType: fields[holidayTypeIndex]?.trim() || null } : {}),
+        ...(holidayIdIndex !== -1 ? { holidayId: fields[holidayIdIndex]?.trim() ? snapshotNumber(fields[holidayIdIndex], 'Holiday ID') : null } : {}),
+        ...(barcodeIndex !== -1 ? { isBarcodeScanned: parseBooleanCsvValue(fields[barcodeIndex]) } : {})
       });
 
       rows.push(row);
@@ -214,6 +238,8 @@ export function parseAttendanceImportCsv(csvContent: string): {
 }
 
 export function parseSalaryImportCsv(csvContent: string): SalaryRecordImportPayload {
+  const snapshotRows = parseCsvRows(csvContent);
+  if (snapshotRows[0]?.[0] === 'Salary record') return parseSalarySnapshotRows(snapshotRows);
   const lines = splitCsvContent(csvContent);
   if (lines.length < 2) {
     throw new Error('CSV檔案格式不正確或內容為空');
@@ -229,27 +255,9 @@ export function parseSalaryImportCsv(csvContent: string): SalaryRecordImportPayl
   const yearIndex = findRequiredColumnIndex(headers, '薪資年份');
   const monthIndex = findRequiredColumnIndex(headers, '薪資月份');
   const baseSalaryIndex = findRequiredColumnIndex(headers, '基本底薪');
-  const employeeIdIndex = findOptionalColumnIndex(headers, [
-    '員工ID',
-    '員工編號',
-    'employeeId',
-    'employee_id',
-    'Employee ID'
-  ]);
-  const employeeNameIndex = findOptionalColumnIndex(headers, [
-    '員工姓名',
-    '員工',
-    'employeeName',
-    'employee_name',
-    'Employee'
-  ]);
 
   const year = parseRequiredInteger(dataRow[yearIndex], '薪資年份');
   const month = parseRequiredInteger(dataRow[monthIndex], '薪資月份');
-  const parsedEmployeeId =
-    employeeIdIndex !== -1 ? parseOptionalInteger(dataRow[employeeIdIndex]) : 0;
-  const parsedEmployeeName =
-    employeeNameIndex !== -1 ? dataRow[employeeNameIndex]?.trim() : undefined;
 
   let attendanceHeaderIndex = -1;
   for (let index = 0; index < lines.length; index += 1) {
@@ -346,8 +354,6 @@ export function parseSalaryImportCsv(csvContent: string): SalaryRecordImportPayl
   return {
     salaryYear: year,
     salaryMonth: month,
-    ...(parsedEmployeeId > 0 ? { employeeId: parsedEmployeeId } : {}),
-    ...(parsedEmployeeName ? { employeeName: parsedEmployeeName } : {}),
     baseSalary: parseOptionalInteger(dataRow[baseSalaryIndex]),
     housingAllowance:
       housingAllowanceIndex !== -1 ? parseOptionalInteger(dataRow[housingAllowanceIndex]) : 0,
@@ -379,10 +385,75 @@ export function toImportedHistoryAttendanceData(
     clockIn: row.clockIn,
     clockOut: row.clockOut,
     isHoliday: row.isHoliday,
-    isBarcodeScanned: false,
-    employeeId: null,
-    holidayId: null,
-    holidayType: null,
-    createdAt: null
+    isBarcodeScanned: row.isBarcodeScanned ?? false,
+    ...(row.holidayType !== undefined ? { holidayType: row.holidayType } : {}),
+    ...(row.holidayId !== undefined ? { holidayId: row.holidayId } : {})
   }));
+}
+
+function snapshotNumber(value: string | undefined, field: string): number {
+  if (value === undefined || !value.trim() || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value.trim())) throw new Error(`Missing or invalid snapshot field: ${field}`);
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) throw new Error(`Invalid snapshot amount: ${field}`);
+  return number;
+}
+
+function parseSalarySnapshotRows(rows: string[][]): SalaryRecordImportPayload {
+  if (rows.length > MAX_IMPORT_ROWS) throw new Error('CSV exceeds the import row limit.');
+  const sectionIndex = (name: string) => rows.findIndex(row => row[0] === name && row.slice(1).every(cell => !cell));
+  const summaryIndex = sectionIndex('Finalized summary');
+  const allowancesIndex = sectionIndex('Allowances detail');
+  const deductionsIndex = sectionIndex('Deductions detail');
+  const leaveIndex = sectionIndex('Special leave snapshot');
+  const attendanceIndex = sectionIndex('Finalized attendance snapshot');
+  if (summaryIndex < 0 || allowancesIndex < summaryIndex || deductionsIndex < allowancesIndex || attendanceIndex < deductionsIndex) throw new Error('Incomplete salary snapshot sections.');
+  const fields = new Map<string, string>();
+  for (const row of rows.slice(1, allowancesIndex)) {
+    if (row.length === 2) {
+      if (fields.has(row[0])) throw new Error('Duplicate salary snapshot field.');
+      fields.set(row[0], row[1]);
+    }
+  }
+  const amount = (name: string) => snapshotNumber(fields.get(name), name);
+  const optionalAmount = (name: string) => fields.get(name)?.trim() ? amount(name) : null;
+  const integer = (name: string) => { const value = amount(name); if (!Number.isSafeInteger(value)) throw new Error(`Invalid integer: ${name}`); return value; };
+  const employeeId = fields.get('Employee ID')?.trim() ? integer('Employee ID') : undefined;
+  if (employeeId !== undefined && employeeId <= 0) throw new Error('Invalid employee ID.');
+  const detailRows = (start: number, end: number) => rows.slice(start + 2, end).filter(row => row.some(cell => cell));
+  const allowances = detailRows(allowancesIndex, deductionsIndex).map(row => ({ name: row[0], amount: snapshotNumber(row[1], 'Allowance amount'), ...(row[2] ? { description: row[2] } : {}) }));
+  const deductions = detailRows(deductionsIndex, leaveIndex > deductionsIndex ? leaveIndex : attendanceIndex).map(row => ({ name: row[0], amount: snapshotNumber(row[1], 'Deduction amount') }));
+  if ([...allowances, ...deductions].some(item => !item.name.trim())) throw new Error('Missing salary detail label.');
+  const attendanceHeaders = rows[attendanceIndex + 1];
+  if (!attendanceHeaders) throw new Error('Missing attendance snapshot header.');
+  const dateIndex = findRequiredColumnIndex(attendanceHeaders, '日期');
+  const inIndex = findRequiredColumnIndex(attendanceHeaders, '上班時間');
+  const outIndex = findRequiredColumnIndex(attendanceHeaders, '下班時間');
+  const holidayIndex = attendanceHeaders.indexOf('Holiday');
+  const typeIndex = attendanceHeaders.indexOf('Holiday Type');
+  const idIndex = attendanceHeaders.indexOf('Holiday ID');
+  const barcodeIndex = attendanceHeaders.indexOf('Barcode Scanned');
+  const dates = new Set<string>();
+  const attendanceData = rows.slice(attendanceIndex + 2).filter(row => row.some(cell => cell)).map(row => {
+    if (row.length !== attendanceHeaders.length) throw new Error('Incomplete attendance snapshot row.');
+    const attendance = validateAttendanceImportRow({ date: row[dateIndex], clockIn: row[inIndex], clockOut: row[outIndex], isHoliday: parseBooleanCsvValue(row[holidayIndex]), holidayType: row[typeIndex] || null, holidayId: row[idIndex]?.trim() ? snapshotNumber(row[idIndex], 'Holiday ID') : null, isBarcodeScanned: parseBooleanCsvValue(row[barcodeIndex]) });
+    if (dates.has(attendance.date)) throw new Error('Duplicate snapshot attendance date.');
+    dates.add(attendance.date);
+    return attendance;
+  });
+  let specialLeaveInfo: SalaryRecordImportPayload['specialLeaveInfo'] = null;
+  if (leaveIndex !== -1) {
+    if (leaveIndex <= deductionsIndex || leaveIndex >= attendanceIndex) throw new Error('Invalid special leave section.');
+    const leave = new Map(rows.slice(leaveIndex + 1, attendanceIndex).filter(row => row.length === 2).map(row => [row[0], row[1]]));
+    specialLeaveInfo = { usedDays: snapshotNumber(leave.get('Used days'), 'Used days'), usedDates: (leave.get('Used dates') || '').split(',').map(date => date.trim()).filter(Boolean), cashDays: snapshotNumber(leave.get('Cash days'), 'Cash days'), cashAmount: snapshotNumber(leave.get('Cash amount'), 'Cash amount'), ...(leave.get('Cash month') ? { cashMonth: leave.get('Cash month') } : {}), ...(leave.get('Notes') ? { notes: leave.get('Notes') } : {}) };
+  }
+  return {
+    salaryYear: integer('Year'), salaryMonth: integer('Month'),
+    snapshotRevision: integer('Revision'),
+    ...(employeeId !== undefined ? { employeeId } : {}),
+    ...(fields.has('Employee') ? { employeeName: fields.get('Employee')! } : {}),
+    baseSalary: amount('Base salary'), housingAllowance: optionalAmount('Housing allowance'), welfareAllowance: optionalAmount('Welfare allowance'), allowances,
+    totalOT1Hours: optionalAmount('OT1 hours'), totalOT2Hours: optionalAmount('OT2 hours'), totalOvertimePay: optionalAmount('Overtime pay'),
+    holidayDays: optionalAmount('Holiday days'), holidayDailySalary: optionalAmount('Holiday daily salary'), holidayCalculationBaseSalary: optionalAmount('Holiday calculation base salary'), totalHolidayPay: optionalAmount('Holiday pay'),
+    grossSalary: amount('Gross salary'), deductions, totalDeductions: optionalAmount('Deductions'), netSalary: amount('Net salary'), specialLeaveInfo, attendanceData,
+  };
 }

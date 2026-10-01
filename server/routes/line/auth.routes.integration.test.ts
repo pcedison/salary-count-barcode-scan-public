@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { PermissionLevel } from '../../admin-auth';
 import { setupAdminSession } from '../../session';
 import { createJsonTestServer, jsonRequest } from '../../test-utils/http-test-server';
 
@@ -13,8 +14,14 @@ const storageMock = vi.hoisted(() => ({
     authState.oauthStates.set(state, record);
     return { id: 1, state, expiresAt, createdAt: new Date() };
   }),
-  getOAuthState: vi.fn(async (stateValue: string) => authState.oauthStates.get(stateValue)),
-  deleteOAuthState: vi.fn(async (stateValue: string) => authState.oauthStates.delete(stateValue)),
+  consumeOAuthState: vi.fn(async (stateValue: string) => {
+    const record = authState.oauthStates.get(stateValue);
+    if (!record || record.expiresAt.getTime() <= Date.now()) return undefined;
+    authState.oauthStates.delete(stateValue);
+    return record;
+  }),
+  getEmployeeByLineUserId: vi.fn(async () => undefined),
+  getPendingBindingByLineUserId: vi.fn(async () => undefined),
 }));
 
 const serviceMock = vi.hoisted(() => ({
@@ -24,27 +31,26 @@ const serviceMock = vi.hoisted(() => ({
   isLineConfigured: vi.fn(() => true),
 }));
 
-vi.mock('../../storage', () => ({
-  storage: storageMock
+vi.mock('../../storage', () => ({ storage: storageMock }));
+vi.mock('../../middleware/rateLimiter', () => ({
+  lineSessionLimiter: (_req: unknown, _res: unknown, next: () => void) => next(),
+  liffClockInLimiter: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
-
 vi.mock('../../services/line.service', async () => {
   const actual = await vi.importActual<typeof import('../../services/line.service')>('../../services/line.service');
-  return {
-    ...actual,
-    exchangeCodeForToken: serviceMock.exchangeCodeForToken,
-    getLineProfile: serviceMock.getLineProfile,
-    verifyLiffAccessToken: serviceMock.verifyLiffAccessToken,
-    isLineConfigured: serviceMock.isLineConfigured
-  };
+  return { ...actual, ...serviceMock };
 });
 
+const testProfile = {
+  userId: 'U1234567890TEST',
+  displayName: 'Line Tester',
+  pictureUrl: 'https://example.com/pic.png',
+};
 let registerLineAuthRoutes: typeof import('./auth.routes').registerLineAuthRoutes;
 
 beforeAll(async () => {
   ({ registerLineAuthRoutes } = await import('./auth.routes'));
 });
-
 beforeEach(() => {
   process.env.NODE_ENV = 'test';
   process.env.LINE_LOGIN_CHANNEL_ID = 'line-channel-id';
@@ -52,149 +58,227 @@ beforeEach(() => {
   process.env.LINE_LOGIN_CALLBACK_URL = 'https://example.com/api/line/callback';
   process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN = 'line-access-token';
   process.env.LINE_MESSAGING_CHANNEL_SECRET = 'line-messaging-secret';
-
   authState.oauthStates.clear();
   vi.clearAllMocks();
   serviceMock.exchangeCodeForToken.mockResolvedValue({ access_token: 'access-token' });
-  serviceMock.getLineProfile.mockResolvedValue({
-    userId: 'U1234567890TEST',
-    displayName: 'Line Tester',
-    pictureUrl: 'https://example.com/pic.png'
-  });
+  serviceMock.getLineProfile.mockResolvedValue(testProfile);
+  serviceMock.verifyLiffAccessToken.mockResolvedValue(testProfile);
 });
-
 afterEach(() => {
   delete process.env.LINE_LOGIN_CHANNEL_ID;
   delete process.env.LINE_LOGIN_CHANNEL_SECRET;
   delete process.env.LINE_LOGIN_CALLBACK_URL;
   delete process.env.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN;
   delete process.env.LINE_MESSAGING_CHANNEL_SECRET;
+  vi.restoreAllMocks();
 });
 
+async function createAuthTestServer() {
+  return createJsonTestServer(registerLineAuthRoutes, {
+    setupApp: (app) => {
+      setupAdminSession(app);
+      app.use((req, _res, next) => {
+        if (req.get('x-test-existing-privileges') === 'true') {
+          req.session.adminAuth = {
+            isAdmin: true,
+            permissionLevel: PermissionLevel.ADMIN,
+            authenticatedAt: 1000,
+            lastVerifiedAt: 1000,
+          };
+          req.session.scanAccess = { unlockedAt: 2000, expiresAt: Date.now() + 60000 };
+        }
+        next();
+      });
+      app.get('/test/session-state', (req, res) => {
+        res.json({
+          lineOAuthState: req.session.lineOAuthState,
+          adminAuth: req.session.adminAuth,
+          scanAccess: req.session.scanAccess,
+        });
+      });
+    },
+  });
+}
+function cookieFrom(response: Response): string {
+  const cookie = response.headers.get('set-cookie');
+  expect(cookie).toBeTruthy();
+  return cookie!.split(';')[0];
+}
+async function startLogin(baseUrl: string, headers: Record<string, string> = {}) {
+  const result = await jsonRequest(baseUrl, '/api/line/login', { redirect: 'manual', headers });
+  expect(result.response.status).toBe(302);
+  const location = result.response.headers.get('location');
+  expect(location).toContain('https://access.line.me/oauth2/v2.1/authorize');
+  const state = new URL(location!).searchParams.get('state')!;
+  expect(state).toMatch(/^[a-f0-9]{64}$/);
+  return { state, cookie: cookieFrom(result.response) };
+}
+async function callback(baseUrl: string, state: string, cookie?: string) {
+  return jsonRequest(baseUrl, `/api/line/callback?code=test-code&state=${state}`, {
+    redirect: 'manual',
+    headers: cookie ? { cookie } : {},
+  });
+}
+
 describe('line auth routes integration', () => {
-  it('creates an OAuth state and redirects to LINE login', async () => {
-    const server = await createJsonTestServer(registerLineAuthRoutes, {
-      setupApp: async (app) => {
-        setupAdminSession(app);
-      }
-    });
-
+  it('saves the initiating session state before redirecting to LINE', async () => {
+    const server = await createAuthTestServer();
     try {
-      const result = await jsonRequest(server.baseUrl, '/api/line/login', {
-        redirect: 'manual'
+      const login = await startLogin(server.baseUrl);
+      expect(authState.oauthStates.has(login.state)).toBe(true);
+      expect(storageMock.createOAuthState).toHaveBeenCalledOnce();
+      const session = await jsonRequest<Record<string, unknown>>(server.baseUrl, '/test/session-state', {
+        headers: { cookie: login.cookie },
       });
-
-      expect(result.response.status).toBe(302);
-      const location = result.response.headers.get('location');
-      expect(location).toContain('https://access.line.me/oauth2/v2.1/authorize');
-      expect(location).toContain('state=');
-
-      const state = new URL(location!).searchParams.get('state');
-      expect(state).toMatch(/^[a-f0-9]{64}$/);
-      expect(authState.oauthStates.has(state!)).toBe(true);
-      expect(storageMock.createOAuthState).toHaveBeenCalledTimes(1);
-    } finally {
-      await server.close();
-    }
+      expect(session.body?.lineOAuthState).toBe(login.state);
+    } finally { await server.close(); }
   });
 
-  it('rejects callback requests with an invalid OAuth state', async () => {
-    const server = await createJsonTestServer(registerLineAuthRoutes, {
-      setupApp: async (app) => {
-        setupAdminSession(app);
-      }
-    });
-
+  it('rejects a callback with no initiating session without consuming a valid state', async () => {
+    const server = await createAuthTestServer();
     try {
-      const result = await jsonRequest(server.baseUrl, '/api/line/callback?code=test-code&state=missing', {
-        redirect: 'manual'
-      });
-
-      expect(result.response.status).toBe(302);
+      const login = await startLogin(server.baseUrl);
+      const result = await callback(server.baseUrl, login.state);
       expect(result.response.headers.get('location')).toBe('/clock-in?error=invalid_state');
+      expect(storageMock.consumeOAuthState).not.toHaveBeenCalled();
       expect(serviceMock.exchangeCodeForToken).not.toHaveBeenCalled();
-      expect(serviceMock.getLineProfile).not.toHaveBeenCalled();
-      expect(storageMock.deleteOAuthState).not.toHaveBeenCalled();
-    } finally {
-      await server.close();
-    }
+      expect(authState.oauthStates.has(login.state)).toBe(true);
+    } finally { await server.close(); }
   });
 
-  it('expires stale OAuth states before exchanging the callback code', async () => {
-    const staleState = 'stale-oauth-state';
-    authState.oauthStates.set(staleState, {
-      state: staleState,
-      expiresAt: new Date(Date.now() - 60_000)
-    });
-
-    const server = await createJsonTestServer(registerLineAuthRoutes, {
-      setupApp: async (app) => {
-        setupAdminSession(app);
-      }
-    });
-
+  it('rejects another browser session and still accepts the initiating browser', async () => {
+    const server = await createAuthTestServer();
     try {
-      const result = await jsonRequest(server.baseUrl, `/api/line/callback?code=test-code&state=${staleState}`, {
-        redirect: 'manual'
-      });
-
-      expect(result.response.status).toBe(302);
-      expect(result.response.headers.get('location')).toBe('/clock-in?error=state_expired');
-      expect(storageMock.deleteOAuthState).toHaveBeenCalledWith(staleState);
-      expect(serviceMock.exchangeCodeForToken).not.toHaveBeenCalled();
-      expect(serviceMock.getLineProfile).not.toHaveBeenCalled();
-    } finally {
-      await server.close();
-    }
+      const initiating = await startLogin(server.baseUrl);
+      const other = await startLogin(server.baseUrl);
+      const rejected = await callback(server.baseUrl, initiating.state, other.cookie);
+      expect(rejected.response.headers.get('location')).toBe('/clock-in?error=invalid_state');
+      expect(storageMock.consumeOAuthState).not.toHaveBeenCalled();
+      const accepted = await callback(server.baseUrl, initiating.state, initiating.cookie);
+      expect(accepted.response.headers.get('location')).toBe('/clock-in');
+      expect(serviceMock.exchangeCodeForToken).toHaveBeenCalledOnce();
+    } finally { await server.close(); }
   });
 
-  it('stores LINE session data after a successful callback', async () => {
-    const validState = 'valid-oauth-state';
-    authState.oauthStates.set(validState, {
-      state: validState,
-      expiresAt: new Date(Date.now() + 60_000)
-    });
-
-    const server = await createJsonTestServer(registerLineAuthRoutes, {
-      setupApp: async (app) => {
-        setupAdminSession(app);
-      }
-    });
-
+  it('rejects mismatched and malformed state/code query values before exchanging tokens', async () => {
+    const server = await createAuthTestServer();
     try {
-      const callbackResult = await jsonRequest(server.baseUrl, `/api/line/callback?code=test-code&state=${validState}`, {
-        redirect: 'manual'
+      const login = await startLogin(server.baseUrl);
+      const mismatched = await callback(server.baseUrl, 'missing', login.cookie);
+      expect(mismatched.response.headers.get('location')).toBe('/clock-in?error=invalid_state');
+      const malformed = await jsonRequest(server.baseUrl, `/api/line/callback?code=a&code=b&state=${login.state}`, {
+        redirect: 'manual', headers: { cookie: login.cookie },
       });
+      expect(malformed.response.headers.get('location')).toBe('/clock-in?error=missing_params');
+      expect(storageMock.consumeOAuthState).not.toHaveBeenCalled();
+      expect(serviceMock.exchangeCodeForToken).not.toHaveBeenCalled();
+    } finally { await server.close(); }
+  });
 
-      expect(callbackResult.response.status).toBe(302);
-      expect(callbackResult.response.headers.get('location')).toBe('/clock-in');
+  it('rejects expired initiating states before exchanging the callback code', async () => {
+    const server = await createAuthTestServer();
+    try {
+      const login = await startLogin(server.baseUrl);
+      authState.oauthStates.get(login.state)!.expiresAt = new Date(Date.now() - 60000);
+      const result = await callback(server.baseUrl, login.state, login.cookie);
+      expect(result.response.headers.get('location')).toBe('/clock-in?error=invalid_state');
+      expect(storageMock.consumeOAuthState).toHaveBeenCalledWith(login.state);
+      expect(serviceMock.exchangeCodeForToken).not.toHaveBeenCalled();
+      expect(serviceMock.getLineProfile).not.toHaveBeenCalled();
+    } finally { await server.close(); }
+  });
+
+  it('rotates the session after successful login and rejects replay with the old cookie', async () => {
+    const server = await createAuthTestServer();
+    try {
+      const login = await startLogin(server.baseUrl);
+      const result = await callback(server.baseUrl, login.state, login.cookie);
+      expect(result.response.headers.get('location')).toBe('/clock-in');
       expect(serviceMock.exchangeCodeForToken).toHaveBeenCalledWith('test-code');
       expect(serviceMock.getLineProfile).toHaveBeenCalledWith('access-token');
-      expect(storageMock.deleteOAuthState).toHaveBeenCalledWith(validState);
-
-      const cookie = callbackResult.response.headers.get('set-cookie');
-      expect(cookie).toBeTruthy();
-      const sessionCookie = cookie!.split(';')[0];
-
-      const sessionResult = await jsonRequest<{
-        success: boolean;
-        lineUserId: string;
-        lineDisplayName: string;
-        linePictureUrl?: string;
-      }>(server.baseUrl, '/api/line/temp-data', {
-        headers: {
-          cookie: sessionCookie
-        }
+      expect(authState.oauthStates.has(login.state)).toBe(false);
+      const newCookie = cookieFrom(result.response);
+      expect(newCookie).not.toBe(login.cookie);
+      const session = await jsonRequest<Record<string, unknown>>(server.baseUrl, '/api/line/temp-data', {
+        headers: { cookie: newCookie },
       });
+      expect(session.body).toMatchObject({ lineUserId: testProfile.userId, lineDisplayName: testProfile.displayName });
+      const oldSession = await jsonRequest(server.baseUrl, '/api/line/temp-data', { headers: { cookie: login.cookie } });
+      expect(oldSession.response.status).toBe(401);
+      const replay = await callback(server.baseUrl, login.state, newCookie);
+      expect(replay.response.headers.get('location')).toBe('/clock-in?error=invalid_state');
+      expect(serviceMock.exchangeCodeForToken).toHaveBeenCalledOnce();
+    } finally { await server.close(); }
+  });
 
-      expect(sessionResult.response.status).toBe(200);
-      expect(sessionResult.body).toMatchObject({
-        lineUserId: 'U1234567890TEST',
-        lineDisplayName: 'Line Tester',
-        linePictureUrl: 'https://example.com/pic.png'
+  it('allows only one concurrent callback to exchange a one-time state', async () => {
+    const server = await createAuthTestServer();
+    try {
+      const login = await startLogin(server.baseUrl);
+      const results = await Promise.all([
+        callback(server.baseUrl, login.state, login.cookie),
+        callback(server.baseUrl, login.state, login.cookie),
+      ]);
+      expect(results.map((result) => result.response.headers.get('location')).sort()).toEqual([
+        '/clock-in', '/clock-in?error=invalid_state',
+      ]);
+      expect(serviceMock.exchangeCodeForToken).toHaveBeenCalledOnce();
+      expect(serviceMock.getLineProfile).toHaveBeenCalledOnce();
+    } finally { await server.close(); }
+  });
+
+  it('preserves the existing administrator and kiosk privileges when rotating the session', async () => {
+    const server = await createAuthTestServer();
+    try {
+      const login = await startLogin(server.baseUrl, { 'x-test-existing-privileges': 'true' });
+      const before = await jsonRequest<Record<string, unknown>>(server.baseUrl, '/test/session-state', {
+        headers: { cookie: login.cookie },
       });
-    } finally {
-      await server.close();
-    }
+      const result = await callback(server.baseUrl, login.state, login.cookie);
+      const after = await jsonRequest<Record<string, unknown>>(server.baseUrl, '/test/session-state', {
+        headers: { cookie: cookieFrom(result.response) },
+      });
+      expect(after.body?.adminAuth).toEqual(before.body?.adminAuth);
+      expect(after.body?.scanAccess).toEqual(before.body?.scanAccess);
+      expect(after.body?.lineOAuthState).toBeUndefined();
+    } finally { await server.close(); }
+  });
+
+  it('fails closed and does not log or return a token exchange error containing credentials', async () => {
+    const server = await createAuthTestServer();
+    const logSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const login = await startLogin(server.baseUrl);
+      serviceMock.exchangeCodeForToken.mockRejectedValueOnce(new Error('synthetic-secret-code-and-token'));
+      const result = await callback(server.baseUrl, login.state, login.cookie);
+      expect(result.response.headers.get('location')).toBe('/clock-in?error=callback_failed');
+      expect(JSON.stringify(logSpy.mock.calls)).not.toContain('synthetic-secret-code-and-token');
+      expect(serviceMock.getLineProfile).not.toHaveBeenCalled();
+      expect(authState.oauthStates.has(login.state)).toBe(false);
+    } finally { await server.close(); }
+  });
+
+  it('rotates a successful LIFF login session and preserves existing privileges', async () => {
+    const server = await createAuthTestServer();
+    try {
+      const login = await startLogin(server.baseUrl, { 'x-test-existing-privileges': 'true' });
+      const before = await jsonRequest<Record<string, unknown>>(server.baseUrl, '/test/session-state', {
+        headers: { cookie: login.cookie },
+      });
+      const result = await jsonRequest<Record<string, unknown>>(server.baseUrl, '/api/line/liff-auth', {
+        method: 'POST', headers: { cookie: login.cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ accessToken: 'synthetic-liff-token' }),
+      });
+      expect(result.response.status).toBe(200);
+      const newCookie = cookieFrom(result.response);
+      expect(newCookie).not.toBe(login.cookie);
+      const after = await jsonRequest<Record<string, unknown>>(server.baseUrl, '/test/session-state', {
+        headers: { cookie: newCookie },
+      });
+      expect(after.body?.adminAuth).toEqual(before.body?.adminAuth);
+      expect(after.body?.scanAccess).toEqual(before.body?.scanAccess);
+      expect(after.body?.lineOAuthState).toBeUndefined();
+      expect(result.body?.bindingStatus).toBe('unbound');
+    } finally { await server.close(); }
   });
 });

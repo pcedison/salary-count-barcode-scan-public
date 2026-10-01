@@ -171,7 +171,7 @@ describe('validateEnv', () => {
       NODE_ENV: 'production',
       SESSION_SECRET: 'production-session-secret-123456789012',
       SESSION_SECURE: 'true',
-      SUPER_ADMIN_PIN: 'abc123:600000:0123456789abcdef',
+      SUPER_ADMIN_PIN: `${'a'.repeat(32)}:600000:${'b'.repeat(128)}`,
       BACKUP_ENCRYPTION_KEY: 'backup-encryption-secret-1234567890'
     });
     vi.spyOn(console, 'warn').mockImplementation(() => {});

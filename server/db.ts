@@ -23,7 +23,7 @@ const databaseUrl = process.env.DATABASE_URL;
 //     Zeabur). A warning is emitted so the operator is aware of the trade-off.
 function buildSslConfig(url: string): boolean | { rejectUnauthorized: boolean } {
   try {
-    const { hostname } = new URL(url);
+    const hostname = new URL(url).hostname.replace(/^\[|\]$/g, '');
     const isLocal =
       hostname === 'localhost' ||
       hostname === '127.0.0.1' ||

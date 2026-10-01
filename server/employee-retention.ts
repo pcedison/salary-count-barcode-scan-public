@@ -1,3 +1,4 @@
+import { arePayrollWritesPaused } from './config/payrollWrites';
 import { createLogger } from './utils/logger';
 import { storage } from './storage';
 import { salaryRepository } from './repositories/salaryRepository';
@@ -12,6 +13,7 @@ export async function runEmployeeRetentionCycle(): Promise<{
   anonymizedSalaryRecords: number;
   purgedSalaryRecords: number;
 }> {
+  if (arePayrollWritesPaused()) return { purgedEmployeeIds: [], anonymizedSalaryRecords: 0, purgedSalaryRecords: 0 };
   const { purgedEmployeeIds, anonymizedSalaryRecords } = await storage.purgeExpiredDeletedEmployees();
   const purgedSalaryRecords = await salaryRepository.purgeExpiredRetainedSalaryRecords();
 

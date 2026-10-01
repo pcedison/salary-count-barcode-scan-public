@@ -13,7 +13,6 @@ jobs:
   required-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -30,8 +29,46 @@ jobs:
       - name: Verify release readiness
         run: npm run verify:release
 
+      - name: Start disposable loopback PostgreSQL
+        # Host networking retains loopback inet_server_addr() for the strict test guard.
+        run: |
+          docker run --detach --name payroll-test-postgres --network host \
+            --env POSTGRES_PASSWORD=postgres \
+            postgres:17 -c listen_addresses=127.0.0.1
+          for attempt in $(seq 1 30); do
+            if docker exec payroll-test-postgres pg_isready -h 127.0.0.1 -U postgres; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+
+      - name: Prepare fresh loopback payroll databases
+        run: |
+          docker exec payroll-test-postgres createdb -h 127.0.0.1 -U postgres payroll_test_corrections
+          docker exec payroll-test-postgres createdb -h 127.0.0.1 -U postgres payroll_test_backup
+
+      - name: Verify correction transactions against PostgreSQL
+        env:
+          PAYROLL_CORRECTION_TEST_DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/payroll_test_corrections
+          PAYROLL_CORRECTION_TEST_DB_DISPOSABLE: '1'
+        run: npm run test:payroll-db
+
+      - name: Verify authoritative payroll backup and restore against PostgreSQL
+        env:
+          PAYROLL_CORRECTION_TEST_DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/payroll_test_backup
+          PAYROLL_CORRECTION_TEST_DB_DISPOSABLE: '1'
+        run: npm run test:payroll-backup-db
+
       - name: Check patch hygiene
         run: git diff --check
+
+      - name: Remove disposable PostgreSQL
+        if: always()
+        run: |
+          if docker container inspect payroll-test-postgres >/dev/null 2>&1; then
+            docker rm --force payroll-test-postgres
+          fi
 
   docker-smoke:
     runs-on: ubuntu-latest
@@ -49,6 +86,7 @@ jobs:
         run: |
           docker run -d --rm --name salary-scan-smoke -p 18080:8080 \
             -e NODE_ENV=production \
+            -e PAYROLL_WRITES_PAUSED=true \
             -e DATABASE_URL=postgresql://smoke:smoke@db.internal.test:5432/smoke \
             -e SESSION_SECRET=0123456789abcdef0123456789abcdef \
             -e SESSION_SECURE=true \

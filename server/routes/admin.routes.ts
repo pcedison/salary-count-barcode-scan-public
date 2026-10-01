@@ -1,12 +1,12 @@
-import type { Express } from 'express';
+import type { Express, Response } from 'express';
 
 import {
   PermissionLevel,
-  hashPassword,
+  hashPasswordAsync,
   isSuperAdminPinConfigured,
   logOperation,
   OperationType,
-  verifyAdminPermission,
+  verifyAdminCredential,
   verifySuperAdminPermission
 } from '../admin-auth';
 import { loginLimiter, strictLimiter } from '../middleware/rateLimiter';
@@ -21,13 +21,24 @@ import {
 } from '../session';
 import { recordCounter } from '../observability/runtimeMetrics';
 import { storage } from '../storage';
-import { hashAdminPin, needsRehash } from '../utils/adminPinAuth';
+import { AdminPinBusyError, hashAdminPinAsync, isSupportedPinInput, needsRehash, verifyStoredAdminPinAsync } from '../utils/adminPinAuth';
 import { createLogger } from '../utils/logger';
 import { validatePin } from '@shared/utils/passwordValidator';
 
 import { handleRouteError } from './route-helpers';
 
 const log = createLogger('admin-routes');
+
+function handleAuthRouteError(error: unknown, res: Response) {
+  if (error instanceof AdminPinBusyError) {
+    return res.set('Retry-After', '1').status(503).json({
+      success: false,
+      code: error.code,
+      message: error.message,
+    });
+  }
+  return handleRouteError(error, res);
+}
 
 function buildAdminSessionPolicyPayload() {
   const policy = getAdminSessionPolicy();
@@ -42,21 +53,18 @@ function buildAdminSessionPolicyPayload() {
 export function registerAdminRoutes(app: Express): void {
   app.post('/api/verify-admin', loginLimiter, async (req, res) => {
     try {
-      const { pin } = req.body;
+      const { pin } = req.body || {};
 
       if (!pin) {
         return res.status(400).json({ success: false, message: 'PIN is required' });
       }
 
-      const isAdminPin = await verifyAdminPermission(pin);
-      const isSuperPin = !isAdminPin && (await verifySuperAdminPermission(pin));
-      const permissionLevel = isAdminPin
-        ? PermissionLevel.ADMIN
-        : isSuperPin
-          ? PermissionLevel.SUPER
-          : null;
+      if (!isSupportedPinInput(pin)) {
+        return res.status(400).json({ success: false, message: 'Invalid PIN input' });
+      }
 
-      if (!permissionLevel) {
+      const credential = await verifyAdminCredential(pin);
+      if (!credential) {
         recordCounter('admin.login.failure');
         logOperation(OperationType.LOGIN, 'Admin login failed', {
           ip: req.ip,
@@ -68,20 +76,22 @@ export function registerAdminRoutes(app: Express): void {
 
       // Transparent PBKDF2 iteration upgrade: re-hash with current iterations on login
       try {
-        if (isAdminPin) {
-          const settings = await storage.getSettings();
-          if (settings?.adminPin && needsRehash(settings.adminPin)) {
-            const upgraded = hashAdminPin(pin);
-            await storage.createOrUpdateSettings({ ...settings, adminPin: upgraded });
-            log.info('Admin PIN auto-upgraded to current PBKDF2 iteration count');
+        if (needsRehash(credential.storedHash)) {
+          const upgraded = await hashAdminPinAsync(pin);
+          if (!(await storage.compareAndSwapAdminPin(credential.storedHash, upgraded))) {
+            return res.status(409).json({ success: false, code: 'AUTH_CREDENTIAL_CHANGED', message: 'Admin credential changed. Please sign in again.' });
           }
+          log.info('Admin PIN auto-upgraded to current PBKDF2 iteration count');
         }
       } catch (rehashErr) {
-        log.error('Failed to auto-upgrade admin PIN hash:', rehashErr);
+        // A successful verification remains usable if this optional upgrade is busy.
+        if (!(rehashErr instanceof AdminPinBusyError)) {
+          log.error('Failed to auto-upgrade admin PIN hash', { name: rehashErr instanceof Error ? rehashErr.name : 'UnknownError' });
+        }
       }
 
-      await createAdminSession(req, permissionLevel);
-      logOperation(OperationType.LOGIN, permissionLevel >= PermissionLevel.SUPER ? 'Super admin login succeeded' : 'Admin login succeeded', {
+      await createAdminSession(req, PermissionLevel.ADMIN);
+      logOperation(OperationType.LOGIN, 'Admin login succeeded', {
         ip: req.ip,
         success: true,
       });
@@ -89,21 +99,25 @@ export function registerAdminRoutes(app: Express): void {
       return res.json({
         success: true,
         authMode: 'session',
-        permissionLevel,
+        permissionLevel: PermissionLevel.ADMIN,
         superAdminConfigured: isSuperAdminPinConfigured(),
         ...buildAdminSessionPolicyPayload(),
       });
     } catch (err) {
-      return handleRouteError(err, res);
+      return handleAuthRouteError(err, res);
     }
   });
 
   app.post('/api/admin/elevate-super', loginLimiter, requireAdmin(PermissionLevel.ADMIN), async (req, res) => {
     try {
-      const { pin } = req.body;
+      const { pin } = req.body || {};
 
       if (!pin) {
         return res.status(400).json({ success: false, message: 'PIN is required' });
+      }
+
+      if (!isSupportedPinInput(pin)) {
+        return res.status(400).json({ success: false, message: 'Invalid PIN input' });
       }
 
       if (process.env.NODE_ENV === 'production' && !isSuperAdminPinConfigured()) {
@@ -142,7 +156,7 @@ export function registerAdminRoutes(app: Express): void {
         ...buildAdminSessionPolicyPayload(),
       });
     } catch (err) {
-      return handleRouteError(err, res);
+      return handleAuthRouteError(err, res);
     }
   });
 
@@ -189,13 +203,17 @@ export function registerAdminRoutes(app: Express): void {
 
   app.post('/api/update-admin-pin', strictLimiter, requireAdmin(PermissionLevel.SUPER), async (req, res) => {
     try {
-      const { oldPin, newPin } = req.body;
+      const { oldPin, newPin } = req.body || {};
 
       if (!oldPin || !newPin) {
         return res.status(400).json({
           success: false,
           message: 'Old PIN and new PIN are required',
         });
+      }
+
+      if (!isSupportedPinInput(oldPin) || !isSupportedPinInput(newPin)) {
+        return res.status(400).json({ success: false, message: 'Invalid PIN input' });
       }
 
       const validation = validatePin(newPin);
@@ -212,17 +230,17 @@ export function registerAdminRoutes(app: Express): void {
         return res.status(404).json({ success: false, message: 'Settings not found' });
       }
 
-      if (!(await verifyAdminPermission(oldPin))) {
+      if (!(await verifyStoredAdminPinAsync(settings.adminPin || '', oldPin))) {
         return res.status(401).json({
           success: false,
           message: 'Current PIN is incorrect',
         });
       }
 
-      await storage.createOrUpdateSettings({
-        ...settings,
-        adminPin: hashPassword(newPin),
-      });
+      const updatedPin = await hashPasswordAsync(newPin);
+      if (!(await storage.compareAndSwapAdminPin(settings.adminPin, updatedPin))) {
+        return res.status(409).json({ success: false, code: 'AUTH_CREDENTIAL_CHANGED', message: 'Admin credential changed. Please try again.' });
+      }
 
       logOperation(OperationType.UPDATE, 'Admin PIN updated', {
         ip: req.ip,
@@ -231,7 +249,7 @@ export function registerAdminRoutes(app: Express): void {
 
       return res.json({ success: true, strength: validation.strength });
     } catch (err) {
-      return handleRouteError(err, res);
+      return handleAuthRouteError(err, res);
     }
   });
 }

@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import PrintableSalarySheet from '@/components/PrintableSalarySheet';
-import { parseSalaryRecordIds } from '@/lib/printSalary';
+import { parseSalaryRecordIds, toPrintableSalarySnapshot } from '@/lib/printSalary';
 
 interface SalaryRecordForPrint {
   id: number;
+  revision?: number;
+  employeeId?: number | null;
+  employeeName?: string | null;
   salaryYear: number;
   salaryMonth: number;
   baseSalary: number;
@@ -25,7 +28,7 @@ interface SalaryRecordForPrint {
     clockIn: string;
     clockOut: string;
     isHoliday: boolean;
-    holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'temporary_stop_work_and_classes' | 'special_leave' | 'special_leave_cash' | null;
+    holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'special_leave' | 'special_leave_cash' | null;
   }> | null;
   specialLeaveInfo?: {
     usedDays: number;
@@ -36,30 +39,7 @@ interface SalaryRecordForPrint {
   } | null;
 }
 
-function toPrintableResult(record: SalaryRecordForPrint) {
-  return {
-    salaryYear: record.salaryYear,
-    salaryMonth: record.salaryMonth,
-    baseSalary: record.baseSalary,
-    grossSalary: record.grossSalary,
-    netSalary: record.netSalary,
-    housingAllowance: record.housingAllowance ?? undefined,
-    welfareAllowance: record.welfareAllowance ?? undefined,
-    allowances: record.allowances ?? undefined,
-    totalOT1Hours: record.totalOT1Hours ?? 0,
-    totalOT2Hours: record.totalOT2Hours ?? 0,
-    totalOvertimePay: record.totalOvertimePay ?? 0,
-    holidayDays: record.holidayDays ?? 0,
-    totalHolidayPay: record.totalHolidayPay ?? 0,
-    deductions: record.deductions ?? [],
-    totalDeductions: record.totalDeductions ?? 0,
-    specialLeaveInfo: record.specialLeaveInfo ?? undefined,
-    attendanceData: (record.attendanceData ?? []).map((attendanceRecord) => ({
-      ...attendanceRecord,
-      holidayType: attendanceRecord.holidayType ?? undefined,
-    })),
-  };
-}
+
 
 export default function PrintMonthlySalaryPage() {
   const ids = useMemo(() => parseSalaryRecordIds(window.location.search), []);
@@ -80,7 +60,6 @@ export default function PrintMonthlySalaryPage() {
           ids: ids.join(','),
           token,
         });
-        // 刻意用裸 fetch:需要 AbortController signal,apiRequest 不支援。
         const response = await fetch(`/api/salary-records/print-batch?${params.toString()}`, {
           credentials: 'include',
           signal: controller.signal,
@@ -121,9 +100,9 @@ export default function PrintMonthlySalaryPage() {
   }
 
   return (
-    <div data-print-ready="true" className="monthly-print-root pb-8">
+    <div data-print-ready="true" className="monthly-print-root">
       {records.map((record) => (
-        <PrintableSalarySheet key={record.id} result={toPrintableResult(record)} />
+        <PrintableSalarySheet key={record.id} result={toPrintableSalarySnapshot(record)} />
       ))}
       <style>
         {`
@@ -139,46 +118,9 @@ export default function PrintMonthlySalaryPage() {
         }
 
         @media print {
-          html,
-          body {
-            width: auto !important;
-            height: auto !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            background: white !important;
-          }
-
-          body * {
-            visibility: visible !important;
-          }
-
           .monthly-print-root {
             padding: 0 !important;
             background: white !important;
-          }
-
-          .monthly-print-root .print-container {
-            max-width: 210mm !important;
-            box-shadow: none !important;
-          }
-
-          .monthly-print-root .print-container + .print-container {
-            margin-top: 0 !important;
-          }
-
-          .monthly-print-root .print-page {
-            position: relative !important;
-            left: auto !important;
-            top: auto !important;
-            margin: 0 auto !important;
-            box-shadow: none !important;
-            page-break-after: always !important;
-            break-after: page !important;
-          }
-
-          .monthly-print-root .print-container:last-of-type .print-page {
-            page-break-after: auto !important;
-            break-after: auto !important;
           }
         }
         `}

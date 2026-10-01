@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import type { Express } from 'express';
+import type { Express, Request } from 'express';
 
 import { lineSessionLimiter, liffClockInLimiter } from '../../middleware/rateLimiter';
 import { storage } from '../../storage';
@@ -16,22 +16,52 @@ import {
   setNoStore, maskLineUserId, requireLineSession, ensureConfigured, saveSession
 } from './shared';
 
+async function establishLineSession(
+  req: Request,
+  profile: { userId: string; displayName: string; pictureUrl?: string }
+): Promise<void> {
+  const adminAuth = req.session.adminAuth;
+  const scanAccess = req.session.scanAccess;
+  await new Promise<void>((resolve, reject) => {
+    req.session.regenerate((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+  if (adminAuth) req.session.adminAuth = adminAuth;
+  if (scanAccess) req.session.scanAccess = scanAccess;
+  req.session.lineAuth = {
+    lineUserId: profile.userId,
+    lineDisplayName: profile.displayName,
+    linePictureUrl: profile.pictureUrl,
+    authenticatedAt: Date.now()
+  };
+  req.session.lineTemp = {
+    lineUserId: profile.userId,
+    lineDisplayName: profile.displayName,
+    linePictureUrl: profile.pictureUrl
+  };
+  await saveSession(req);
+}
+
 export function registerLineAuthRoutes(app: Express): void {
   app.get('/api/line/config', (_req, res) => {
     setNoStore(res);
     res.json({ configured: isLineConfigured() });
   });
 
-  app.get('/api/line/login', lineSessionLimiter, async (_req, res) => {
+  app.get('/api/line/login', lineSessionLimiter, async (req, res) => {
     if (!ensureConfigured(res)) return;
     try {
       const state = crypto.randomBytes(32).toString('hex');
       const expiresAt = new Date(Date.now() + OAUTH_STATE_TTL_MS);
       await storage.createOAuthState({ state, expiresAt });
+      req.session.lineOAuthState = state;
+      await saveSession(req);
       return res.redirect(getLineLoginUrl(state));
     } catch (err) {
-      log.error('Failed to start LINE login flow', err);
-      return handleRouteError(err, res);
+      log.error('Failed to start LINE login flow');
+      return handleRouteError(new Error('LINE login could not be started'), res);
     }
   });
 
@@ -39,37 +69,28 @@ export function registerLineAuthRoutes(app: Express): void {
     if (!isLineConfigured()) {
       return res.redirect('/clock-in?error=line_not_configured');
     }
-    const { code, state, error } = req.query as Record<string, string>;
+    const { code, state, error } = req.query;
     if (error) return res.redirect('/clock-in?error=line_auth_failed');
-    if (!code || !state) return res.redirect('/clock-in?error=missing_params');
+    if (typeof code !== 'string' || !code || typeof state !== 'string' || !state) {
+      return res.redirect('/clock-in?error=missing_params');
+    }
+    if (req.session.lineOAuthState !== state) {
+      return res.redirect('/clock-in?error=invalid_state');
+    }
 
     try {
-      const storedState = await storage.getOAuthState(state);
+      delete req.session.lineOAuthState;
+      await saveSession(req);
+      const storedState = await storage.consumeOAuthState(state);
       if (!storedState) return res.redirect('/clock-in?error=invalid_state');
-      if (new Date() > storedState.expiresAt) {
-        await storage.deleteOAuthState(state);
-        return res.redirect('/clock-in?error=state_expired');
-      }
-      await storage.deleteOAuthState(state);
 
       const tokenData = await exchangeCodeForToken(code);
       const profile = await getLineProfile(tokenData.access_token);
 
-      req.session.lineAuth = {
-        lineUserId: profile.userId,
-        lineDisplayName: profile.displayName,
-        linePictureUrl: profile.pictureUrl,
-        authenticatedAt: Date.now()
-      };
-      req.session.lineTemp = {
-        lineUserId: profile.userId,
-        lineDisplayName: profile.displayName,
-        linePictureUrl: profile.pictureUrl
-      };
-      await saveSession(req);
+      await establishLineSession(req, profile);
       return res.redirect('/clock-in');
     } catch (err) {
-      log.error('LINE callback failed', err);
+      log.error('LINE callback failed');
       return res.redirect('/clock-in?error=callback_failed');
     }
   });
@@ -102,18 +123,7 @@ export function registerLineAuthRoutes(app: Express): void {
         });
       }
 
-      req.session.lineAuth = {
-        lineUserId: profile.userId,
-        lineDisplayName: profile.displayName,
-        linePictureUrl: profile.pictureUrl,
-        authenticatedAt: Date.now()
-      };
-      req.session.lineTemp = {
-        lineUserId: profile.userId,
-        lineDisplayName: profile.displayName,
-        linePictureUrl: profile.pictureUrl
-      };
-      await saveSession(req);
+      await establishLineSession(req, profile);
 
       // Return binding status in the same response to save a second round-trip
       const boundEmployee = await storage.getEmployeeByLineUserId(profile.userId);
@@ -138,8 +148,8 @@ export function registerLineAuthRoutes(app: Express): void {
         employeeName
       });
     } catch (err) {
-      log.error('LIFF auth failed', err);
-      return handleRouteError(err, res);
+      log.error('LIFF auth failed');
+      return handleRouteError(new Error('LINE authentication could not be completed'), res);
     }
   });
 }

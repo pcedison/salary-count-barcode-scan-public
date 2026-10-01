@@ -1,3 +1,4 @@
+import { arePayrollWritesPaused } from '../config/payrollWrites';
 import type {
   Employee,
   InsertSalaryRecord,
@@ -234,6 +235,11 @@ export async function runMonthlySalaryAutomation(
 
   let run: MonthlySalaryRun | undefined;
 
+  if (arePayrollWritesPaused()) {
+    return { target, status: 'skipped', reason: 'payroll_writes_paused', calculatedRecords,
+      persistedRecords, skippedEmployees, emailRecipients: [] };
+  }
+
   try {
     if (!options.dryRun) {
       const acquireResult = await monthlySalaryRunRepository.acquireRun({
@@ -313,14 +319,15 @@ export async function runMonthlySalaryAutomation(
       }
 
       const draft = buildSalaryDraftForEmployee(employee, attendance, settings, target);
-      const finalRecord = await buildCalculatedSalaryRecord(draft, settings);
+      const finalRecord = await buildCalculatedSalaryRecord(draft, settings, { attendanceRecords: attendance });
       calculatedRecords.push(finalRecord);
 
       if (options.dryRun) {
         continue;
       }
 
-      pendingWrites.push({ existingId: existingRecord?.id, record: finalRecord });
+      pendingWrites.push({ existingId: existingRecord?.id,
+        ...(existingRecord ? { expectedRevision: existingRecord.revision ?? 0 } : {}), record: finalRecord });
     }
 
     if (pendingWrites.length > 0) {

@@ -65,7 +65,7 @@ export function useSettingsForm() {
   const { data: rawSalaryRecords = [], isLoading: isSalaryRecordsLoading } = useQuery<
     FinalizedSalaryRecord[] | PaginatedPayload<FinalizedSalaryRecord>
   >({
-    queryKey: ['/api/salary-records'],
+    queryKey: ['/api/salary-records/finalized-months'],
     enabled: isAdmin,
     staleTime: 30_000,
     refetchInterval: 60_000,
