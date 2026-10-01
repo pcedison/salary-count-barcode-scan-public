@@ -17,7 +17,21 @@
 | `SESSION_SECURE` | Production | Must be `true` in production |
 | `BACKUP_ENCRYPTION_KEY` | Production backup protection | At least 32 characters, or use `ENCRYPTION_KEY` |
 | `ENCRYPTION_KEY` | AES / backup protection | At least 32 characters |
-| `SUPER_ADMIN_PIN` | Optional | Must be hashed in production; plaintext is rejected at startup |
+| `SUPER_ADMIN_PIN` | Optional | Independent supported hash in every environment; plaintext and malformed hashes are rejected at startup |
+
+## SUPER credential policy
+
+`SUPER_ADMIN_PIN` uses an independent SUPER credential in development, test and
+production. Any nonempty value must be a supported PBKDF2-SHA512 hash; plaintext
+and malformed hashes fail startup with `SUPER_ADMIN_PIN must use a supported hash format`.
+An absent, empty or whitespace-only value reports `superAdminConfigured: false`
+and rejects SUPER elevation. Ordinary ADMIN login remains available; its credential
+does not substitute for an unconfigured SUPER credential.
+
+The accepted formats are `salt:iterations:hash` and legacy `salt:hash`.
+The salt contains 32 hexadecimal characters and the digest 128. Explicit iteration
+counts must be canonical decimal integers from 1 through 2,000,000 with no leading
+zeros. New hashes use 600,000 iterations; legacy hashes use 1,000 and remain supported.
 
 ## Optional variables
 
@@ -110,19 +124,22 @@ This prints a deployment-ready env block for:
 - `ENCRYPTION_SALT`
 - `USE_AES_ENCRYPTION=true`
 
-Generate a production-safe `SUPER_ADMIN_PIN` hash locally:
+Generate a supported `SUPER_ADMIN_PIN` hash locally for any environment:
 
 ```bash
-npm run super-pin:hash -- 123456
+npm run super-pin:hash -- "<independent-super-pin>"
 ```
 
 If you only want the raw hash value for copying into Zeabur:
 
 ```bash
-npm run super-pin:hash -- --raw 123456
+npm run super-pin:hash -- --raw "<independent-super-pin>"
 ```
 
-Never store a plaintext `SUPER_ADMIN_PIN` in Zeabur production variables.
+The package command invokes `scripts/hash-super-admin-pin.mjs`, which generates
+the current format described above. Keep the generated value local and configure
+`SUPER_ADMIN_PIN` with the hash in every environment; do not put the plaintext PIN
+in that variable or share credential values in logs, reports or pull requests.
 
 ## Release gate
 
