@@ -7,7 +7,6 @@ import { Loader2, Upload, FileText, Check, AlertCircle } from 'lucide-react';
 import { apiRequest } from '@/lib/queryClient';
 import { useEmployees } from '@/hooks/useEmployees';
 import { salaryImportTarget } from '@/lib/csvImportTarget';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { parseCsvRows } from '@shared/utils/csv';
 
@@ -28,10 +27,9 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const { activeEmployees } = useEmployees();
-  const [targetType, setTargetType] = useState<'employee' | 'record'>('employee');
   const [targetValue, setTargetValue] = useState('');
   const importing = useRef(false);
-  const target = salaryImportTarget(targetType, targetValue);
+  const target = salaryImportTarget('employee', targetValue);
   const [parseResult, setParseResult] = useState<{
     success: boolean;
     message: string;
@@ -158,7 +156,7 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
   const handleImport = async () => {
     if (!file || !parseResult?.success || importing.current) return;
     if (activeTab === 'salary' && !target) {
-      toast({ title: '請指定匯入對象', description: '請明確選擇員工或輸入歷史紀錄 ID，系統不會依月份猜測對象。', variant: 'destructive' });
+      toast({ title: '請選擇匯入員工', description: '請明確選擇員工，並確認 CSV 是該員工尚未結算的月份。', variant: 'destructive' });
       return;
     }
     importing.current = true;
@@ -265,13 +263,16 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
           <TabsContent value="salary" className="mt-4">
             <div className="space-y-4">
               <div className="text-sm text-muted-foreground">
-                <p>支援系統匯出的封存薪資快照 CSV，以及舊版中文欄位與「考勤詳細記錄」格式。匯入只可還原缺失紀錄，保留檔案內的薪資與出勤資料。</p>
-                <p className="mt-2 font-semibold">請明確指定員工或歷史紀錄。任何已存在的結算紀錄都不能以 CSV 覆寫；帶修訂的快照也不能重新建立薪資，請使用歷史更正流程保留稽核紀錄。</p>
+                <p>支援系統匯出的封存薪資快照 CSV，以及舊版中文欄位與「考勤詳細記錄」格式。此流程只新增所選員工尚未結算月份的薪資紀錄，保留檔案內的薪資與出勤資料。</p>
+                <p className="mt-2">CSV 的員工必須與所選員工一致。「Record ID」是封存來源參考，會保留在 CSV 中；匯入時由系統建立新紀錄，請勿改寫 ID 來繞過保護。</p>
+                <p className="mt-2 font-semibold">已存在的結算紀錄不能以 CSV 覆寫，帶更正修訂的快照也不能重新匯入。請到歷史薪資使用更正預覽，確認影響與差額後再保存。</p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="salary-import-target-type">匯入對象</Label>
-                <select id="salary-import-target-type" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={targetType} disabled={loading} onChange={(event) => { setTargetType(event.target.value as 'employee' | 'record'); setTargetValue(''); }}><option value="employee">指定員工</option><option value="record">指定歷史紀錄 ID</option></select>
-                {targetType === 'employee' ? <><Label htmlFor="salary-import-employee">員工（必選）</Label><select id="salary-import-employee" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={targetValue} disabled={loading} onChange={(event) => setTargetValue(event.target.value)}><option value="">請選擇員工</option>{activeEmployees.map((employee) => <option value={employee.id} key={employee.id}>{employee.name}</option>)}</select></> : <><Label htmlFor="salary-import-record">歷史紀錄 ID（必填）</Label><Input id="salary-import-record" inputMode="numeric" pattern="[1-9][0-9]*" value={targetValue} disabled={loading} onChange={(event) => setTargetValue(event.target.value)} /></>}
+                <Label htmlFor="salary-import-employee">匯入員工（必選）</Label>
+                <select id="salary-import-employee" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={targetValue} disabled={loading} onChange={(event) => setTargetValue(event.target.value)}>
+                  <option value="">請選擇員工</option>
+                  {activeEmployees.map((employee) => <option value={employee.id} key={employee.id}>{employee.name}</option>)}
+                </select>
               </div>
             </div>
           </TabsContent>

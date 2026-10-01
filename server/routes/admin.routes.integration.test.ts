@@ -8,6 +8,7 @@ import { ADMIN_PIN_WORK_LIMITS, hashAdminPin, hashAdminPinAsync, needsRehash, ve
 const TEST_PIN = '123456';
 const TEST_SUPER_PIN = '654321';
 const hashedTestPin = hashAdminPin(TEST_PIN);
+const hashedTestSuperPin = hashAdminPin(TEST_SUPER_PIN);
 
 const settingsState = vi.hoisted(() => ({
   settings: {
@@ -59,7 +60,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  process.env.SUPER_ADMIN_PIN = TEST_SUPER_PIN;
+  process.env.SUPER_ADMIN_PIN = hashedTestSuperPin;
   settingsState.settings = {
     id: 1,
     baseHourlyRate: 119,
@@ -100,6 +101,44 @@ describe('bounded admin authentication integration', () => {
     const salt = 'ab'.repeat(16);
     return `${salt}:${crypto.pbkdf2Sync(pin, salt, 1_000, 64, 'sha512').toString('hex')}`;
   }
+
+  it.each(['development', 'test'])('refuses ordinary PIN elevation without a SUPER credential in %s', async nodeEnv => {
+    process.env.NODE_ENV = nodeEnv;
+    delete process.env.SUPER_ADMIN_PIN;
+    const server = await serverWithSession();
+    try {
+      const login = await postPin(server.baseUrl, '/api/verify-admin', { pin: TEST_PIN });
+      expect(login.response.status).toBe(200);
+      const cookie = login.response.headers.get('set-cookie')!.split(';')[0];
+      storageMock.getSettings.mockClear();
+
+      const elevation = await postPin(server.baseUrl, '/api/admin/elevate-super', { pin: TEST_PIN }, cookie);
+      expect(elevation.response.status).toBe(401);
+      expect(elevation.body).toMatchObject({ success: false });
+      expect(storageMock.getSettings).not.toHaveBeenCalled();
+      const session = await jsonRequest<Record<string, any>>(server.baseUrl, '/api/admin/session', { headers: { cookie } });
+      expect(session.body).toMatchObject({ isAdmin: true, permissionLevel: 3 });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects ordinary PIN elevation while the independently configured SUPER hash can elevate', async () => {
+    const server = await serverWithSession();
+    try {
+      const login = await postPin(server.baseUrl, '/api/verify-admin', { pin: TEST_PIN });
+      expect(login.response.status).toBe(200);
+      const cookie = login.response.headers.get('set-cookie')!.split(';')[0];
+      expect((await postPin(server.baseUrl, '/api/admin/elevate-super', { pin: TEST_PIN }, cookie)).response.status).toBe(401);
+      const ordinarySession = await jsonRequest<Record<string, any>>(server.baseUrl, '/api/admin/session', { headers: { cookie } });
+      expect(ordinarySession.body.permissionLevel).toBe(3);
+      const elevation = await postPin(server.baseUrl, '/api/admin/elevate-super', { pin: TEST_SUPER_PIN }, cookie);
+      expect(elevation.response.status).toBe(200);
+      expect(elevation.body.permissionLevel).toBe(4);
+    } finally {
+      await server.close();
+    }
+  });
 
   it('rejects non-string and oversized login input before credential work and does not create a session', async () => {
     const server = await serverWithSession();

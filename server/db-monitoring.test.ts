@@ -152,6 +152,42 @@ function buildAuthorityMetadata() {
   };
 }
 
+function journalBackupFixture() {
+  const projection = { id: 7, revision: 1, salaryYear: 2026, salaryMonth: 9,
+    employeeId: 8, employeeName: 'Synthetic employee', baseSalary: 30000,
+    holidayCalculationBaseSalary: 30000, housingAllowance: 0, welfareAllowance: 0,
+    totalOT1Hours: 0, totalOT2Hours: 0, totalOvertimePay: 0, holidayDays: 1,
+    holidayDailySalary: 1000, totalHolidayPay: 1000, grossSalary: 31000,
+    deductions: [{ name: 'Synthetic withholding', amount: 1000 }], allowances: [],
+    totalDeductions: 1000, netSalary: 30000,
+    attendanceData: [{ id: 1, employeeId: 8, date: '2026-09-25', clockIn: '08:00',
+      clockOut: '16:00', isHoliday: true, isBarcodeScanned: false,
+      holidayId: null, holidayType: 'national_holiday', createdAt: '2026-09-25T00:00:00.000Z' }],
+    specialLeaveInfo: { usedDays: 0, usedDates: [] as string[], cashDays: 0, cashAmount: 0, notes: 'Private note' },
+    createdAt: '2026-09-30T00:00:00.000Z' };
+  const after = { ...projection, employeeId: null, employeeName: null, employeeSnapshot: null,
+    deductions: projection.deductions.map(row => ({ ...row })),
+    attendanceData: projection.attendanceData.map(row => ({ ...row, employeeId: null })),
+    specialLeaveInfo: { usedDays: 0, usedDates: [] as string[], cashDays: 0, cashAmount: 0 } };
+  const before = { ...after, revision: 0, grossSalary: 30000, netSalary: 29000,
+    holidayDays: 0, totalHolidayPay: 0 };
+  return { metadata: { timestamp: projection.createdAt, type: 'manual', databaseType: 'postgres', ...buildAuthorityMetadata() },
+    employees: [{ id: 8 }], settings: null, holidays: [], pendingBindings: [],
+    salaryRecords: [projection], temporaryAttendance: [], calculationRules: [], taiwanHolidays: [],
+    salaryCorrections: [{ id: 1, salaryRecordId: 7, originalRecordId: 7, revision: 1,
+      idempotencyKey: '11111111-1111-4111-8111-111111111111', requestHash: 'a'.repeat(64),
+      previewTokenHash: 'b'.repeat(64), actorId: 'c'.repeat(64), actorRole: 'SUPER_ADMIN',
+      reason: 'Synthetic correction', paymentHandling: 'unpaid', holidays: [],
+      delta: { grossSalary: 1000, totalDeductions: 0, netSalary: 1000, totalHolidayPay: 1000, holidayDays: 1 },
+      beforeSnapshot: before, afterSnapshot: after, createdAt: projection.createdAt }] };
+}
+
+function inspectSyntheticJournal() {
+  return inspectBackupFileAtPath('/tmp/synthetic-journal.json', {
+    backupId: 'synthetic-journal', backupType: BackupType.MANUAL,
+  });
+}
+
 function getSchemaTableForPayloadKey(payloadKey: (typeof AUTHORITATIVE_RESTORE_DELETE_ORDER)[number]) {
   switch (payloadKey) {
     case 'employees':
@@ -504,6 +540,63 @@ describe('db-monitoring restore safety', () => {
     selectFromMock.mockResolvedValue([]);
     existsSyncMock.mockImplementation(() => true);
     readFileSyncMock.mockReturnValue('{}');
+  });
+
+  it('compares redacted audit payroll fields with the current projection without exposing identity', () => {
+    const payload = journalBackupFixture();
+    readFileSyncMock.mockReturnValue(JSON.stringify(payload));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
+  });
+
+  it.each(['amounts', 'deduction-details', 'attendance', 'basis', 'leave'])('rejects same-revision projection %s mismatch', kind => {
+    const payload = journalBackupFixture();
+    const projection = payload.salaryRecords[0];
+    if (kind === 'amounts') { projection.grossSalary += 500; projection.netSalary += 500; }
+    if (kind === 'deduction-details') projection.deductions[0].name = 'Different withholding';
+    if (kind === 'attendance') projection.attendanceData[0].holidayType = 'regular_day_off';
+    if (kind === 'basis') projection.holidayCalculationBaseSalary = 32000;
+    if (kind === 'leave') projection.specialLeaveInfo.usedDates.push('2026-09-28');
+    readFileSyncMock.mockReturnValue(JSON.stringify(payload));
+    const inspection = inspectSyntheticJournal();
+    expect(inspection.errors).toContain('salaryCorrections latest snapshot does not match its salary projection.');
+    expect(JSON.stringify(inspection.errors)).not.toContain('Synthetic employee');
+    expect(transactionMock).not.toHaveBeenCalled();
+  });
+
+  it('permits projection revisions advanced by automation after the latest stored journal', () => {
+    const payload = journalBackupFixture();
+    payload.salaryRecords[0].revision = 7;
+    payload.salaryRecords[0].grossSalary += 500;
+    payload.salaryRecords[0].netSalary += 500;
+    readFileSyncMock.mockReturnValue(JSON.stringify(payload));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
+  });
+
+  it('does not let a null journal link bypass an extant same-revision projection mismatch', () => {
+    const payload = journalBackupFixture();
+    payload.salaryRecords[0].grossSalary += 500;
+    payload.salaryRecords[0].netSalary += 500;
+    const artifact = { ...payload,
+      salaryCorrections: payload.salaryCorrections.map(row => ({ ...row, salaryRecordId: null })) };
+    readFileSyncMock.mockReturnValue(JSON.stringify(artifact));
+    expect(inspectSyntheticJournal().errors)
+      .toEqual(['salaryCorrections latest snapshot does not match its salary projection.']);
+  });
+
+  it('normalizes equivalent timestamp representations in audit and projection', () => {
+    const payload = journalBackupFixture();
+    payload.salaryCorrections[0].afterSnapshot.createdAt = '2026-09-30T00:00:00+00:00';
+    payload.salaryCorrections[0].afterSnapshot.attendanceData[0].createdAt = '2026-09-25T00:00:00+00:00';
+    readFileSyncMock.mockReturnValue(JSON.stringify(payload));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
+  });
+
+  it('retains null-linked journal history after the salary projection is deleted', () => {
+    const payload = journalBackupFixture();
+    const artifact = { ...payload, salaryRecords: [],
+      salaryCorrections: payload.salaryCorrections.map(row => ({ ...row, salaryRecordId: null })) };
+    readFileSyncMock.mockReturnValue(JSON.stringify(artifact));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
   });
 
   it('rejects path traversal backup ids before touching the filesystem', () => {

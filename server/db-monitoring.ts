@@ -1057,14 +1057,44 @@ const correctionBackupSchema = z.object({
   beforeSnapshot: z.record(z.string(), z.unknown()), afterSnapshot: z.record(z.string(), z.unknown()), createdAt: z.date(),
 });
 
+function comparableCorrectionProjection(record: typeof schema.salaryRecords.$inferSelect): unknown {
+  // Match the audit producer's payroll fields, not its redacted employee identity.
+  // Employee retention can change identity/retention metadata without a revision.
+  const payrollKeys = ['id', 'revision', 'salaryYear', 'salaryMonth', 'baseSalary',
+    'holidayCalculationBaseSalary', 'housingAllowance', 'welfareAllowance',
+    'totalOT1Hours', 'totalOT2Hours', 'totalOvertimePay', 'holidayDays',
+    'holidayDailySalary', 'totalHolidayPay', 'grossSalary', 'deductions',
+    'allowances', 'totalDeductions', 'netSalary'] as const;
+  const attendanceKeys = ['id', 'date', 'clockIn', 'clockOut', 'isHoliday',
+    'isBarcodeScanned', 'holidayId', 'holidayType'] as const;
+  const leaveKeys = ['usedDays', 'usedDates', 'cashDays', 'cashAmount', 'cashMonth'] as const;
+  return {
+    ...Object.fromEntries(payrollKeys.map(key => [key, record[key] ?? null])),
+    attendanceData: Array.isArray(record.attendanceData) ? record.attendanceData.map(row => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) return row;
+      return {
+        ...Object.fromEntries(attendanceKeys.map(key => [key, row[key] ?? null])),
+        createdAt: normalizeTimestampValue(row.createdAt) ?? null,
+      };
+    }) : record.attendanceData ?? null,
+    specialLeaveInfo: record.specialLeaveInfo
+      ? Object.fromEntries(leaveKeys.map(key => [key, record.specialLeaveInfo![key] ?? null])) : null,
+    createdAt: normalizeTimestampValue(record.createdAt) ?? null,
+  };
+}
+
 function collectCorrectionJournalIssues(payload: NormalizedBackupPayload, errors: string[], warnings: string[]): void {
   const projections = new Map(payload.salaryRecords.map(record => [record.id, record]));
+  const latestJournals = new Map<number, NormalizedBackupPayload['salaryCorrections'][number]>();
   const revisions = new Set<string>();
   const keys = new Set<string>();
   for (const row of payload.salaryCorrections) {
     if (!correctionBackupSchema.safeParse(row).success) {
       errors.push('salaryCorrections contains an invalid audit row.');
       continue;
+    }
+    if (row.revision > (latestJournals.get(row.originalRecordId)?.revision ?? 0)) {
+      latestJournals.set(row.originalRecordId, row);
     }
     const revisionKey = `${row.originalRecordId}:${row.revision}`;
     const idempotencyKey = `${row.originalRecordId}:${row.idempotencyKey.toLowerCase()}`;
@@ -1085,6 +1115,17 @@ function collectCorrectionJournalIssues(payload: NormalizedBackupPayload, errors
         errors.push('salaryCorrections contains inconsistent snapshot amounts or delta.');
         break;
       }
+    }
+  }
+  for (const row of Array.from(latestJournals.values())) {
+    const projection = projections.get(row.salaryRecordId ?? row.originalRecordId);
+    // A null link cannot hide an extant projection with the same original ID.
+    // Absent projections are retained history; higher revisions can originate
+    // from historical automation and do not equal older stored snapshots.
+    if (projection && projection.revision === row.revision &&
+      stableJson(comparableCorrectionProjection(projection)) !==
+      stableJson(comparableCorrectionProjection(row.afterSnapshot))) {
+      errors.push('salaryCorrections latest snapshot does not match its salary projection.');
     }
   }
   // Older automation can increment projection revisions without creating a journal.
@@ -1391,9 +1432,12 @@ export async function getLiveDatabaseCounts(): Promise<DatabaseCounts> {
 }
 
 async function resetSerialSequence(executor: RestoreExecutor, tableName: string): Promise<void> {
+  // Retained journals reserve original salary IDs even after projections expire.
+  const retainedSalaryId = tableName === 'salary_records'
+    ? ', COALESCE((SELECT MAX(original_record_id) FROM salary_corrections), 1)' : '';
   await executor.execute(
     sql.raw(
-      `SELECT setval(pg_get_serial_sequence('${tableName}', 'id'), GREATEST(COALESCE(MAX(id), 1), COALESCE(pg_sequence_last_value(pg_get_serial_sequence('${tableName}', 'id')::regclass), 1)), true) FROM ${tableName};`
+      `SELECT setval(pg_get_serial_sequence('${tableName}', 'id'), GREATEST(COALESCE(MAX(id), 1), COALESCE(pg_sequence_last_value(pg_get_serial_sequence('${tableName}', 'id')::regclass), 1)${retainedSalaryId}), true) FROM ${tableName};`
     )
   );
 }

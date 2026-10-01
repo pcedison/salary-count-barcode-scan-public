@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -103,30 +102,10 @@ export async function verifyAdminCredential(pin: string): Promise<{ storedHash: 
 export async function verifySuperAdminPermission(pin: string): Promise<boolean> {
   if (!isSupportedPinInput(pin)) return false;
   const configuredSuperPin = getConfiguredSuperAdminPin();
-  if (configuredSuperPin) {
-    if (isHashedPin(configuredSuperPin)) {
-      return verifyStoredAdminPinAsync(configuredSuperPin, pin);
-    }
-
-    if (process.env.NODE_ENV === 'production') {
-      log.error('Rejected plaintext SUPER_ADMIN_PIN in production');
-      return false;
-    }
-
-    const providedBuffer = Buffer.from(pin, 'utf8');
-    const configuredBuffer = Buffer.from(configuredSuperPin, 'utf8');
-
-    return (
-      providedBuffer.length === configuredBuffer.length &&
-      crypto.timingSafeEqual(providedBuffer, configuredBuffer)
-    );
-  }
-
-  if (process.env.NODE_ENV !== 'production') {
-    return verifyAdminPermission(pin, PermissionLevel.SUPER);
-  }
-
-  return false;
+  // SUPER requires its own configured hash in every environment. Tests that
+  // bypass credential verification must stub this function explicitly.
+  if (!configuredSuperPin || !isHashedPin(configuredSuperPin)) return false;
+  return verifyStoredAdminPinAsync(configuredSuperPin, pin);
 }
 
 export function logOperation(

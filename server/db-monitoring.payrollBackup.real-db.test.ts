@@ -205,6 +205,36 @@ describe('actual PostgreSQL authoritative payroll backup and restore', () => {
     expect(await salaryRepository.getSalaryCorrections(record.id)).toHaveLength(2);
   });
 
+  it('reserves deleted highest salary IDs from retained journals when restoring into a fresh DB', async () => {
+    const live = await fixture(), retained = await fixture();
+    const sequenceValues = await Promise.all([sql, freshSql].map(async connection =>
+      (await connection`select coalesce(pg_sequence_last_value(pg_get_serial_sequence('salary_records', 'id')::regclass), 1)::int as value`)[0].value));
+    const highestOriginalId = Math.max(...sequenceValues) + 1000;
+    await db.update(schema.salaryRecords).set({ id: highestOriginalId })
+      .where(eq(schema.salaryRecords.id, retained.record.id));
+    await correct((await salaryRepository.getSalaryRecordById(highestOriginalId))!);
+    await db.delete(schema.salaryRecords).where(eq(schema.salaryRecords.id, highestOriginalId));
+    const { id, inspection } = await backup();
+    expect(inspection.counts.salaryRecords).toBe(1);
+    expect(inspection.counts.salaryCorrections).toBe(1);
+    const redirect = vi.spyOn(db, 'transaction').mockImplementation(freshDb.transaction.bind(freshDb));
+    try {
+      await backups.restoreFromBackup(id, backups.BackupType.MANUAL, { skipPreRestoreBackup: true });
+      const { id: _id, revision: _revision, createdAt: _createdAt, ...snapshot } = live.record;
+      const [newRecord] = await freshDb.insert(schema.salaryRecords).values({ ...snapshot, salaryMonth: 10 }).returning();
+      expect(newRecord.id).toBeGreaterThan(highestOriginalId);
+      expect(newRecord.revision).toBe(0);
+      const correction = await correct(newRecord, request('2026-10-25'));
+      expect(correction.replayed).toBe(false);
+      expect(correction.record.revision).toBe(1);
+      expect(correction.correction.originalRecordId).toBe(newRecord.id);
+      const history = await freshSql`select original_record_id as original, salary_record_id as linked
+        from salary_corrections order by original_record_id`;
+      expect(history).toEqual([{ original: highestOriginalId, linked: null },
+        { original: newRecord.id, linked: newRecord.id }]);
+    } finally { redirect.mockRestore(); }
+  });
+
   it('previews monetary impact and refuses older journal state until the current explicit confirmation', async () => {
     const { record } = await fixture(true);
     const { id } = await backup();
@@ -355,7 +385,56 @@ describe('actual PostgreSQL authoritative payroll backup and restore', () => {
     expect((await salaryRepository.getSalaryRecordById(record.id))?.revision).toBe(8);
   });
 
-  it.each(['duplicate', 'invalid-link', 'inconsistent-delta', 'invalid-created-at', 'invalid-transition'])('rejects %s journal artifacts without mutation', async kind => {
+  it('compares only the latest journal with the projection regardless of artifact order', async () => {
+    const { record } = await fixture();
+    const first = await correct(record);
+    await correct(first.record, request('2026-09-28'));
+    const { payload } = await backup();
+    payload.salaryCorrections.reverse();
+    const id = await writeArtifact(payload);
+    expect(backups.inspectBackupFile(id, backups.BackupType.MANUAL).errors).toEqual([]);
+    const before = await snapshot();
+    await backups.restoreFromBackup(id, backups.BackupType.MANUAL, { skipPreRestoreBackup: true });
+    expect(await snapshot()).toEqual(before);
+    expect((await salaryRepository.getSalaryRecordById(record.id))?.revision).toBe(2);
+  });
+
+  it('preserves a later automated projection without comparing it to an older correction', async () => {
+    const { record } = await fixture();
+    const corrected = await correct(record);
+    await db.update(schema.salaryRecords).set({ revision: 7,
+      grossSalary: corrected.record.grossSalary + 500, netSalary: corrected.record.netSalary + 500 })
+      .where(eq(schema.salaryRecords.id, record.id));
+    const { id } = await backup();
+    const before = await snapshot();
+    await backups.restoreFromBackup(id, backups.BackupType.MANUAL, { skipPreRestoreBackup: true });
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it('restores a same-revision projection anonymized by the real employee-retention lifecycle', async () => {
+    const { record, employee } = await fixture();
+    await db.update(schema.salaryRecords).set({ specialLeaveInfo: {
+      usedDays: 0, usedDates: [], cashDays: 0, cashAmount: 0, notes: 'Synthetic private note' } })
+      .where(eq(schema.salaryRecords.id, record.id));
+    await correct((await salaryRepository.getSalaryRecordById(record.id))!);
+    const { DatabaseEmployeeRepository } = await import('./repositories/employeeRepository');
+    const employees = new DatabaseEmployeeRepository();
+    expect(await employees.deleteEmployee(employee.id, 'synthetic-retention-test')).toBe(true);
+    expect(await employees.purgeEmployee(employee.id)).toEqual({ purged: true, anonymizedSalaryRecords: 1 });
+    const { id, payload } = await backup();
+    expect(payload.salaryRecords[0]).toMatchObject({ revision: 1, employeeId: null });
+    expect(payload.salaryRecords[0].anonymizedAt).not.toBeNull();
+    expect(payload.salaryRecords[0].retentionUntil).not.toBeNull();
+    expect(payload.salaryCorrections[0].afterSnapshot).toMatchObject({ employeeId: null, employeeName: null,
+      employeeSnapshot: null, anonymizedAt: null, retentionUntil: null });
+    const before = await snapshot();
+    await backups.restoreFromBackup(id, backups.BackupType.MANUAL, { skipPreRestoreBackup: true });
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it.each(['duplicate', 'invalid-link', 'inconsistent-delta', 'invalid-created-at', 'invalid-transition',
+    'projection-amounts', 'projection-category', 'projection-basis', 'projection-deductions',
+    'projection-leave', 'snapshot-amounts', 'null-link-projection-amounts'])('rejects %s journal artifacts without mutation', async kind => {
     const { record } = await fixture();
     await correct(record);
     const { payload } = await backup();
@@ -364,7 +443,27 @@ describe('actual PostgreSQL authoritative payroll backup and restore', () => {
     if (kind === 'inconsistent-delta') payload.salaryCorrections[0].delta.netSalary = 42;
     if (kind === 'invalid-created-at') payload.salaryCorrections[0].createdAt = null;
     if (kind === 'invalid-transition') payload.salaryCorrections[0].beforeSnapshot.revision = -2;
+    if (kind === 'projection-amounts' || kind === 'null-link-projection-amounts') {
+      payload.salaryRecords[0].grossSalary += 500;
+      payload.salaryRecords[0].netSalary += 500;
+    }
+    if (kind === 'null-link-projection-amounts') payload.salaryCorrections[0].salaryRecordId = null;
+    if (kind === 'projection-category') payload.salaryRecords[0].attendanceData[0].holidayType = 'regular_day_off';
+    if (kind === 'projection-basis') payload.salaryRecords[0].holidayCalculationBaseSalary = 32000;
+    if (kind === 'projection-deductions') payload.salaryRecords[0].deductions[0].name = 'Different withholding';
+    if (kind === 'projection-leave') payload.salaryRecords[0].specialLeaveInfo = {
+      usedDays: 0, usedDates: ['2026-09-28'], cashDays: 0, cashAmount: 0 };
+    if (kind === 'snapshot-amounts') {
+      payload.salaryCorrections[0].afterSnapshot.grossSalary += 500;
+      payload.salaryCorrections[0].afterSnapshot.netSalary += 500;
+      payload.salaryCorrections[0].delta.grossSalary += 500;
+      payload.salaryCorrections[0].delta.netSalary += 500;
+    }
     const id = await writeArtifact(payload);
+    if (kind.startsWith('projection-') || kind === 'snapshot-amounts' || kind === 'null-link-projection-amounts') {
+      expect(backups.inspectBackupFile(id, backups.BackupType.MANUAL).errors)
+        .toEqual(['salaryCorrections latest snapshot does not match its salary projection.']);
+    }
     const before = await snapshot();
     await expect(backups.restoreFromBackup(id, backups.BackupType.MANUAL, { skipPreRestoreBackup: true }))
       .rejects.toMatchObject({ code: 'INVALID_RESTORE_BACKUP' });
