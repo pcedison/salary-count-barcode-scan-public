@@ -470,6 +470,23 @@ describe('actual PostgreSQL authoritative payroll backup and restore', () => {
     expect(await snapshot()).toEqual(before);
   });
 
+  it('rejects an older same-original projection beneath a null-linked journal without mutation', async () => {
+    const { record } = await fixture(true);
+    await correct(record, request('2026-09-25', 'replace'));
+    const { payload } = await backup();
+    const beforeSnapshot = payload.salaryCorrections[0].beforeSnapshot;
+    payload.salaryRecords[0] = { ...beforeSnapshot, employeeId: record.employeeId, employeeName: record.employeeName,
+      attendanceData: beforeSnapshot.attendanceData.map((row: TemporaryAttendance) => ({ ...row, employeeId: record.employeeId })) };
+    payload.salaryCorrections[0].salaryRecordId = null;
+    const id = await writeArtifact(payload);
+    expect(backups.inspectBackupFile(id, backups.BackupType.MANUAL).errors)
+      .toEqual(['salaryCorrections latest journal is newer than its salary projection.']);
+    const before = await snapshot();
+    await expect(backups.restoreFromBackup(id, backups.BackupType.MANUAL, { skipPreRestoreBackup: true }))
+      .rejects.toMatchObject({ code: 'INVALID_RESTORE_BACKUP' });
+    expect(await snapshot()).toEqual(before);
+  });
+
   it('rolls back all table replacements and keeps administrator sessions when the journal insert fails', async () => {
     const { record } = await fixture();
     await correct(record);

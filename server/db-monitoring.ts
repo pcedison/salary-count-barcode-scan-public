@@ -1122,6 +1122,10 @@ function collectCorrectionJournalIssues(payload: NormalizedBackupPayload, errors
     // A null link cannot hide an extant projection with the same original ID.
     // Absent projections are retained history; higher revisions can originate
     // from historical automation and do not equal older stored snapshots.
+    if (projection && (projection.revision ?? 0) < row.revision) {
+      errors.push('salaryCorrections latest journal is newer than its salary projection.');
+      continue;
+    }
     if (projection && projection.revision === row.revision &&
       stableJson(comparableCorrectionProjection(projection)) !==
       stableJson(comparableCorrectionProjection(row.afterSnapshot))) {

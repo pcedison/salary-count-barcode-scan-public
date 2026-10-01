@@ -591,6 +591,20 @@ describe('db-monitoring restore safety', () => {
     expect(inspectSyntheticJournal().errors).toEqual([]);
   });
 
+  it('rejects an older same-original projection beneath a null-linked journal', () => {
+    const payload = journalBackupFixture();
+    const before = payload.salaryCorrections[0].beforeSnapshot;
+    const artifact = { ...payload,
+      salaryRecords: payload.salaryRecords.map(record => ({ ...record, ...before,
+        employeeId: record.employeeId, employeeName: record.employeeName,
+        attendanceData: before.attendanceData.map(row => ({ ...row, employeeId: record.employeeId })) })),
+      salaryCorrections: payload.salaryCorrections.map(row => ({ ...row, salaryRecordId: null })) };
+    readFileSyncMock.mockReturnValue(JSON.stringify(artifact));
+    expect(inspectSyntheticJournal().errors)
+      .toEqual(['salaryCorrections latest journal is newer than its salary projection.']);
+    expect(transactionMock).not.toHaveBeenCalled();
+  });
+
   it('retains null-linked journal history after the salary projection is deleted', () => {
     const payload = journalBackupFixture();
     const artifact = { ...payload, salaryRecords: [],
