@@ -563,6 +563,65 @@ describe('db-monitoring restore safety', () => {
     expect(transactionMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { label: 'numeric string', revision: '1' },
+    { label: 'padded numeric string', revision: ' 1 ' },
+    { label: 'zero string', revision: '0' },
+    { label: 'null', revision: null },
+    { label: 'boolean', revision: true },
+    { label: 'array', revision: [1] },
+    { label: 'object', revision: { valueOf: '1', toString: '1' } },
+    { label: 'negative number', revision: -1 },
+    { label: 'fraction', revision: 1.5 },
+    { label: 'PostgreSQL integer overflow', revision: 2147483648 },
+    { label: 'unsafe integer', revision: Number.MAX_SAFE_INTEGER + 1 },
+  ])('rejects a projection $label revision before restore or journal comparisons', async ({ revision }) => {
+    const payload = journalBackupFixture();
+    Object.assign(payload.salaryRecords[0], { revision });
+    payload.salaryRecords[0].grossSalary += 500;
+    payload.salaryRecords[0].netSalary += 500;
+    const raw = JSON.stringify(payload);
+    readFileSyncMock.mockReturnValue(raw);
+    readFileMock.mockResolvedValue(raw);
+    expect(inspectSyntheticJournal().errors).toContain(
+      'salaryRecords contains an invalid revision; expected a nonnegative PostgreSQL integer number.');
+    await expect(restoreFromBackup('synthetic-journal', BackupType.MANUAL, { skipPreRestoreBackup: true }))
+      .rejects.toMatchObject({ code: 'INVALID_RESTORE_BACKUP' });
+    expect(transactionMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a string revision that hides a null-linked same-original projection mismatch', () => {
+    const payload = journalBackupFixture();
+    Object.assign(payload.salaryRecords[0], { revision: '1' });
+    payload.salaryRecords[0].grossSalary += 500;
+    payload.salaryRecords[0].netSalary += 500;
+    const artifact = { ...payload,
+      salaryCorrections: payload.salaryCorrections.map(row => ({ ...row, salaryRecordId: null })) };
+    readFileSyncMock.mockReturnValue(JSON.stringify(artifact));
+    expect(inspectSyntheticJournal().errors).toEqual([
+      'salaryRecords contains an invalid revision; expected a nonnegative PostgreSQL integer number.']);
+  });
+
+  it.each([0, 2147483647])('accepts numeric projection revision %s within PostgreSQL integer bounds', revision => {
+    const payload = journalBackupFixture();
+    payload.salaryRecords[0].revision = revision;
+    readFileSyncMock.mockReturnValue(JSON.stringify({ ...payload, salaryCorrections: [] }));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
+  });
+
+  it('preserves omitted projection revisions in unrevised legacy v2 backups', () => {
+    const payload = journalBackupFixture();
+    const { salaryCorrections: _journal, ...legacy } = payload;
+    const { revision: _revision, ...projection } = payload.salaryRecords[0];
+    const artifact = { ...legacy, salaryRecords: [projection], metadata: {
+      ...legacy.metadata, authorityVersion: 2,
+      authoritativeTables: legacy.metadata.authoritativeTables.filter(name => name !== 'salary_corrections'),
+      excludedTables: legacy.metadata.excludedTables.filter(table => table.tableName !== 'monthly_salary_runs'),
+    } };
+    readFileSyncMock.mockReturnValue(JSON.stringify(artifact));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
+  });
+
   it('permits projection revisions advanced by automation after the latest stored journal', () => {
     const payload = journalBackupFixture();
     payload.salaryRecords[0].revision = 7;

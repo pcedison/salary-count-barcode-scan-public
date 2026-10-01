@@ -1084,6 +1084,14 @@ function comparableCorrectionProjection(record: typeof schema.salaryRecords.$inf
 }
 
 function collectCorrectionJournalIssues(payload: NormalizedBackupPayload, errors: string[], warnings: string[]): void {
+  // JSON type assertions do not validate runtime values. Reject coercible revisions
+  // before comparisons; omitted legacy revisions still use the existing zero default.
+  if (payload.salaryRecords.some(record => record.revision !== undefined &&
+    (typeof record.revision !== 'number' || !Number.isSafeInteger(record.revision) ||
+      record.revision < 0 || record.revision > 2147483647))) {
+    errors.push('salaryRecords contains an invalid revision; expected a nonnegative PostgreSQL integer number.');
+    return;
+  }
   const projections = new Map(payload.salaryRecords.map(record => [record.id, record]));
   const latestJournals = new Map<number, NormalizedBackupPayload['salaryCorrections'][number]>();
   const revisions = new Set<string>();

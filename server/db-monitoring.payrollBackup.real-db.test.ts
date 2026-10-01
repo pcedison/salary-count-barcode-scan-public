@@ -352,6 +352,7 @@ describe('actual PostgreSQL authoritative payroll backup and restore', () => {
     legacy.metadata.authorityVersion = 2;
     legacy.metadata.authoritativeTables = legacy.metadata.authoritativeTables.filter((name: string) => name !== 'salary_corrections');
     legacy.metadata.excludedTables = legacy.metadata.excludedTables.filter((table: any) => table.tableName !== 'monthly_salary_runs');
+    delete legacy.salaryRecords[0].revision; // Original v2 archives predate this NOT NULL column.
     const id = await writeArtifact(legacy);
     expect(backups.inspectBackupFile(id, backups.BackupType.MANUAL).errors).toEqual([]);
     await backups.restoreFromBackup(id, backups.BackupType.MANUAL, { skipPreRestoreBackup: true });
@@ -430,6 +431,45 @@ describe('actual PostgreSQL authoritative payroll backup and restore', () => {
     const before = await snapshot();
     await backups.restoreFromBackup(id, backups.BackupType.MANUAL, { skipPreRestoreBackup: true });
     expect(await snapshot()).toEqual(before);
+  });
+
+  it.each([
+    { label: 'numeric string', revision: '1', nullLink: false },
+    { label: 'null-linked numeric string', revision: '1', nullLink: true },
+    { label: 'padded numeric string', revision: ' 1 ', nullLink: false },
+    { label: 'signed numeric string', revision: '+1', nullLink: false },
+    { label: 'zero-padded numeric string', revision: '01', nullLink: false },
+    { label: 'null', revision: null, nullLink: false },
+    { label: 'boolean', revision: true, nullLink: false },
+    { label: 'array', revision: [1], nullLink: false },
+    { label: 'object', revision: { valueOf: '1', toString: '1' }, nullLink: false },
+    { label: 'negative number', revision: -1, nullLink: false },
+    { label: 'fraction', revision: 1.5, nullLink: false },
+    { label: 'PostgreSQL integer overflow', revision: 2147483648, nullLink: false },
+    { label: 'unsafe integer', revision: Number.MAX_SAFE_INTEGER + 1, nullLink: false },
+  ])('rejects a projection $label revision without changing any authority or sessions', async ({ revision, nullLink }) => {
+    const { record } = await fixture();
+    await correct(record);
+    const { payload } = await backup();
+    // PostgreSQL really accepts these string inputs as integer 1; inspect must
+    // reject them before the driver can coerce them and bypass snapshot equality.
+    if (typeof revision === 'string') {
+      expect((await sql`select ${revision}::integer as revision`)[0].revision).toBe(1);
+    }
+    payload.salaryRecords[0].revision = revision;
+    payload.salaryRecords[0].grossSalary += 500;
+    payload.salaryRecords[0].netSalary += 500;
+    if (nullLink) payload.salaryCorrections[0].salaryRecordId = null;
+    const id = await writeArtifact(payload);
+    expect(backups.inspectBackupFile(id, backups.BackupType.MANUAL).errors).toContain(
+      'salaryRecords contains an invalid revision; expected a nonnegative PostgreSQL integer number.');
+    await adminSessions();
+    const before = await snapshot();
+    const sessionsBefore = canonical(await sql`select * from user_sessions order by sid`);
+    await expect(backups.restoreFromBackup(id, backups.BackupType.MANUAL, { skipPreRestoreBackup: true }))
+      .rejects.toMatchObject({ code: 'INVALID_RESTORE_BACKUP' });
+    expect(await snapshot()).toEqual(before);
+    expect(canonical(await sql`select * from user_sessions order by sid`)).toEqual(sessionsBefore);
   });
 
   it.each(['duplicate', 'invalid-link', 'inconsistent-delta', 'invalid-created-at', 'invalid-transition',
