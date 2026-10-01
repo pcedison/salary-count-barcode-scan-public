@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createJsonTestServer, jsonRequest } from './test-utils/http-test-server';
 import { clearAdminSession, createAdminSession, promoteAdminSession, setupAdminSession } from './session';
 import { requireAdmin } from './middleware/requireAdmin';
+import { publicApiLimiter, strictLimiter } from './middleware/rateLimiter';
 import { PermissionLevel } from './admin-auth';
 import { handleRouteError } from './routes/route-helpers';
 
@@ -27,14 +28,14 @@ describe('administrator restore epoch', () => {
         store = req.sessionStore;
         res.json({ success: true });
       });
-      app.get('/slow', requireAdmin(), async (req, res) => {
+      app.get('/slow', publicApiLimiter, requireAdmin(), async (req, res) => {
         req.session.adminAuth!.lastVerifiedAt += 1;
         entered.resolve();
         await finish.promise;
         res.json({ success: true });
       });
-      app.get('/protected', requireAdmin(), (_req, res) => res.json({ success: true }));
-      app.post('/restore', requireAdmin(), async (req, res) => {
+      app.get('/protected', publicApiLimiter, requireAdmin(), (_req, res) => res.json({ success: true }));
+      app.post('/restore', strictLimiter, requireAdmin(), async (req, res) => {
         epoch = '11111111-1111-4111-8111-111111111111';
         await new Promise<void>((resolve, reject) => req.sessionStore.clear!(error => error ? reject(error) : resolve()));
         await clearAdminSession(req, res);
@@ -93,7 +94,7 @@ describe('administrator restore epoch', () => {
     const entered = gate(), finish = gate();
     const server = await createJsonTestServer(app => {
       app.post('/api/verify-admin', async (req, res) => { await createAdminSession(req); res.json({ success: true }); });
-      app.post('/api/admin/elevate-super', requireAdmin(), async (req, res) => {
+      app.post('/api/admin/elevate-super', strictLimiter, requireAdmin(), async (req, res) => {
         entered.resolve();
         await finish.promise;
         try { await promoteAdminSession(req, PermissionLevel.SUPER); res.json({ success: true }); }
