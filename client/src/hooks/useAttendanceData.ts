@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAdmin } from '@/hooks/useAdmin';
@@ -23,6 +23,7 @@ import {
   type AttendanceRecord
 } from '@/lib/attendanceEnhancement';
 import { useAttendanceQueries } from '@/hooks/useAttendanceQueries';
+import { finalizationSnapshotRows } from '@/lib/payrollScope';
 
 interface HolidayEntry {
   date: string;
@@ -86,6 +87,7 @@ export function useAttendanceData() {
   const { settings, holidays } = useSettings({ requireAdminSettings: isAdmin });
   const { employees } = useEmployees({ requireAdminDetails: isAdmin });
 
+  const finalizing = useRef(false);
   const [salaryResult, setSalaryResult] = useState<SalaryResult | null>(null);
 
   const {
@@ -198,11 +200,12 @@ export function useAttendanceData() {
 
   // Create salary record
   const createSalaryRecordMutation = useMutation({
-    mutationFn: async (salaryRecord: SalaryResult) => {
+    mutationFn: async (salaryRecord: any) => {
       return await apiRequest('POST', '/api/salary-records', salaryRecord);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/salary-records'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/salary-records/finalized-months'] });
     },
     onError: (error) => {
       console.error('Error creating salary record:', error);
@@ -248,15 +251,14 @@ export function useAttendanceData() {
   };
 
   // Clear all attendance records
-  const clearAllData = async () => {
+  const clearAllData = async (ids: number[]) => {
+    if (!ids.length) return false;
     try {
       markSyncing();
-      await deleteFilteredAttendanceMutation.mutateAsync({});
+      await deleteFilteredAttendanceMutation.mutateAsync({ ids });
       setSalaryResult(null);
       return true;
-    } catch (error) {
-      return false;
-    }
+    } catch { return false; }
   };
 
   const calculateSalary = (dataToUse?: AttendanceRecord[]) => {
@@ -487,114 +489,32 @@ export function useAttendanceData() {
       return null;
     }
   };
-  const finalizeAndSave = async (recordsToFinalize?: AttendanceRecord[]) => {
-    if (!salaryResult) {
-      toast({
-        title: "No salary result",
-        description: "Please calculate salary before saving.",
-        variant: "destructive"
-      });
-      return false;
-    }
-
+  const finalizeAndSave = async () => {
+    if (!isAdmin || finalizing.current || !salaryResult) return false;
+    finalizing.current = true;
     try {
-      const sourceAttendanceData =
-        recordsToFinalize && recordsToFinalize.length > 0
-          ? recordsToFinalize
-          : salaryResult.attendanceData;
-      const payrollSourceAttendanceData = sourceAttendanceData.filter(
-        (record) => !record._isSpecialLeaveCashRecord && record.id > 0
-      );
-
-      if (!payrollSourceAttendanceData || payrollSourceAttendanceData.length === 0) {
-        toast({
-          title: "Salary save failed",
-          description: "No attendance records were found for the selected month.",
-          variant: "destructive"
-        });
-        return false;
-      }
-
-      const employeeMap: Record<number, AttendanceRecord[]> = {};
-
-      payrollSourceAttendanceData.forEach((record: AttendanceRecord) => {
-        if (record.employeeId) {
-          const employeeId = record.employeeId;
-          if (!employeeMap[employeeId]) {
-            employeeMap[employeeId] = [];
-          }
-          employeeMap[employeeId].push(record);
-        }
-      });
-
-      const employeeIds = Object.keys(employeeMap).map(Number);
-
-      if (employeeIds.length === 0) {
-        toast({
-          title: "Salary save failed",
-          description: "No employee attendance records were found.",
-          variant: "destructive"
-        });
-        return false;
-      }
-
-      debugLog("employeeIds", employeeIds.length);
-
-      const finalizedRecordIds: number[] = [];
-
+      // The preview snapshot is the complete scope, without discovering other live records.
+      const snapshotRows = finalizationSnapshotRows(salaryResult);
+      const employeeIds = Array.from(new Set(snapshotRows.map(row => row.employeeId as number)));
       for (const employeeId of employeeIds) {
-        const employeeAttendance = employeeMap[employeeId];
-
-        if (employeeAttendance.length === 0) continue;
-
-        const employeeResult =
-          employeeIds.length === 1 ? salaryResult : calculateSalary(employeeAttendance);
-
-        if (employeeResult) {
-          const recordToSave: SalaryResult = { ...employeeResult };
-          recordToSave.employeeId = employeeId;
-          recordToSave.employeeName = employeeAttendance[0]._employeeName || `Employee ID: ${employeeId}`;
-          recordToSave.attendanceData = employeeAttendance;
-
-          const specialLeaveInfo = getSpecialLeaveInfoForMonth(
-            employeeId,
-            recordToSave.salaryYear,
-            recordToSave.salaryMonth
-          );
-          if (specialLeaveInfo) {
-            recordToSave.specialLeaveInfo = specialLeaveInfo;
-            debugLog("specialLeaveInfo", specialLeaveInfo);
-          }
-
-          debugLog("employeeSalaryRecord", {
-            employeeName: recordToSave.employeeName,
-            employeeId: recordToSave.employeeId
-          });
-
-          await createSalaryRecordMutation.mutateAsync(recordToSave);
-          finalizedRecordIds.push(...employeeAttendance.map((record) => record.id));
-        }
+        const employeeRows = snapshotRows.filter(row => row.employeeId === employeeId);
+        const result = employeeIds.length === 1 ? salaryResult : calculateSalary(employeeRows);
+        if (!result) throw new Error('Unable to calculate the selected payroll snapshot.');
+        await createSalaryRecordMutation.mutateAsync({
+          ...result, employeeId,
+          employeeName: result.employeeName || employeeRows[0]._employeeName || 'Employee ID: ' + employeeId,
+          attendanceData: employeeRows,
+        });
       }
-
-      if (finalizedRecordIds.length > 0) {
-        await deleteFilteredAttendanceMutation.mutateAsync({ ids: finalizedRecordIds });
-        debugLog("attendanceCleared", finalizedRecordIds.length);
-      }
-
+      // Retain temporary attendance/holidays. Finalized-month metadata hides archived entries.
       setSalaryResult(null);
-
       queryClient.invalidateQueries({ queryKey: ['/api/salary-records'] });
-
+      queryClient.invalidateQueries({ queryKey: ['/api/salary-records/finalized-months'] });
       return true;
     } catch (error) {
-      console.error('Error finalizing salary:', error);
-      toast({
-        title: "Finalize salary failed",
-        description: error instanceof Error ? error.message : "Failed to finalize salary.",
-        variant: "destructive"
-      });
+      toast({ title: '結算保存失敗', description: error instanceof Error ? error.message : '請重新核對所選月份與員工。', variant: 'destructive' });
       return false;
-    }
+    } finally { finalizing.current = false; }
   };
 
   return {

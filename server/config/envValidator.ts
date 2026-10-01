@@ -70,7 +70,7 @@ const envSchema = z.object({
 
 export type ValidatedEnv = z.infer<typeof envSchema>;
 
-function getProductionUnsafePin(): string | null {
+function getConfiguredSuperAdminPin(): string | null {
   const configured = process.env.SUPER_ADMIN_PIN?.trim();
   return configured ? configured : null;
 }
@@ -107,9 +107,9 @@ export function validateEnv(): ValidatedEnv {
     throw new Error('SESSION_SECRET is required in production and must be at least 32 characters');
   }
 
-  const configuredSuperAdminPin = getProductionUnsafePin();
-  if (isProduction && configuredSuperAdminPin && !isHashedPin(configuredSuperAdminPin)) {
-    throw new Error('SUPER_ADMIN_PIN must be hashed in production');
+  const configuredSuperAdminPin = getConfiguredSuperAdminPin();
+  if (configuredSuperAdminPin && !isHashedPin(configuredSuperAdminPin)) {
+    throw new Error('SUPER_ADMIN_PIN must use a supported hash format');
   }
 
   if (isProduction && !validated.BACKUP_ENCRYPTION_KEY && !validated.ENCRYPTION_KEY) {

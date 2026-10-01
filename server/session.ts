@@ -9,7 +9,6 @@ import {
 } from '@shared/utils/adminSessionPolicy';
 import { PermissionLevel } from './admin-auth';
 import { createLogger } from './utils/logger';
-import { AdminRestoreEpochChangedError } from './config/adminRestoreEpoch';
 
 const log = createLogger('session');
 
@@ -42,6 +41,7 @@ declare module 'express-session' {
     adminAuth?: AdminSessionState;
     scanAccess?: ScanAccessSessionState;
     lineAuth?: LineAuthSessionState;
+    lineOAuthState?: string;
     // LINE OAuth 暫存資料（callback 後存入，ClockInPage 一次性取出即清除）
     lineTemp?: {
       lineUserId: string;
@@ -307,7 +307,7 @@ export async function createAdminSession(
   const readRestoreEpoch = req.app.locals.readAdminRestoreEpoch as (() => Promise<string>) | undefined;
   const restoreEpoch = readRestoreEpoch ? await readRestoreEpoch() : '0';
   if (requestRestoreEpochs.has(req) && requestRestoreEpochs.get(req) !== restoreEpoch) {
-    throw new AdminRestoreEpochChangedError();
+    throw Object.assign(new Error('資料已還原，請重新登入。'), { status: 409, code: 'AUTH_RESTORE_CHANGED' });
   }
   await regenerateSession(req);
   req.session.adminAuth = {
@@ -329,7 +329,7 @@ export async function promoteAdminSession(
   }
   const readRestoreEpoch = req.app.locals.readAdminRestoreEpoch as (() => Promise<string>) | undefined;
   if (readRestoreEpoch && (req.session.adminAuth.restoreEpoch ?? '0') !== await readRestoreEpoch()) {
-    throw new AdminRestoreEpochChangedError();
+    throw Object.assign(new Error('資料已還原，請重新登入。'), { status: 409, code: 'AUTH_RESTORE_CHANGED' });
   }
 
   req.session.adminAuth = {

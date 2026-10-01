@@ -95,6 +95,8 @@ npm run test:real-db
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md): environment variables and runtime path policy
 - [docs/OPERATOR_RELEASE_READINESS.md](docs/OPERATOR_RELEASE_READINESS.md): operator go/no-go checklist before publishing
 - [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md): deployment and canary rollout procedure
+- [docs/PAYROLL_CORRECTIONS.md](docs/PAYROLL_CORRECTIONS.md): archived payroll correction contracts
+- [docs/PAYROLL_CORRECTION_RELEASE_RUNBOOK.md](docs/PAYROLL_CORRECTION_RELEASE_RUNBOOK.md): maintenance, schema approval, backup and compatible backout
 - [docs/OPERATIONS_RUNBOOK.md](docs/OPERATIONS_RUNBOOK.md): day-2 operations and incident response
 - [docs/MAINTENANCE.md](docs/MAINTENANCE.md): recurring maintenance tasks and cleanup cadence
 - [docs/PUBLIC_RELEASE_CHECKLIST.md](docs/PUBLIC_RELEASE_CHECKLIST.md): short public-release checklist

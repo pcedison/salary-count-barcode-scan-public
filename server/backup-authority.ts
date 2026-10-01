@@ -4,6 +4,7 @@ export type AuthoritativeBackupPayloadKey =
   | 'pendingBindings'
   | 'holidays'
   | 'salaryRecords'
+  | 'salaryCorrections'
   | 'temporaryAttendance'
   | 'calculationRules'
   | 'taiwanHolidays';
@@ -14,6 +15,7 @@ export type DatabaseCountKey =
   | 'pendingBindings'
   | 'holidays'
   | 'salaryRecords'
+  | 'salaryCorrections'
   | 'temporaryAttendance'
   | 'calculationRules'
   | 'taiwanHolidays';
@@ -34,7 +36,7 @@ type ExcludedAuthorityTable = {
   reason: string;
 };
 
-export const BACKUP_AUTHORITY_VERSION = 2;
+export const BACKUP_AUTHORITY_VERSION = 3;
 
 export const AUTHORITATIVE_BACKUP_TABLES: readonly IncludedAuthorityTable[] = [
   {
@@ -88,6 +90,16 @@ export const AUTHORITATIVE_BACKUP_TABLES: readonly IncludedAuthorityTable[] = [
     notes: 'Salary records carry retention/anonymization state and employee snapshots.'
   },
   {
+    payloadKey: 'salaryCorrections',
+    tableName: 'salary_corrections',
+    countKey: 'salaryCorrections',
+    countMode: 'rows',
+    restoreDeleteOrder: 90,
+    restoreInsertOrder: 90,
+    resetSequence: true,
+    notes: 'Preserves stored audit evidence, idempotency and nullable retention links; restore after salary projections.'
+  },
+  {
     payloadKey: 'temporaryAttendance',
     tableName: 'temporary_attendance',
     countKey: 'temporaryAttendance',
@@ -127,6 +139,10 @@ export const EXCLUDED_BACKUP_TABLES: readonly ExcludedAuthorityTable[] = [
   {
     tableName: 'user_sessions',
     reason: 'Ephemeral session store. Restores should force fresh authentication, not replay old sessions.'
+  },
+  {
+    tableName: 'monthly_salary_runs',
+    reason: 'Runtime execution/PDF/email metadata; operator must reconcile after data restore, with no automatic rerun.'
   }
 ] as const;
 

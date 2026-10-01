@@ -78,7 +78,7 @@ When redeploying on Zeabur:
 3. Do not override install/build commands unless necessary
 4. Remove `NPM_CONFIG_PRODUCTION`, `npm_config_production`, `NPM_CONFIG_OMIT`, and `npm_config_omit` from Zeabur Variables
 5. Clear the Zeabur build cache if the logs still reflect an older install strategy
-6. Replace any plaintext `SUPER_ADMIN_PIN` with a hashed value generated via `npm run super-pin:hash -- --raw <your-pin>`
+6. Configure `SUPER_ADMIN_PIN` with an independent supported hash generated via `npm run super-pin:hash -- --raw "<independent-super-pin>"`
 
 ## Zeabur Runtime Guardrails
 
@@ -88,16 +88,16 @@ The most common example is:
 
 - `SUPER_ADMIN_PIN` left as plaintext from an older deployment
 
-In production, the app rejects plaintext values and exits with:
+In every environment, the app rejects nonempty plaintext or malformed hash values and exits with:
 
 ```text
-Error: SUPER_ADMIN_PIN must be hashed in production
+Error: SUPER_ADMIN_PIN must use a supported hash format
 ```
 
 To fix this, generate a hash locally and paste the resulting value into the Zeabur variable:
 
 ```bash
-npm run super-pin:hash -- --raw <your-pin>
+npm run super-pin:hash -- --raw "<independent-super-pin>"
 ```
 
 Another operational risk is container eviction during rollout when the platform node is under memory pressure. The app delays its startup daily backup in production by default so that `/live` and `/ready` can stabilize before a full backup runs. Override the delay only when needed:

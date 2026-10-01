@@ -6,10 +6,8 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from './db';
-import { arePayrollWritesPaused, assertLegacyBackupWritesEnabled } from './config/payrollWrites';
-import { storage } from './storage';
-import { salaryRepository } from './repositories/salaryRepository';
 import * as schema from '@shared/schema';
 import {
   AUTHORITATIVE_BACKUP_PAYLOAD_KEYS,
@@ -29,6 +27,7 @@ import {
   SALARY_RETENTION_YEARS
 } from './config/retentionPolicy';
 import { ensureBackupRootDirExists, getBackupRootDir } from './config/runtimePaths';
+import { assertRestoreMaintenance } from './config/payrollWrites';
 import { createLogger } from './utils/logger';
 
 const log = createLogger('db-monitor');
@@ -239,6 +238,7 @@ type BackupPayload = {
   holidays?: typeof schema.holidays.$inferSelect[];
   pendingBindings?: typeof schema.pendingBindings.$inferSelect[];
   salaryRecords?: typeof schema.salaryRecords.$inferSelect[];
+  salaryCorrections?: typeof schema.salaryCorrections.$inferSelect[];
   temporaryAttendance?: typeof schema.temporaryAttendance.$inferSelect[];
   calculationRules?: typeof schema.calculationRules.$inferSelect[];
   taiwanHolidays?: typeof schema.taiwanHolidays.$inferSelect[];
@@ -260,6 +260,8 @@ type NormalizedBackupPayload = {
   holidays: typeof schema.holidays.$inferSelect[];
   pendingBindings: typeof schema.pendingBindings.$inferSelect[];
   salaryRecords: typeof schema.salaryRecords.$inferSelect[];
+  salaryCorrections: typeof schema.salaryCorrections.$inferSelect[];
+  journalCoverage: 'complete' | 'legacy-unrevised';
   temporaryAttendance: typeof schema.temporaryAttendance.$inferSelect[];
   calculationRules: typeof schema.calculationRules.$inferSelect[];
   taiwanHolidays: typeof schema.taiwanHolidays.$inferSelect[];
@@ -271,6 +273,7 @@ export type BackupInspection = {
   path: string;
   metadata: BackupPayload['metadata'] | null;
   counts: DatabaseCounts;
+  journalCoverage: NormalizedBackupPayload['journalCoverage'];
   authority: {
     version: number;
     authoritativeTables: string[];
@@ -281,7 +284,7 @@ export type BackupInspection = {
   warnings: string[];
 };
 
-type RestoreExecutor = Pick<typeof db, 'delete' | 'insert' | 'execute'>;
+type RestoreExecutor = Pick<typeof db, 'delete' | 'insert' | 'execute' | 'select'>;
 type CountExecutor = Pick<typeof db, 'execute'>;
 
 const ANONYMIZED_EMPLOYEE_NAME = '[ANONYMIZED EMPLOYEE - RETAIN 5 YEARS]';
@@ -292,6 +295,7 @@ export type DatabaseCounts = {
   pendingBindings: number;
   holidays: number;
   salaryRecords: number;
+  salaryCorrections: number;
   temporaryAttendance: number;
   calculationRules: number;
   taiwanHolidays: number;
@@ -310,9 +314,49 @@ export type RestoreRehearsalResult = {
   rehearsalRolledBack: true;
 };
 
-type RestoreFromBackupOptions = {
+export type RestoreFromBackupOptions = {
   skipPreRestoreBackup?: boolean;
+  confirmJournalReplacement?: boolean;
+  confirmationToken?: string;
 };
+
+export type RestorePayrollAmounts = { grossSalary: number; totalDeductions: number; netSalary: number };
+
+export type RestoreSalaryRecordImpact = {
+  salaryRecordId: number;
+  beforeRevision: number | null;
+  afterRevision: number | null;
+  before: RestorePayrollAmounts | null;
+  after: RestorePayrollAmounts | null;
+  delta: RestorePayrollAmounts;
+  projectionChanged: boolean;
+  added: boolean;
+  deleted: boolean;
+};
+
+export type RestorePreflight = {
+  backupId: string;
+  backupCounts: DatabaseCounts;
+  liveCounts: DatabaseCounts;
+  journalCoverage: NormalizedBackupPayload['journalCoverage'];
+  replacedJournalRows: number;
+  requiresJournalConfirmation: boolean;
+  changedSalaryRecords: RestoreSalaryRecordImpact[];
+  payrollTotals: {
+    before: RestorePayrollAmounts;
+    after: RestorePayrollAmounts;
+    delta: RestorePayrollAmounts;
+  };
+  confirmationToken: string;
+};
+
+export class RestoreSafetyError extends Error {
+  readonly status = 409;
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'RestoreSafetyError';
+  }
+}
 
 const RESTORE_TRANSACTION_MAX_ATTEMPTS = 3;
 const RESTORE_TRANSACTION_RETRY_CODES = new Set(['40P01', '40001']);
@@ -327,25 +371,16 @@ class RestoreRehearsalRollback extends Error {
   }
 }
 
-async function loadAuthoritativeBackupValue(payloadKey: AuthoritativeBackupPayloadKey) {
-  switch (payloadKey) {
-    case 'employees':
-      return storage.getAllEmployeesIncludingDeleted();
-    case 'settings':
-      return (await storage.getSettings()) ?? null;
-    case 'pendingBindings':
-      return db.select().from(schema.pendingBindings);
-    case 'holidays':
-      return storage.getAllHolidays();
-    case 'salaryRecords':
-      return salaryRepository.getAllSalaryRecords();
-    case 'temporaryAttendance':
-      return storage.getTemporaryAttendance();
-    case 'calculationRules':
-      return db.select().from(schema.calculationRules);
-    case 'taiwanHolidays':
-      return db.select().from(schema.taiwanHolidays);
+/** All authoritative values must come from the same PostgreSQL snapshot. */
+async function readAuthoritativeSnapshot(executor: Pick<typeof db, 'select'>): Promise<BackupPayload> {
+  const snapshot: BackupPayload = {};
+  for (const { payloadKey } of AUTHORITATIVE_BACKUP_TABLES) {
+    const rows = await executor.select().from(getSchemaTableByPayloadKey(payloadKey));
+    rows.sort((a, b) => String(a.id).localeCompare(String(b.id), 'en', { numeric: true }));
+    if (payloadKey === 'settings') snapshot.settings = rows[0] as typeof schema.settings.$inferSelect ?? null;
+    else snapshot[payloadKey] = rows as never;
   }
+  return snapshot;
 }
 
 function getRetryableRestoreErrorCode(error: unknown): string | null {
@@ -578,6 +613,8 @@ function getSchemaTableByPayloadKey(payloadKey: AuthoritativeBackupPayloadKey) {
       return schema.holidays;
     case 'salaryRecords':
       return schema.salaryRecords;
+    case 'salaryCorrections':
+      return schema.salaryCorrections;
     case 'temporaryAttendance':
       return schema.temporaryAttendance;
     case 'calculationRules':
@@ -609,6 +646,8 @@ function getPayloadTableCount(payload: NormalizedBackupPayload, payloadKey: Auth
       return payload.holidays.length;
     case 'salaryRecords':
       return payload.salaryRecords.length;
+    case 'salaryCorrections':
+      return payload.salaryCorrections.length;
     case 'temporaryAttendance':
       return payload.temporaryAttendance.length;
     case 'calculationRules':
@@ -639,6 +678,7 @@ function buildPayloadCounts(payload: NormalizedBackupPayload): DatabaseCounts {
     pendingBindings: 0,
     holidays: 0,
     salaryRecords: 0,
+    salaryCorrections: 0,
     temporaryAttendance: 0,
     calculationRules: 0,
     taiwanHolidays: 0
@@ -661,7 +701,9 @@ function collectAuthorityMetadataIssues(
   const rawKeys = Object.keys(rawPayload);
   const allowedKeys = new Set<string>(['metadata', ...AUTHORITATIVE_BACKUP_PAYLOAD_KEYS]);
   const unexpectedKeys = rawKeys.filter((key) => !allowedKeys.has(key)).sort();
-  const missingPayloadKeys = AUTHORITATIVE_BACKUP_PAYLOAD_KEYS.filter((payloadKey) => !(payloadKey in rawPayload));
+  const legacyJournal = normalizedPayload.journalCoverage === 'legacy-unrevised';
+  const missingPayloadKeys = AUTHORITATIVE_BACKUP_PAYLOAD_KEYS.filter((payloadKey) =>
+    !(payloadKey in rawPayload) && !(legacyJournal && payloadKey === 'salaryCorrections'));
 
   if (unexpectedKeys.length > 0) {
     errors.push(`Unexpected backup payload keys: ${unexpectedKeys.join(', ')}`);
@@ -673,7 +715,8 @@ function collectAuthorityMetadataIssues(
 
   if (!normalizedPayload.metadata?.authorityVersion) {
     warnings.push('Backup metadata is missing authorityVersion; treat as legacy artifact.');
-  } else if (normalizedPayload.metadata.authorityVersion !== BACKUP_AUTHORITY_VERSION) {
+  } else if (normalizedPayload.metadata.authorityVersion !== BACKUP_AUTHORITY_VERSION &&
+    !(legacyJournal && normalizedPayload.metadata.authorityVersion === 2)) {
     errors.push(
       `Backup authorityVersion mismatch: expected ${BACKUP_AUTHORITY_VERSION}, received ${normalizedPayload.metadata.authorityVersion}`
     );
@@ -683,12 +726,23 @@ function collectAuthorityMetadataIssues(
     warnings.push('Backup metadata is missing authoritativeTables.');
   } else {
     const actual = [...normalizedPayload.metadata.authoritativeTables].sort();
-    const expected = [...AUTHORITATIVE_TABLE_NAMES].sort();
+    const expected = AUTHORITATIVE_TABLE_NAMES.filter(name => !(legacyJournal && name === 'salary_corrections')).sort();
 
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       errors.push(
         `Backup authoritativeTables mismatch: expected ${expected.join(', ')}, received ${actual.join(', ')}`
       );
+    }
+  }
+
+  if (legacyJournal) {
+    if (normalizedPayload.metadata?.authorityVersion === BACKUP_AUTHORITY_VERSION) {
+      errors.push('Current authority backups must include salaryCorrections, even when empty.');
+    }
+    if (normalizedPayload.salaryRecords.some(record => (record.revision ?? 0) !== 0)) {
+      errors.push('Legacy backup without salaryCorrections contains revised salary records; journal evidence is unavailable.');
+    } else {
+      warnings.push('Legacy backup has no correction journal; restore is permitted only when the target has no journal.');
     }
   }
 
@@ -699,7 +753,7 @@ function collectAuthorityMetadataIssues(
       .map((entry) => entry.tableName)
       .filter((tableName): tableName is string => typeof tableName === 'string')
       .sort();
-    const expectedExcluded = [...EXCLUDED_TABLE_NAMES].sort();
+    const expectedExcluded = EXCLUDED_TABLE_NAMES.filter(name => !(legacyJournal && name === 'monthly_salary_runs')).sort();
 
     if (JSON.stringify(actualExcluded) !== JSON.stringify(expectedExcluded)) {
       errors.push(
@@ -758,6 +812,10 @@ function normalizeBackupPayload(payload: unknown): NormalizedBackupPayload {
       anonymizedAt: normalizeTimestampValue(salaryRecord.anonymizedAt),
       retentionUntil: normalizeTimestampValue(salaryRecord.retentionUntil)
     })),
+    salaryCorrections: normalizeRecordArray<typeof schema.salaryCorrections.$inferSelect>(
+      parsed.salaryCorrections, 'salaryCorrections'
+    ).map(correction => ({ ...correction, createdAt: normalizeTimestampValue(correction.createdAt)! })),
+    journalCoverage: Object.prototype.hasOwnProperty.call(parsed, 'salaryCorrections') ? 'complete' : 'legacy-unrevised',
     temporaryAttendance: normalizeRecordArray<typeof schema.temporaryAttendance.$inferSelect>(
       parsed.temporaryAttendance,
       'temporaryAttendance'
@@ -986,6 +1044,110 @@ function collectSalaryRetentionLifecycleIssues(
   }
 }
 
+const correctionBackupSchema = z.object({
+  id: z.number().int().positive(), salaryRecordId: z.number().int().positive().nullable(),
+  originalRecordId: z.number().int().positive(), revision: z.number().int().positive(),
+  idempotencyKey: z.string().uuid(), requestHash: z.string().regex(/^[a-f0-9]{64}$/),
+  previewTokenHash: z.string().regex(/^[a-f0-9]{64}$/), actorId: z.string().regex(/^[a-f0-9]{64}$/),
+  actorRole: z.string().min(1), reason: z.string().min(1).max(1000),
+  paymentHandling: z.enum(['unpaid', 'paid_adjustment', 'unknown_adjustment']),
+  holidays: z.array(z.record(z.string(), z.unknown())),
+  delta: z.object({ grossSalary: z.number().finite(), totalDeductions: z.number().finite(),
+    netSalary: z.number().finite(), totalHolidayPay: z.number().finite(), holidayDays: z.number().int() }),
+  beforeSnapshot: z.record(z.string(), z.unknown()), afterSnapshot: z.record(z.string(), z.unknown()), createdAt: z.date(),
+});
+
+function comparableCorrectionProjection(record: typeof schema.salaryRecords.$inferSelect): unknown {
+  // Match the audit producer's payroll fields, not its redacted employee identity.
+  // Employee retention can change identity/retention metadata without a revision.
+  const payrollKeys = ['id', 'revision', 'salaryYear', 'salaryMonth', 'baseSalary',
+    'holidayCalculationBaseSalary', 'housingAllowance', 'welfareAllowance',
+    'totalOT1Hours', 'totalOT2Hours', 'totalOvertimePay', 'holidayDays',
+    'holidayDailySalary', 'totalHolidayPay', 'grossSalary', 'deductions',
+    'allowances', 'totalDeductions', 'netSalary'] as const;
+  const attendanceKeys = ['id', 'date', 'clockIn', 'clockOut', 'isHoliday',
+    'isBarcodeScanned', 'holidayId', 'holidayType'] as const;
+  const leaveKeys = ['usedDays', 'usedDates', 'cashDays', 'cashAmount', 'cashMonth'] as const;
+  return {
+    ...Object.fromEntries(payrollKeys.map(key => [key, record[key] ?? null])),
+    attendanceData: Array.isArray(record.attendanceData) ? record.attendanceData.map(row => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) return row;
+      return {
+        ...Object.fromEntries(attendanceKeys.map(key => [key, row[key] ?? null])),
+        createdAt: normalizeTimestampValue(row.createdAt) ?? null,
+      };
+    }) : record.attendanceData ?? null,
+    specialLeaveInfo: record.specialLeaveInfo
+      ? Object.fromEntries(leaveKeys.map(key => [key, record.specialLeaveInfo![key] ?? null])) : null,
+    createdAt: normalizeTimestampValue(record.createdAt) ?? null,
+  };
+}
+
+function collectCorrectionJournalIssues(payload: NormalizedBackupPayload, errors: string[], warnings: string[]): void {
+  // JSON type assertions do not validate runtime values. Reject coercible revisions
+  // before comparisons; omitted legacy revisions still use the existing zero default.
+  if (payload.salaryRecords.some(record => record.revision !== undefined &&
+    (typeof record.revision !== 'number' || !Number.isSafeInteger(record.revision) ||
+      record.revision < 0 || record.revision > 2147483647))) {
+    errors.push('salaryRecords contains an invalid revision; expected a nonnegative PostgreSQL integer number.');
+    return;
+  }
+  const projections = new Map(payload.salaryRecords.map(record => [record.id, record]));
+  const latestJournals = new Map<number, NormalizedBackupPayload['salaryCorrections'][number]>();
+  const revisions = new Set<string>();
+  const keys = new Set<string>();
+  for (const row of payload.salaryCorrections) {
+    if (!correctionBackupSchema.safeParse(row).success) {
+      errors.push('salaryCorrections contains an invalid audit row.');
+      continue;
+    }
+    if (row.revision > (latestJournals.get(row.originalRecordId)?.revision ?? 0)) {
+      latestJournals.set(row.originalRecordId, row);
+    }
+    const revisionKey = `${row.originalRecordId}:${row.revision}`;
+    const idempotencyKey = `${row.originalRecordId}:${row.idempotencyKey.toLowerCase()}`;
+    if (revisions.has(revisionKey) || keys.has(idempotencyKey)) errors.push('salaryCorrections contains duplicate revision or idempotency keys.');
+    revisions.add(revisionKey); keys.add(idempotencyKey);
+    const projection = row.salaryRecordId === null ? undefined : projections.get(row.salaryRecordId);
+    if (row.salaryRecordId !== null && (!projection || row.salaryRecordId !== row.originalRecordId ||
+      (projection.revision ?? 0) < row.revision)) errors.push('salaryCorrections has an invalid salary projection link or revision.');
+    const before = row.beforeSnapshot, after = row.afterSnapshot;
+    if (before.id !== row.originalRecordId || after.id !== row.originalRecordId ||
+      after.revision !== row.revision || before.revision !== row.revision - 1) {
+      errors.push('salaryCorrections snapshots do not match the original record and revision.');
+    }
+    for (const key of ['grossSalary', 'totalDeductions', 'netSalary', 'totalHolidayPay', 'holidayDays'] as const) {
+      const previous = before[key] ?? (key === 'grossSalary' || key === 'netSalary' ? Number.NaN : 0);
+      const next = after[key] ?? (key === 'grossSalary' || key === 'netSalary' ? Number.NaN : 0);
+      if (!Number.isFinite(previous) || !Number.isFinite(next) || Math.abs(next - previous - row.delta[key]) > 0.000001) {
+        errors.push('salaryCorrections contains inconsistent snapshot amounts or delta.');
+        break;
+      }
+    }
+  }
+  for (const row of Array.from(latestJournals.values())) {
+    const projection = projections.get(row.salaryRecordId ?? row.originalRecordId);
+    // A null link cannot hide an extant projection with the same original ID.
+    // Absent projections are retained history; higher revisions can originate
+    // from historical automation and do not equal older stored snapshots.
+    if (projection && (projection.revision ?? 0) < row.revision) {
+      errors.push('salaryCorrections latest journal is newer than its salary projection.');
+      continue;
+    }
+    if (projection && projection.revision === row.revision &&
+      stableJson(comparableCorrectionProjection(projection)) !==
+      stableJson(comparableCorrectionProjection(row.afterSnapshot))) {
+      errors.push('salaryCorrections latest snapshot does not match its salary projection.');
+    }
+  }
+  // Older automation can increment projection revisions without creating a journal.
+  // Backup promises all stored journal rows, not a fabricated continuous history.
+  if (payload.journalCoverage === 'complete' && payload.salaryRecords.some(record =>
+    (record.revision ?? 0) > 0 && !payload.salaryCorrections.some(row => row.originalRecordId === record.id))) {
+    warnings.push('Some salary revisions have no stored correction journal; pre-journal or automated history cannot be reconstructed.');
+  }
+}
+
 function inspectNormalizedBackupPayload(
   backupId: string,
   backupType: BackupType | 'unknown',
@@ -1016,6 +1178,7 @@ function inspectNormalizedBackupPayload(
   collectDuplicateIds(payload.holidays, 'holidays', errors);
   collectDuplicateIds(payload.pendingBindings, 'pendingBindings', errors);
   collectDuplicateIds(payload.salaryRecords, 'salaryRecords', errors);
+  collectDuplicateIds(payload.salaryCorrections, 'salaryCorrections', errors);
   collectDuplicateIds(payload.temporaryAttendance, 'temporaryAttendance', errors);
 
   collectDuplicateIds(payload.calculationRules, 'calculation rules', errors);
@@ -1067,6 +1230,7 @@ function inspectNormalizedBackupPayload(
   collectDeletedEmployeeLifecycleIssues(payload.employees, errors);
   collectPendingBindingLifecycleIssues(payload.pendingBindings, deletedEmployeeIds, errors);
   collectSalaryRetentionLifecycleIssues(payload.salaryRecords, errors);
+  collectCorrectionJournalIssues(payload, errors, warnings);
 
   collectAuthorityMetadataIssues(rawPayload, payload, errors, warnings);
 
@@ -1084,6 +1248,7 @@ function inspectNormalizedBackupPayload(
     path: backupPath,
     metadata: payload.metadata,
     counts: buildPayloadCounts(payload),
+    journalCoverage: payload.journalCoverage,
     authority: {
       version: BACKUP_AUTHORITY_VERSION,
       authoritativeTables: [...AUTHORITATIVE_TABLE_NAMES],
@@ -1260,6 +1425,7 @@ async function collectDatabaseCounts(executor: CountExecutor): Promise<DatabaseC
     pendingBindings: 0,
     holidays: 0,
     salaryRecords: 0,
+    salaryCorrections: 0,
     temporaryAttendance: 0,
     calculationRules: 0,
     taiwanHolidays: 0
@@ -1278,9 +1444,12 @@ export async function getLiveDatabaseCounts(): Promise<DatabaseCounts> {
 }
 
 async function resetSerialSequence(executor: RestoreExecutor, tableName: string): Promise<void> {
+  // Retained journals reserve original salary IDs even after projections expire.
+  const retainedSalaryId = tableName === 'salary_records'
+    ? ', COALESCE((SELECT MAX(original_record_id) FROM salary_corrections), 1)' : '';
   await executor.execute(
     sql.raw(
-      `SELECT setval(pg_get_serial_sequence('${tableName}', 'id'), COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) FROM ${tableName};`
+      `SELECT setval(pg_get_serial_sequence('${tableName}', 'id'), GREATEST(COALESCE(MAX(id), 1), COALESCE(pg_sequence_last_value(pg_get_serial_sequence('${tableName}', 'id')::regclass), 1)${retainedSalaryId}), true) FROM ${tableName};`
     )
   );
 }
@@ -1324,6 +1493,11 @@ async function restoreTableData(
           await executor
             .insert(schema.salaryRecords)
             .values(payload.salaryRecords as typeof schema.salaryRecords.$inferInsert[]);
+        }
+        break;
+      case 'salaryCorrections':
+        if (payload.salaryCorrections.length > 0) {
+          await executor.insert(schema.salaryCorrections).values(payload.salaryCorrections);
         }
         break;
       case 'temporaryAttendance':
@@ -1462,7 +1636,6 @@ export async function createDatabaseBackup(
   type: BackupType = BackupType.MANUAL,
   description?: string
 ): Promise<string> {
-  assertLegacyBackupWritesEnabled();
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupId = `backup-${timestamp}`;
   // Choose the backup directory for the requested type.
@@ -1501,6 +1674,7 @@ export async function createDatabaseBackup(
     holidays: [],
     pendingBindings: [],
     salaryRecords: [],
+    salaryCorrections: [],
     temporaryAttendance: [],
     calculationRules: [],
     taiwanHolidays: []
@@ -1509,27 +1683,13 @@ export async function createDatabaseBackup(
   try {
     await ensureBackupDirectoryExists(backupDir);
 
-    // Capture the current application state.
-    data.employees = await storage.getAllEmployeesIncludingDeleted();
+    Object.assign(data, await db.transaction(tx => readAuthoritativeSnapshot(tx), {
+      isolationLevel: 'repeatable read', accessMode: 'read only'
+    }));
+    const normalized = normalizeBackupPayload(data);
+    const inspection = inspectNormalizedBackupPayload(backupId, type, backupPath, data, normalized);
+    if (inspection.errors.length) throw new Error('Current database cannot produce a valid authoritative backup.');
 
-    // Include current settings.
-    data.settings = await storage.getSettings() ?? null;
-
-    // Include holidays.
-    data.holidays = await storage.getAllHolidays();
-
-    // Include pending bindings.
-    data.pendingBindings = await db.select().from(schema.pendingBindings);
-
-    // Include salary records.
-    data.salaryRecords = await salaryRepository.getAllSalaryRecords();
-
-    // Include temporary attendance and reference tables.
-    data.temporaryAttendance = await storage.getTemporaryAttendance();
-    data.calculationRules = await db.select().from(schema.calculationRules);
-    data.taiwanHolidays = await db.select().from(schema.taiwanHolidays);
-
-    // Write with restrictive permissions and optional at-rest encryption.
     await fs.promises.writeFile(backupPath, serializeBackupPayload(data), {
       encoding: 'utf8',
       flag: 'wx',
@@ -1672,8 +1832,7 @@ export async function getBackupsList(type?: BackupType): Promise<BackupListEntry
 /**
  * Start the automatic backup scheduler.
  */
-export function setupAutomaticBackups(): NodeJS.Timeout | null {
-  if (arePayrollWritesPaused()) return null;
+export function setupAutomaticBackups(): NodeJS.Timeout {
   void ensureBackupDirectories().catch((error) => {
     log.error('Failed to prepare backup directories', error);
   });
@@ -1700,7 +1859,7 @@ export function setupAutomaticBackups(): NodeJS.Timeout | null {
   return automaticBackupTimer;
 }
 
-export function stopAutomaticBackups(timerId?: NodeJS.Timeout | null): void {
+export function stopAutomaticBackups(timerId?: NodeJS.Timeout): void {
   const targetTimer = timerId ?? automaticBackupTimer;
 
   if (!targetTimer) {
@@ -1725,12 +1884,104 @@ export function stopAutomaticBackups(timerId?: NodeJS.Timeout | null): void {
 /**
  * Restore a backup into the live database.
  */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, entry) => {
+    if (entry && typeof entry === 'object' && !Array.isArray(entry) && !(entry instanceof Date)) {
+      return Object.fromEntries(Object.keys(entry).sort().map(key => [key, entry[key]]));
+    }
+    return entry;
+  });
+}
+
+function restorePayrollAmounts(record: NormalizedBackupPayload['salaryRecords'][number] | undefined): RestorePayrollAmounts | null {
+  if (!record) return null;
+  const amounts = { grossSalary: record.grossSalary, totalDeductions: record.totalDeductions ?? 0, netSalary: record.netSalary };
+  if (!Object.values(amounts).every(Number.isFinite)) {
+    throw new RestoreSafetyError('INVALID_RESTORE_PAYROLL_TOTALS', 'Payroll amounts cannot be safely summarized for restore.');
+  }
+  return amounts;
+}
+
+function restorePreflightForSnapshot(backupId: string, payload: NormalizedBackupPayload, live: BackupPayload): RestorePreflight {
+  const current = normalizeBackupPayload(live);
+  if (payload.journalCoverage === 'legacy-unrevised' && (current.salaryCorrections.length > 0 ||
+    current.salaryRecords.some(record => (record.revision ?? 0) !== 0))) {
+    throw new RestoreSafetyError('LEGACY_BACKUP_JOURNAL_UNAVAILABLE', 'A legacy backup without correction evidence cannot replace a database containing a journal or revised salary projections.');
+  }
+  const incoming = new Map(payload.salaryCorrections.map(row => [row.id, stableJson(row)]));
+  const replacedJournalRows = current.salaryCorrections.filter(row => incoming.get(row.id) !== stableJson(row)).length;
+  const currentRecords = new Map(current.salaryRecords.map(row => [row.id, row]));
+  const backupRecords = new Map(payload.salaryRecords.map(row => [row.id, row]));
+  const changedSalaryRecords: RestoreSalaryRecordImpact[] = [];
+  const recordIds = new Set(Array.from(currentRecords.keys()).concat(Array.from(backupRecords.keys())));
+  for (const salaryRecordId of Array.from(recordIds).sort((a, b) => a - b)) {
+    const currentRecord = currentRecords.get(salaryRecordId), backupRecord = backupRecords.get(salaryRecordId);
+    if (stableJson(currentRecord ?? null) === stableJson(backupRecord ?? null)) continue;
+    const before = restorePayrollAmounts(currentRecord), after = restorePayrollAmounts(backupRecord);
+    changedSalaryRecords.push({ salaryRecordId,
+      beforeRevision: currentRecord ? currentRecord.revision ?? 0 : null,
+      afterRevision: backupRecord ? backupRecord.revision ?? 0 : null,
+      before, after,
+      delta: { grossSalary: (after?.grossSalary ?? 0) - (before?.grossSalary ?? 0),
+        totalDeductions: (after?.totalDeductions ?? 0) - (before?.totalDeductions ?? 0),
+        netSalary: (after?.netSalary ?? 0) - (before?.netSalary ?? 0) },
+      projectionChanged: true, added: !currentRecord, deleted: !backupRecord });
+  }
+  const totals = (records: NormalizedBackupPayload['salaryRecords']) => records.reduce((sum, record) => {
+    const amounts = restorePayrollAmounts(record)!;
+    for (const key of ['grossSalary', 'totalDeductions', 'netSalary'] as const) {
+      sum[key] += amounts[key];
+    }
+    return sum;
+  }, { grossSalary: 0, totalDeductions: 0, netSalary: 0 });
+  const before = totals(current.salaryRecords), after = totals(payload.salaryRecords);
+  return {
+    backupId, backupCounts: buildPayloadCounts(payload), liveCounts: buildPayloadCounts(current),
+    journalCoverage: payload.journalCoverage, replacedJournalRows,
+    requiresJournalConfirmation: replacedJournalRows > 0, changedSalaryRecords,
+    payrollTotals: { before, after, delta: { grossSalary: after.grossSalary - before.grossSalary,
+      totalDeductions: after.totalDeductions - before.totalDeductions, netSalary: after.netSalary - before.netSalary } },
+    // This is a freshness check, not authorization. The authenticated operator
+    // must separately and explicitly confirm the journal replacement impact.
+    confirmationToken: crypto.createHash('sha256').update(stableJson({ backupId, payload, current })).digest('hex')
+  };
+}
+
+/** Metadata-only impact preview; does not create a backup or mutate the database. */
+export async function getRestorePreflight(backupId: string, backupType?: BackupType): Promise<RestorePreflight> {
+  const backupPath = await resolveBackupPathAsync(backupId, backupType);
+  const { inspection, payload } = await readBackupInspectionFromPathAsync(backupPath, { backupId, backupType: backupType ?? 'unknown' });
+  if (inspection.errors.length) throw new RestoreSafetyError('INVALID_RESTORE_BACKUP', 'The selected backup failed restore validation.');
+  return db.transaction(async tx => restorePreflightForSnapshot(backupId, payload, await readAuthoritativeSnapshot(tx)), {
+    isolationLevel: 'repeatable read', accessMode: 'read only'
+  });
+}
+
+async function lockRestoreTables(executor: RestoreExecutor): Promise<void> {
+  await executor.execute(sql.raw(`LOCK TABLE ${[...AUTHORITATIVE_TABLE_NAMES].sort().map(name => `public.${name}`).join(', ')} IN SHARE ROW EXCLUSIVE MODE`));
+}
+
+export async function invalidateRestoredAdminSessions(executor: Pick<RestoreExecutor, 'execute'>): Promise<void> {
+  // Sessions are intentionally excluded from backups. Invalidate only sessions
+  // with administrator authority, atomically with the restored payroll state.
+  const epoch = crypto.randomUUID();
+  await executor.execute(sql.raw(`DO $restore_sessions$
+    BEGIN
+      IF to_regclass('public.user_sessions') IS NOT NULL THEN
+        EXECUTE 'DELETE FROM public.user_sessions WHERE sess::jsonb ? ''adminAuth''';
+        EXECUTE 'INSERT INTO public.user_sessions (sid, sess, expire)
+          VALUES (''__payroll_restore_epoch__'', ''{"payrollRestoreEpoch":"${epoch}"}'', ''2140-01-01'')
+          ON CONFLICT (sid) DO UPDATE SET sess=EXCLUDED.sess, expire=EXCLUDED.expire';
+      END IF;
+    END $restore_sessions$;`));
+}
+
 export async function restoreFromBackup(
   backupId: string,
   backupType?: BackupType,
   options: RestoreFromBackupOptions = {}
 ): Promise<boolean> {
-  assertLegacyBackupWritesEnabled();
+  assertRestoreMaintenance();
   try {
     const backupPath = await resolveBackupPathAsync(backupId, backupType);
     const { inspection, payload } = await readBackupInspectionFromPathAsync(backupPath, {
@@ -1739,7 +1990,7 @@ export async function restoreFromBackup(
     });
 
     if (inspection.errors.length > 0) {
-      throw new Error(`Restore validation failed: ${inspection.errors.join('; ')}`);
+      throw new RestoreSafetyError('INVALID_RESTORE_BACKUP', 'Restore failed: the selected backup failed validation.');
     }
 
     if (inspection.warnings.length > 0) {
@@ -1751,16 +2002,27 @@ export async function restoreFromBackup(
     }
 
       await runRestoreTransaction('restore', async (tx) => {
+        await lockRestoreTables(tx);
+        const impact = restorePreflightForSnapshot(backupId, payload, await readAuthoritativeSnapshot(tx));
+        if (options.confirmationToken && options.confirmationToken !== impact.confirmationToken) {
+          throw new RestoreSafetyError('RESTORE_STATE_CHANGED', 'The database or backup changed after preflight; review the restore impact again.');
+        }
+        if (impact.requiresJournalConfirmation && (options.confirmJournalReplacement !== true || options.confirmationToken !== impact.confirmationToken)) {
+          throw new RestoreSafetyError('RESTORE_JOURNAL_CONFIRMATION_REQUIRED', 'Restoring this backup replaces stored correction evidence; review preflight and explicitly confirm its current impact.');
+        }
         await clearTablesForRestore(tx);
         await restoreTableData(tx, payload);
+        await invalidateRestoredAdminSessions(tx);
         await resetRestoreSequences(tx);
       });
 
     log.info(`Restore completed for ${backupId}`);
     return true;
   } catch (error) {
-    log.error('Restore failed', error);
-    throw new Error(`Restore failed: ${error instanceof Error ? error.message : String(error)}`);
+    log.error('Restore failed', { name: error instanceof Error ? error.name : 'UnknownError', code: getRetryableRestoreErrorCode(error) });
+    if (error instanceof RestoreSafetyError) throw error;
+    // Driver errors can contain every restored parameter, including HR data.
+    throw new Error('Restore failed: transaction could not be completed.');
   }
 }
 
@@ -1768,7 +2030,6 @@ export async function rehearseRestoreFromBackup(
   backupId: string,
   backupType?: BackupType
 ): Promise<RestoreRehearsalResult> {
-  assertLegacyBackupWritesEnabled();
   try {
     const backupPath = await resolveBackupPathAsync(backupId, backupType);
     const { inspection, payload } = await readBackupInspectionFromPathAsync(backupPath, {
@@ -1784,15 +2045,18 @@ export async function rehearseRestoreFromBackup(
       log.warn(`Restore validation warnings: ${inspection.warnings.join('; ')}`);
     }
 
-    const liveCountsBefore = await collectDatabaseCounts(db);
     const rehearsalWarnings = [
       ...inspection.warnings,
       'Restore rehearsal skips sequence reset because PostgreSQL sequences are not transactional.'
     ];
 
     await runRestoreTransaction('restore rehearsal', async (tx) => {
+      await lockRestoreTables(tx);
+      const impact = restorePreflightForSnapshot(backupId, payload, await readAuthoritativeSnapshot(tx));
+      const liveCountsBefore = impact.liveCounts;
       await clearTablesForRestore(tx);
       await restoreTableData(tx, payload);
+      await invalidateRestoredAdminSessions(tx);
 
       const restoredCountsInTransaction = await collectDatabaseCounts(tx);
 
@@ -1817,8 +2081,8 @@ export async function rehearseRestoreFromBackup(
       return error.result;
     }
 
-    log.error('Restore rehearsal failed', error);
-    throw new Error(`Restore rehearsal failed: ${error instanceof Error ? error.message : String(error)}`);
+    log.error('Restore rehearsal failed', { name: error instanceof Error ? error.name : 'UnknownError', code: getRetryableRestoreErrorCode(error) });
+    throw new Error('Restore rehearsal failed: transaction could not be completed.');
   }
 }
 
@@ -1829,7 +2093,6 @@ export async function deleteBackup(
   backupId: string,
   backupType?: BackupType
 ): Promise<boolean> {
-  assertLegacyBackupWritesEnabled();
   const backupPath = await resolveBackupPathAsync(backupId, backupType);
 
   try {

@@ -1,9 +1,13 @@
 import React from 'react';
 import { calculateOvertime, calculateDailyOvertimePay } from '@/lib/salaryCalculations';
-import { constants } from '@/lib/constants';
 
 interface PrintableSalarySheetProps {
   result: {
+    archived?: boolean;
+    recordId?: number;
+    revision?: number;
+    employeeId?: number;
+    employeeName?: string;
     salaryYear: number;
     salaryMonth: number;
     baseSalary: number;
@@ -24,7 +28,7 @@ interface PrintableSalarySheetProps {
       clockIn: string;
       clockOut: string;
       isHoliday: boolean;
-      holidayType?: 'worked' | 'sick_leave' | 'personal_leave' | 'national_holiday' | 'typhoon_leave' | 'temporary_stop_work_and_classes' | 'special_leave' | 'special_leave_cash';
+      holidayType?: string;
     }>;
     specialLeaveInfo?: {
       usedDays: number;
@@ -36,17 +40,10 @@ interface PrintableSalarySheetProps {
   };
 }
 
-// 將時間字串轉換為分鐘數
-function timeToMinutesForPrint(timeStr: string): number {
-  if (!timeStr || !timeStr.includes(':')) return 0;
-  const [hours, minutes] = timeStr.split(':').map(Number);
-  return hours * 60 + minutes;
-}
-
 export default function PrintableSalarySheet({ result }: PrintableSalarySheetProps) {
 
 // 安全數值處理函數
-const safeNumber = (value: unknown): number => {
+const safeNumber = (value: any): number => {
   if (value === null || value === undefined) return 0;
   const num = Number(value);
   return isNaN(num) ? 0 : num;
@@ -63,10 +60,10 @@ const getHolidayLabel = (holidayType?: string): string => {
       return '病假';
     case 'personal_leave':
       return '事假';
-    case 'typhoon_leave':
-      return '颱風假';
     case 'temporary_stop_work_and_classes':
       return '臨時停止上班上課';
+    case 'typhoon_leave':
+      return '颱風假';
     case 'special_leave':
       return '特別休假';
     case 'special_leave_cash':
@@ -103,7 +100,7 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
 
   // 計算每條記錄的加班費
   const attendanceWithOT = sortedAttendance.map(record => {
-    const dailyOT = calculateDailyOT(record.clockIn, record.clockOut);
+    const dailyOT = result.archived ? { ot1: 0, ot2: 0, pay: 0 } : calculateDailyOT(record.clockIn, record.clockOut);
     return {
       ...record,
       ot1: dailyOT.ot1,
@@ -112,17 +109,11 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
     };
   });
 
-  // 獲取扣款項目
-  const getDeduction = (name: string): number => {
-    const item = result.deductions.find((d: {name: string; amount: number}) => d.name === name);
-    return item ? item.amount : 0;
-  };
-
   // 計算合計加班時數
-  const totalOT1 = safeNumber(attendanceWithOT.reduce((sum, record) => sum + safeNumber(record.ot1), 0));
-  const totalOT2 = safeNumber(attendanceWithOT.reduce((sum, record) => sum + safeNumber(record.ot2), 0));
+  const totalOT1 = result.archived ? safeNumber(result.totalOT1Hours) : safeNumber(attendanceWithOT.reduce((sum, record) => sum + safeNumber(record.ot1), 0));
+  const totalOT2 = result.archived ? safeNumber(result.totalOT2Hours) : safeNumber(attendanceWithOT.reduce((sum, record) => sum + safeNumber(record.ot2), 0));
   // 總加班費
-  const totalOTPay = safeNumber(attendanceWithOT.reduce((sum, record) => sum + safeNumber(record.pay), 0));
+  const totalOTPay = result.archived ? safeNumber(result.totalOvertimePay) : safeNumber(attendanceWithOT.reduce((sum, record) => sum + safeNumber(record.pay), 0));
   const specialLeaveCashAmount = safeNumber(result.specialLeaveInfo?.cashAmount);
 
   // 檢查日期是否為特別假
@@ -159,9 +150,9 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
           </td>
           <td className="time-cell">{record.clockIn}</td>
           <td className="time-cell">{record.clockOut}</td>
-          <td className="number-cell">{record.ot1.toFixed(1)}</td>
-          <td className="number-cell">{record.ot2.toFixed(1)}</td>
-          <td className="amount-cell">{record.pay}</td>
+          <td className="number-cell">{result.archived ? '—' : record.ot1.toFixed(1)}</td>
+          <td className="number-cell">{result.archived ? '—' : record.ot2.toFixed(1)}</td>
+          <td className="amount-cell">{result.archived ? '—' : record.pay}</td>
         </tr>
       );
     });
@@ -181,22 +172,34 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
     return null;
   };
 
-  // 渲染津貼明細行（如果存在）- 粗體顯示
+  // 歷史明細可能只保存部分津貼；保存的福利合計仍是薪資快照的依據。
   const renderAllowancesRows = () => {
-    // 如果有 allowances 陣列，逐項顯示
     if (result.allowances && result.allowances.length > 0) {
-      return result.allowances.map((allowance: { name: string; amount: number; description?: string }, index: number) => {
-        const amount = safeNumber(allowance.amount);
-        if (amount > 0) {
-          return (
-            <tr key={`allowance-${index}`} className="summary-size-row welfare-row" style={{ fontWeight: 'bold' }}>
+      const detailTotal = result.allowances.reduce((sum, allowance) => sum + safeNumber(allowance.amount), 0);
+      const hasSavedTotal = result.archived && result.welfareAllowance !== undefined && Number.isFinite(result.welfareAllowance);
+      const difference = hasSavedTotal ? Math.round((result.welfareAllowance! - detailTotal) * 100) / 100 : 0;
+      return <>
+        {result.allowances.map((allowance, index) => {
+          const amount = safeNumber(allowance.amount);
+          return amount !== 0 ? (
+            <tr key={`allowance-${index}`} className="summary-size-row welfare-row">
               <td colSpan={5}>{allowance.name}：</td>
               <td className="amount-cell">{amount}</td>
             </tr>
-          );
-        }
-        return null;
-      });
+          ) : null;
+        })}
+        {difference !== 0 && <tr className="summary-size-row welfare-reconciliation-row">
+          <td colSpan={5}>
+            歷史津貼明細差異：
+            <span className="reconciliation-note">歷史明細與結算快照的對照，薪資採用已保存總額。</span>
+          </td>
+          <td className="amount-cell">{difference > 0 ? '+' : ''}{difference}</td>
+        </tr>}
+        {hasSavedTotal && <tr className="summary-size-row welfare-row welfare-total-row">
+          <td colSpan={5}>福利津貼合計（結算快照）：</td>
+          <td className="amount-cell">{result.welfareAllowance}</td>
+        </tr>}
+      </>;
     }
     // 向下相容：如果沒有 allowances 陣列，使用舊的 welfareAllowance 欄位
     const welfareAmount = safeNumber(result.welfareAllowance);
@@ -216,53 +219,55 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
       <style>
         {`
         .print-page {
-          width: 210mm;
-          height: 297mm;
+          width: 100%;
+          min-height: 297mm;
           padding: 10mm;
           background-color: white;
           box-sizing: border-box;
           box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
           margin: 0 auto;
-          overflow: hidden;
-          page-break-after: always;
+          overflow: visible;
         }
 
         @media print {
           html, body {
-            width: 210mm;
-            height: 297mm;
+            width: auto;
+            height: auto;
             margin: 0;
             padding: 0;
             background-color: white;
           }
 
-          body * {
-            visibility: hidden;
-          }
-
-          .print-page, .print-page * {
-            visibility: visible !important;
-          }
-
           .print-page {
-            position: absolute;
-            left: 0;
-            top: 0;
+            width: 100%;
+            min-height: 0;
             margin: 0;
-            padding: 10mm;
+            padding: 0;
             box-shadow: none;
           }
 
           .print-container {
+            max-width: none;
             box-shadow: none;
+          }
+
+          .print-container + .print-container {
+            break-before: page;
+            page-break-before: always;
+            margin-top: 0;
           }
 
           .no-print {
             display: none !important;
           }
 
-          table, tr, td, th, tbody, thead {
-            page-break-inside: avoid !important;
+          .salary-table thead {
+            display: table-header-group;
+          }
+
+          .salary-table tr, .salary-totals {
+            break-inside: avoid;
+            page-break-inside: avoid;
           }
 
           th, td, tr {
@@ -273,14 +278,15 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
 
           @page {
             size: A4 portrait;
-            margin: 0;
+            margin: 10mm;
           }
         }
 
         .salary-table {
           width: 100%;
           border-collapse: collapse;
-          font-size: 11px;
+          font-size: 12px;
+          table-layout: fixed;
           margin-top: 0px;
         }
 
@@ -295,6 +301,31 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
         .salary-table th {
           font-weight: normal;
           background-color: #f8f8f8;
+        }
+
+        .salary-table .salary-heading-cell {
+          border: 0;
+          padding: 0 0 6px;
+          height: auto;
+          background: white;
+        }
+
+        .salary-snapshot-note, .reconciliation-note {
+          font-size: 11px;
+          color: #555;
+        }
+
+        .salary-snapshot-note {
+          margin: 0 0 6px;
+        }
+
+        .reconciliation-note {
+          display: block;
+          margin-top: 3px;
+        }
+
+        .welfare-total-row {
+          font-weight: bold;
         }
 
         .deduction-row td {
@@ -385,7 +416,7 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
         }
 
         .date-cell {
-          white-space: nowrap;
+          overflow-wrap: anywhere;
         }
 
         .time-cell {
@@ -396,29 +427,54 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
         .salary-table tr:nth-child(even):not(.deduction-row):not(.summary-row):not(.total-amount) {
           background-color: #fcfcfc;
         }
+
+        @media screen and (max-width: 640px) {
+          .print-page { padding: 12px; }
+          .header-section { display: block; }
+          .month-title { font-size: 24px; line-height: 1.2; }
+          .calculation-label { display: inline-block; margin-top: 6px; text-align: left; }
+          .date-cell { white-space: nowrap; overflow-wrap: normal; }
+        }
         `}
       </style>
 
       <div className="print-page">
-        <div className="header-section">
-          <div>
-            <h1 className="system-title">員工薪資計算系統</h1>
-            <h2 className="month-title">{result.salaryMonth}月考勤打卡</h2>
-          </div>
-          <div>
-            <span className="calculation-label">計算薪資</span>
-          </div>
-        </div>
-
         <table className="salary-table">
+          <colgroup>
+            <col style={{ width: '24%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '17%' }} />
+            <col style={{ width: '17%' }} />
+            <col style={{ width: '18%' }} />
+          </colgroup>
           <thead>
             <tr>
-              <th style={{width: '90px'}}>日期</th>
-              <th style={{width: '70px'}}>上班時間</th>
-              <th style={{width: '70px'}}>下班時間</th>
-              <th style={{width: '90px'}}>第一階段加班</th>
-              <th style={{width: '90px'}}>第二階段加班</th>
-              <th style={{width: '110px'}}>加班/假日薪資</th>
+              <td colSpan={6} className="salary-heading-cell">
+                <div className="header-section">
+                  <div>
+                    <h1 className="system-title">員工薪資計算系統</h1>
+                    <h2 className="month-title">{result.salaryYear}年{result.salaryMonth}月薪資明細</h2>
+                    {(result.archived || result.employeeName || result.employeeId) && <p style={{ fontSize: '13px', margin: '6px 0 0' }}>
+                      員工：{result.employeeName || (result.employeeId ? '員工代碼 #' + result.employeeId : '匿名薪資紀錄 #' + (result.recordId ?? '未指定'))}
+                      {result.employeeId !== undefined && ' · 員工 ID ' + result.employeeId}
+                      {result.archived && ' · 紀錄 ID ' + result.recordId + ' · 修訂 ' + (result.revision ?? 0)}
+                    </p>}
+                  </div>
+                  <div>
+                    <span className="calculation-label">{result.archived ? '已結算薪資快照' : '計算薪資'}</span>
+                  </div>
+                </div>
+                {result.archived && <p className="salary-snapshot-note">每日加班時數與金額未保存原始計算規則，以「—」呈現；加班及薪資合計採用此修訂的結算快照。</p>}
+              </td>
+            </tr>
+            <tr>
+              <th>日期</th>
+              <th>上班時間</th>
+              <th>下班時間</th>
+              <th>第一階段加班</th>
+              <th>第二階段加班</th>
+              <th>加班/假日薪資</th>
             </tr>
           </thead>
           <tbody>
@@ -432,7 +488,7 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
             </tr>
             <tr className="summary-size-row">
               <td colSpan={5}>假日給薪總計：</td>
-              <td className="amount-cell">{result.holidayDays > 0 ? safeNumber(result.totalHolidayPay) : '0'}</td>
+              <td className="amount-cell">{result.archived || result.holidayDays > 0 ? safeNumber(result.totalHolidayPay) : '0'}</td>
             </tr>
             {specialLeaveCashAmount > 0 && (
               <tr className="summary-size-row special-leave-cash-row">
@@ -455,6 +511,12 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
                 </tr>
               )
             ))}
+          </tbody>
+          <tbody className="salary-totals">
+            {result.archived && <>
+              <tr className="summary-size-row"><td colSpan={5}>總薪資：</td><td className="amount-cell">{safeNumber(result.grossSalary)}</td></tr>
+              <tr className="summary-size-row"><td colSpan={5}>扣款合計：</td><td className="amount-cell">{safeNumber(result.totalDeductions)}</td></tr>
+            </>}
             <tr className="total-amount summary-size-row">
               <td colSpan={5}>實領金額：</td>
               <td className="amount-cell">{safeNumber(result.netSalary)}</td>

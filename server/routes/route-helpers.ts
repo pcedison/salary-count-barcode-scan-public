@@ -3,15 +3,16 @@ import { ZodError } from 'zod';
 import { fromZodError } from 'zod-validation-error';
 
 import { createLogger } from '../utils/logger';
-import { AdminRestoreEpochChangedError } from '../config/adminRestoreEpoch';
+import { PayrollWritesPausedError } from '../config/payrollWrites';
 
 const log = createLogger('api');
 
 export function handleRouteError(err: unknown, res: Response) {
-  if (err instanceof AdminRestoreEpochChangedError) {
-    return res.status(err.status).json({ message: err.message, code: err.code });
+  if (err instanceof PayrollWritesPausedError) return res.status(err.status).json({ message: err.message, code: err.code });
+  const known = err as { status?: number; code?: string } | null;
+  if (known?.status && known.status >= 400 && known.status < 500 && typeof known.code === 'string') {
+    return res.status(known.status).json({ message: err instanceof Error ? err.message : 'Request rejected.', code: known.code });
   }
-  log.error('API Error:', err);
 
   if (err instanceof ZodError) {
     const validationError = fromZodError(err);
@@ -22,6 +23,7 @@ export function handleRouteError(err: unknown, res: Response) {
   }
 
   const isProduction = process.env.NODE_ENV === 'production';
+  log.error('API Error', { name: err instanceof Error ? err.name : 'UnknownError', code: known?.code });
   const message = isProduction
     ? 'Internal Server Error'
     : err instanceof Error
@@ -35,6 +37,7 @@ export function handleRouteError(err: unknown, res: Response) {
 }
 
 export function parseNumericId(value: string): number | null {
-  const id = Number.parseInt(value, 10);
-  return Number.isNaN(id) ? null : id;
+  if (!/^[1-9]\d*$/.test(value)) return null;
+  const id = Number(value);
+  return Number.isSafeInteger(id) ? id : null;
 }

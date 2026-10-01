@@ -1,10 +1,12 @@
-# 薪資相容維護版本 2.2.2
+# 薪資相容維護 artifact 2.2.2（61bed23）
 
-來源基底是公開部署 repository 的 `6d819f03fefe33d3daa5905c5510d7c23afeb604`。本版本為經修改與驗證的相容維護 artifact；舊版 binary 不會辨識維護環境變數，不能代替此版本。
+相容維護 artifact 的確切 commit 是 `61bed23e682cf5c3ce43b1cd14e87c0ac458981e`，來源基底是公開部署 repository 的 `6d819f03fefe33d3daa5905c5510d7c23afeb604`。本文件描述該 2.2.2 artifact 的啟動限制與回退操作；它不表示 2.2.3 feature release 必須永久暫停寫入。正式操作前應另核對實際部署 image 與平台 SHA，不能只依版本號。
+
+2.2.3 feature release 保留已驗證的 feature 程式與完整 journal 備份還原能力；`PAYROLL_WRITES_PAUSED` 可供維護時使用，沒有 2.2.2 maintenance-only startup 的強制 true 限制。需要回退時必須部署上述確切的 2.2.2 artifact。舊版 binary 不會辨識維護環境變數，不能代替此 artifact；把這份文件合入 feature branch 也不會把 feature artifact 變成維護版本。
 
 ## 啟動與保護範圍
 
-正式啟動必須設定 `NODE_ENV=production` 與精確的 `PAYROLL_WRITES_PAUSED=true`。缺值、false、拼錯或大小寫變體均拒絕正式啟動；直接匯入 writer 或啟動排程也須通過同一檢查。保留公開基底的登入、查詢、列印與依賴版本，沒有新增、刪除或反向 migration。
+上述 commit 的 2.2.2 artifact 正式啟動必須設定 `NODE_ENV=production` 與精確的 `PAYROLL_WRITES_PAUSED=true`。缺值、false、拼錯或大小寫變體均拒絕正式啟動；直接匯入 writer 或啟動排程也須通過同一檢查。保留公開基底的登入、查詢、列印與依賴版本，沒有新增、刪除或反向 migration。
 
 維護開關下，HTTP 及直接 repository 入口皆禁止新增、編輯、刪除、CSV 匯入薪資、原子批次月結、月結 run 狀態寫入、員工永久清除及薪資保留期清除。月結與 retention 排程不啟動。JSON 備份建立、刪除、還原、還原演練及自動備份全部停用；備份清單、metadata 與唯讀檢查仍可用。舊 JSON 檔案沒有新更正 journal 的完整性保證，不能作為更正後的復原 authority。
 

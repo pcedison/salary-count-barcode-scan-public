@@ -1,326 +1,84 @@
-import { useCallback, useMemo } from 'react';
-
+import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-
 import { useAdmin } from '@/hooks/useAdmin';
-import { useSettings } from '@/hooks/useSettings';
 import { useToast } from '@/hooks/use-toast';
 import { extractListData, type PaginatedPayload } from '@/lib/paginatedPayload';
 import { apiRequest } from '@/lib/queryClient';
-import { calculateOvertime } from '@/lib/salaryCalculations';
-import { debugLog } from '@/lib/debug';
+import { buildSalaryRecordCsv, salaryRecordFileName, type ExportSalaryRecord } from '@/lib/historyExport';
+import { buildSalaryHistoryQuery, type SalaryHistoryFilters } from '@/lib/historyQuery';
 
-export interface SalaryRecord {
-  id: number;
-  salaryYear: number;
-  salaryMonth: number;
-  employeeId?: number;
-  employeeName?: string;
-  baseSalary: number;
-  housingAllowance?: number;
-  welfareAllowance?: number;
-  allowances?: Array<{ name: string; amount: number; description?: string }>;
+export interface SalaryRecord extends ExportSalaryRecord {
+  revision: number;
   totalOT1Hours: number;
   totalOT2Hours: number;
   totalOvertimePay: number;
   holidayDays: number;
-  holidayDailySalary?: number;
   totalHolidayPay: number;
-  grossSalary: number;
-  deductions: Array<{ name: string; amount: number }>;
   totalDeductions: number;
-  netSalary: number;
-  attendanceData: Array<{
-    date: string;
-    clockIn: string;
-    clockOut: string;
-    isHoliday: boolean;
-    employeeId?: number;
-  }>;
-  specialLeaveInfo?: {
-    usedDays: number;
-    usedDates: string[];
-    cashDays: number;
-    cashAmount: number;
-    cashMonth?: string;
-    notes?: string;
-  } | null;
-  createdAt: string;
+  deductions: Array<{ name: string; amount: number }>;
+  attendanceData: Array<{ date: string; clockIn: string; clockOut: string; isHoliday: boolean; holidayType?: string; employeeId?: number }> | null;
 }
 
-interface UseHistoryDataOptions {
-  page?: number;
-  limit?: number;
-  search?: string;
-  salaryYear?: number;
-  salaryMonth?: number;
-  employeeId?: number;
-}
-
-interface SalaryRecordYearsPayload {
-  years: number[];
-}
-
-function safeNumber(value: unknown): number {
-  if (value === null || value === undefined) {
-    return 0;
-  }
-
-  const numericValue = Number(value);
-  return Number.isNaN(numericValue) ? 0 : numericValue;
-}
-
-function buildSalaryRecordsPath(options: UseHistoryDataOptions): string {
-  const params = new URLSearchParams();
-
-  if (options.page) params.set('page', String(options.page));
-  if (options.limit) params.set('limit', String(options.limit));
-  if (options.salaryYear) params.set('salaryYear', String(options.salaryYear));
-  if (options.salaryMonth) params.set('salaryMonth', String(options.salaryMonth));
-  if (options.employeeId) params.set('employeeId', String(options.employeeId));
-  if (options.search?.trim()) params.set('search', options.search.trim());
-
-  const queryString = params.toString();
-  return queryString ? `/api/salary-records?${queryString}` : '/api/salary-records';
-}
-
-function buildSalaryRecordYearsPath(options: UseHistoryDataOptions): string {
-  const params = new URLSearchParams();
-
-  if (options.salaryMonth) params.set('salaryMonth', String(options.salaryMonth));
-  if (options.employeeId) params.set('employeeId', String(options.employeeId));
-  if (options.search?.trim()) params.set('search', options.search.trim());
-
-  const queryString = params.toString();
-  return queryString ? `/api/salary-records/years?${queryString}` : '/api/salary-records/years';
-}
-
-function getSalaryRecordPagination(payload: SalaryRecord[] | PaginatedPayload<SalaryRecord> | undefined) {
-  if (payload && !Array.isArray(payload) && payload.pagination) {
-    return payload.pagination;
-  }
-
-  const total = Array.isArray(payload) ? payload.length : 0;
-  return {
-    page: 1,
-    limit: total || 50,
-    total,
-    pages: total > 0 ? 1 : 0
-  };
-}
-
-function invalidateSalaryRecordQueries(queryClient: ReturnType<typeof useQueryClient>) {
-  queryClient.invalidateQueries({
-    predicate: (query) => String(query.queryKey[0] ?? '').startsWith('/api/salary-records')
-  });
-}
-
-export function useHistoryData(options: UseHistoryDataOptions = {}) {
+export function useHistoryData(filters: SalaryHistoryFilters = { page: 1, limit: 10 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { isAdmin } = useAdmin();
-  const { settings } = useSettings();
-  const salaryRecordsPath = useMemo(() => buildSalaryRecordsPath(options), [
-    options.employeeId,
-    options.limit,
-    options.page,
-    options.salaryMonth,
-    options.salaryYear,
-    options.search
-  ]);
-  const salaryRecordYearsPath = useMemo(() => buildSalaryRecordYearsPath(options), [
-    options.employeeId,
-    options.salaryMonth,
-    options.search
-  ]);
-
-  const {
-    data: rawSalaryRecords = [],
-    isLoading,
-    error,
-    refetch
-  } = useQuery<SalaryRecord[] | PaginatedPayload<SalaryRecord>>({
-    queryKey: [salaryRecordsPath],
-    enabled: isAdmin
+  const { data: payload, isLoading, isFetching, error, refetch } = useQuery<PaginatedPayload<SalaryRecord>>({
+    queryKey: ['/api/salary-records', filters],
+    queryFn: async () => (await apiRequest('GET', buildSalaryHistoryQuery(filters))).json(),
+    enabled: isAdmin,
+    staleTime: 30_000,
   });
-
-  const salaryRecords = extractListData(rawSalaryRecords);
-  const salaryPagination = getSalaryRecordPagination(rawSalaryRecords);
-  const {
-    data: rawSalaryRecordYears = { years: [] }
-  } = useQuery<SalaryRecordYearsPayload>({
-    queryKey: [salaryRecordYearsPath],
-    enabled: isAdmin
-  });
-  const salaryRecordYears = rawSalaryRecordYears.years;
+  const salaryRecords = extractListData(payload);
+  const pagination = payload?.pagination ?? { page: filters.page, limit: filters.limit, total: salaryRecords.length, pages: salaryRecords.length ? 1 : 0 };
+  const refreshSalaryQueries = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['/api/salary-records'] });
+    void queryClient.invalidateQueries({ queryKey: ['/api/salary-records/finalized-months'] });
+  }, [queryClient]);
 
   const deleteSalaryRecordMutation = useMutation({
     mutationFn: async (id: number) => {
-      await apiRequest('DELETE', `/api/salary-records/${id}`, undefined);
+      await apiRequest('DELETE', `/api/salary-records/${id}`);
       return id;
     },
-    onSuccess: () => {
-      invalidateSalaryRecordQueries(queryClient);
-      toast({
-        title: 'Delete successful',
-        description: 'The salary record was deleted.',
-      });
-    },
-    onError: (mutationError) => {
-      console.error('Error deleting salary record:', mutationError);
-      toast({
-        title: 'Delete failed',
-        description: 'Unable to delete the salary record.',
-        variant: 'destructive'
-      });
-    }
+    onSuccess: refreshSalaryQueries,
   });
-
   const updateSalaryRecordMutation = useMutation({
-    mutationFn: async ({
-      id,
-      data,
-      skipRecalculation = false
-    }: {
-      id: number;
-      data: Partial<Omit<SalaryRecord, 'id' | 'createdAt'>>;
-      skipRecalculation?: boolean;
-    }) => {
-      const response = await apiRequest(
-        'PATCH',
-        `/api/salary-records/${id}`,
-        data,
-        skipRecalculation
-          ? {
-              headers: {
-                'x-force-update': 'true'
-              }
-            }
-          : undefined
-      );
+    mutationFn: async ({ id, data }: { id: number; data: Record<string, unknown> }) => {
+      const response = await apiRequest('PATCH', `/api/salary-records/${id}`, data);
       return response.json();
     },
-    onSuccess: () => {
-      invalidateSalaryRecordQueries(queryClient);
-      debugLog('Salary record updated');
-    },
-    onError: (mutationError) => {
-      console.error('Error updating salary record:', mutationError);
-      toast({
-        title: 'Update failed',
-        description: 'Unable to update the salary record.',
-        variant: 'destructive'
-      });
-    }
+    onSuccess: refreshSalaryQueries,
   });
-
-  const deleteSalaryRecord = useCallback(
-    async (id: number) => deleteSalaryRecordMutation.mutateAsync(id),
-    [deleteSalaryRecordMutation]
-  );
-
-  const updateSalaryRecord = useCallback(
-    async (
-      id: number,
-      data: Partial<Omit<SalaryRecord, 'id' | 'createdAt'>>,
-      skipRecalculation = true
-    ) => updateSalaryRecordMutation.mutateAsync({ id, data, skipRecalculation }),
-    [updateSalaryRecordMutation]
-  );
-
-  const getSalaryRecordById = useCallback(
-    async (id: number) => {
-      if (!isAdmin) {
-        throw new Error('Admin privileges are required to read salary records.');
-      }
-
-      const response = await apiRequest('GET', `/api/salary-records/${id}`, undefined);
-      const record = (await response.json()) as SalaryRecord;
-      debugLog('Loaded salary record', { id, netSalary: record.netSalary });
-      return record;
-    },
-    [isAdmin]
-  );
-
-  const exportSalaryRecordAsCsv = useCallback((record: SalaryRecord) => {
+  const deleteSalaryRecord = useCallback(async (id: number) => deleteSalaryRecordMutation.mutateAsync(id), [deleteSalaryRecordMutation]);
+  const updateSalaryRecord = useCallback(async (id: number, data: Record<string, unknown>) => updateSalaryRecordMutation.mutateAsync({ id, data }), [updateSalaryRecordMutation]);
+  const getSalaryRecordById = useCallback(async (id: number): Promise<SalaryRecord> => {
+    if (!isAdmin) throw new Error('Admin privileges are required to read salary records.');
+    return (await apiRequest('GET', `/api/salary-records/${id}`)).json();
+  }, [isAdmin]);
+  const exportSalaryRecordAsCsv = useCallback(async (record: Pick<SalaryRecord, 'id'>) => {
     try {
-      let csvContent = `Salary record - ${record.salaryYear}/${record.salaryMonth}\n`;
-      csvContent += `Employee,${record.employeeName || ''}\n`;
-      csvContent += `Year,${record.salaryYear}\n`;
-      csvContent += `Month,${record.salaryMonth}\n\n`;
-
-      csvContent += 'Summary\n';
-      csvContent += `Base salary,${safeNumber(record.baseSalary)}\n`;
-      csvContent += `Housing allowance,${safeNumber(record.housingAllowance)}\n`;
-      csvContent += `Welfare allowance,${safeNumber(record.welfareAllowance)}\n`;
-      csvContent += `OT1 hours,${safeNumber(record.totalOT1Hours)}\n`;
-      csvContent += `OT2 hours,${safeNumber(record.totalOT2Hours)}\n`;
-      csvContent += `Overtime pay,${safeNumber(record.totalOvertimePay)}\n`;
-      csvContent += `Holiday days,${safeNumber(record.holidayDays)}\n`;
-      csvContent += `Holiday pay,${safeNumber(record.totalHolidayPay)}\n`;
-      csvContent += `Gross salary,${safeNumber(record.grossSalary)}\n`;
-      csvContent += `Deductions,${safeNumber(record.totalDeductions)}\n`;
-      csvContent += `Net salary,${safeNumber(record.netSalary)}\n\n`;
-
-      csvContent += 'Deductions detail\n';
-      csvContent += 'Name,Amount\n';
-      (record.deductions || []).forEach((deduction) => {
-        csvContent += `${deduction.name || ''},${safeNumber(deduction.amount)}\n`;
-      });
-
-      csvContent += '\nAttendance\n';
-      csvContent += 'Date,Clock In,Clock Out,Holiday,OT1 Hours,OT2 Hours,Daily OT Pay\n';
-
-      (record.attendanceData || []).forEach((attendance) => {
-        const { ot1, ot2 } = calculateOvertime(attendance.clockIn, attendance.clockOut);
-        const baseHourlyRate = settings?.baseHourlyRate ?? 119;
-        const ot1HourlyRate = baseHourlyRate * (settings?.ot1Multiplier ?? 1.34);
-        const ot2HourlyRate = baseHourlyRate * (settings?.ot2Multiplier ?? 1.67);
-        const safeOt1 = Number.isNaN(ot1) ? 0 : ot1;
-        const safeOt2 = Number.isNaN(ot2) ? 0 : ot2;
-        const dailyOTPay = Math.round(ot1HourlyRate * safeOt1 + ot2HourlyRate * safeOt2);
-
-        csvContent += `${attendance.date || ''},${attendance.clockIn || ''},${attendance.clockOut || ''},${attendance.isHoliday ? 'Yes' : 'No'},${safeOt1.toFixed(1)},${safeOt2.toFixed(1)},${safeNumber(dailyOTPay)}\n`;
-      });
-
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      // Fetch the committed revision so a stale table row cannot export pre-correction values.
+      const freshRecord = await getSalaryRecordById(record.id);
+      const blob = new Blob([buildSalaryRecordCsv(freshRecord)], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `salary-record_${record.employeeName || 'employee'}_${record.salaryYear}_${record.salaryMonth}.csv`;
-      link.style.visibility = 'hidden';
+      link.download = salaryRecordFileName(freshRecord);
       document.body.appendChild(link);
       link.click();
-
-      setTimeout(() => {
-        URL.revokeObjectURL(url);
-        document.body.removeChild(link);
-        toast({
-          title: 'Export successful',
-          description: 'The salary record was exported as CSV.',
-        });
-      }, 500);
-    } catch (mutationError) {
-      console.error('Error exporting salary record as CSV:', mutationError);
-      toast({
-        title: 'Export failed',
-        description: 'Unable to export the salary record.',
-        variant: 'destructive'
-      });
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 500);
+      toast({ title: '匯出成功', description: '已匯出最新確認的薪資結算快照。' });
+    } catch {
+      toast({ title: '匯出失敗', description: '無法讀取最新薪資紀錄，請稍後重試。', variant: 'destructive' });
     }
-  }, [toast]);
+  }, [getSalaryRecordById, toast]);
 
   return {
-    salaryRecords,
-    salaryRecordYears,
-    salaryPagination,
-    isLoading,
-    refetch,
-    getSalaryRecordById,
-    exportSalaryRecordAsCsv,
-    deleteSalaryRecord,
-    updateSalaryRecord,
+    salaryRecords, pagination, isLoading, isFetching, error, refetch, refreshSalaryQueries,
+    getSalaryRecordById, exportSalaryRecordAsCsv, deleteSalaryRecord, updateSalaryRecord,
     isDeletingRecord: deleteSalaryRecordMutation.isPending,
-    isUpdatingRecord: updateSalaryRecordMutation.isPending
+    isUpdatingRecord: updateSalaryRecordMutation.isPending,
   };
 }

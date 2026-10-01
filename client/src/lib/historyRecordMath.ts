@@ -9,6 +9,14 @@ export interface HistoryDeductionItem {
   amount: number;
 }
 
+export function initialHistoryAllowances(input: { allowances?: ReadonlyArray<HistoryAllowanceItem> | null; welfareAllowance?: number | null }): HistoryAllowanceItem[] {
+  const rows = structuredClone([...(input.allowances ?? [])]);
+  const difference = (input.welfareAllowance ?? 0) - rows.reduce((sum, row) => sum + row.amount, 0);
+  // Keep a missing positive legacy balance visible; negative differences require explicit editing.
+  if (difference > 0) rows.push({ name: '原結算津貼差額', amount: difference });
+  return rows;
+}
+
 export interface HistorySpecialLeaveInfo {
   usedDays: number;
   usedDates: string[];

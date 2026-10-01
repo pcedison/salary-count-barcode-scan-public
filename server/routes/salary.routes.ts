@@ -1,6 +1,11 @@
 import type { Express } from 'express';
 
-import { insertSalaryRecordSchema, type InsertSalaryRecord, type Settings } from '@shared/schema';
+import { insertSalaryRecordSchema, type InsertSalaryRecord, type Settings, type TemporaryAttendance } from '@shared/schema';
+import { z } from 'zod';
+import { buildHistorySalaryEdit } from '../services/historySalaryEdit';
+import { payrollHash } from '../services/payrollPreviewToken';
+import { PayrollCorrectionError } from '../services/payrollCorrection';
+import { correctionActor, registerPayrollCorrectionRoutes, requirePayrollWrite } from './payrollCorrection.routes';
 
 import { recordLatency } from '../observability/runtimeMetrics';
 import { requireAdmin } from '../middleware/requireAdmin';
@@ -17,12 +22,26 @@ import {
   deriveHolidayPayBase,
   mergeSalaryDeductions,
   normalizeSalaryDeductions,
-  shouldRecalculateSalary,
   toCalculationSettings,
 } from './salary-helpers';
 import { handleRouteError, parseNumericId } from './route-helpers';
 
 const log = createLogger('salary');
+const money = z.number().finite().nonnegative();
+const deductionItem = z.object({ name: z.string().trim().min(1).max(100), amount: money }).strict();
+const allowanceItem = deductionItem.extend({ description: z.string().max(1000).optional() }).strict();
+const manualEditSchema = insertSalaryRecordSchema.partial().extend({
+  baseSalary: money.optional(), housingAllowance: money.nullable().optional(),
+  deductions: z.array(deductionItem).max(100).nullable().optional(),
+  allowances: z.array(allowanceItem).max(100).nullable().optional(),
+  specialLeaveInfo: z.object({
+    usedDays: money, usedDates: z.array(z.string().max(10)).max(366),
+    cashDays: money, cashAmount: money,
+    cashMonth: z.string().max(10).optional(), notes: z.string().max(1000).optional(),
+  }).strict().nullable().optional(),
+  revision: z.number().int().nonnegative(), reason: z.string().trim().min(1).max(1000),
+  paymentHandling: z.enum(['unpaid', 'paid_adjustment', 'unknown_adjustment']), idempotencyKey: z.string().uuid(),
+}).strict();
 
 function parseBoundedPagination(queryPage: unknown, queryLimit: unknown) {
   const page = Math.max(1, parseInt(String(queryPage ?? '1'), 10) || 1);
@@ -134,19 +153,20 @@ function logHolidayAdjustmentSummary(
     return;
   }
 
-  log.info(
-    `Holiday adjustments for employee ${employeeId || 'unknown'} in ${salaryYear}-${String(salaryMonth).padStart(2, '0')}:`,
-    `sick leave ${holidayAdjustments.sickLeaveDays} days, deduction ${holidayAdjustments.sickLeaveDeduction}`,
-    `personal leave ${holidayAdjustments.personalLeaveDays} days, deduction ${holidayAdjustments.personalLeaveDeduction}`,
-    `typhoon leave ${holidayAdjustments.typhoonLeaveDays} days, deduction ${holidayAdjustments.typhoonLeaveDeduction}`,
-    `worked holiday ${holidayAdjustments.workedHolidayDays} days, pay ${holidayAdjustments.workedHolidayPay}`
-  );
+  log.info('Holiday adjustment calculation completed', {
+    salaryYear, salaryMonth,
+    hasLeaveAdjustment: holidayAdjustments.sickLeaveDays > 0 || holidayAdjustments.personalLeaveDays > 0 || holidayAdjustments.typhoonLeaveDays > 0,
+    hasWorkedHolidayAdjustment: holidayAdjustments.workedHolidayDays > 0,
+  });
 }
+
+export type CalculatedSalaryRecord = InsertSalaryRecord & { holidayCalculationBaseSalary: number };
 
 export async function buildCalculatedSalaryRecord(
   draft: InsertSalaryRecord,
   settings: Settings,
   options?: {
+    attendanceRecords?: TemporaryAttendance[];
     previousRecord?: {
       employeeId?: number | null;
       salaryYear?: number | null;
@@ -155,10 +175,10 @@ export async function buildCalculatedSalaryRecord(
       baseSalary?: number | null;
     };
   }
-): Promise<InsertSalaryRecord> {
+): Promise<CalculatedSalaryRecord> {
   const { calculateSalary, calculateHolidayPayAdjustments } = await loadSalaryCalculator();
 
-  const calculatorAttendanceRecords = await loadAttendanceForSalaryMonth(
+  const calculatorAttendanceRecords = options?.attendanceRecords?.map(record => ({ ...record, employeeId: record.employeeId ?? undefined, clockOut: record.clockOut ?? undefined })) ?? await loadAttendanceForSalaryMonth(
     draft.employeeId,
     draft.salaryYear,
     draft.salaryMonth
@@ -217,6 +237,7 @@ export async function buildCalculatedSalaryRecord(
 
   return {
     ...draft,
+    holidayCalculationBaseSalary: draft.baseSalary,
     deductions: allDeductions,
     totalOT1Hours: salaryResult.totalOT1Hours,
     totalOT2Hours: salaryResult.totalOT2Hours,
@@ -229,15 +250,24 @@ export async function buildCalculatedSalaryRecord(
 }
 
 export function registerSalaryRoutes(app: Express): void {
+  registerPayrollCorrectionRoutes(app);
+  app.get('/api/salary-records/finalized-months', requireAdmin(), async (_req, res) => {
+    try { return res.json({ data: await salaryRepository.getFinalizedSalaryMonths() }); }
+    catch (err) { return handleRouteError(err, res); }
+  });
   app.get('/api/salary-records', requireAdmin(), async (req, res) => {
     const startedAt = Date.now();
 
     try {
       const { page, limit } = parseBoundedPagination(req.query.page, req.query.limit);
-      const filters = parseSalaryRecordFilters(req.query);
-      const { rows, total } = filters
-        ? await salaryRepository.getAllSalaryRecordsPage(page, limit, filters)
-        : await salaryRepository.getAllSalaryRecordsPage(page, limit);
+      const filters = z.object({
+        salaryYear: z.coerce.number().int().min(1900).max(9999).optional(),
+        salaryMonth: z.coerce.number().int().min(1).max(12).optional(),
+        employeeId: z.coerce.number().int().positive().optional(),
+        search: z.string().trim().max(100).optional(),
+      }).parse({ salaryYear: req.query.salaryYear ?? req.query.year, salaryMonth: req.query.salaryMonth ?? req.query.month,
+        employeeId: req.query.employeeId, search: req.query.search });
+      const { rows, total } = await salaryRepository.getAllSalaryRecordsPage(page, limit, filters);
       return res.json({ data: rows, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
     } catch (err) {
       return handleRouteError(err, res);
@@ -247,21 +277,14 @@ export function registerSalaryRoutes(app: Express): void {
   });
 
   app.get('/api/salary-records/years', requireAdmin(), async (req, res) => {
-    try {
-      const filters = parseSalaryRecordYearFilters(req.query);
-      const years = filters
-        ? await salaryRepository.getSalaryRecordYears(filters)
-        : await salaryRepository.getSalaryRecordYears();
-      return res.json({ years });
-    } catch (err) {
-      return handleRouteError(err, res);
-    }
+    try { return res.json({ data: await salaryRepository.getSalaryRecordYears(parseSalaryRecordYearFilters(req.query)) }); }
+    catch (error) { return handleRouteError(error, res); }
   });
 
   app.get('/api/salary-records/print-batch', async (req, res) => {
     try {
       const ids = parsePrintRecordIds(req.query.ids);
-      if (ids.length === 0) {
+      if (ids.length === 0 || ids.length > 100) {
         return res.status(400).json({ message: 'No salary record IDs provided' });
       }
 
@@ -269,16 +292,10 @@ export function registerSalaryRoutes(app: Express): void {
         return res.status(401).json({ message: 'Invalid or expired salary print token' });
       }
 
-      const fetchedRecords = await salaryRepository.getSalaryRecordsByIds(ids);
-      const recordsById = new Map(fetchedRecords.map((record) => [record.id, record]));
-      const records = [];
-      for (const id of ids) {
-        const record = recordsById.get(id);
-        if (!record) {
-          return res.status(404).json({ message: `Salary record ${id} not found` });
-        }
-        records.push(record);
-      }
+      const loaded = await salaryRepository.getSalaryRecordsByIds(ids);
+      const recordMap = new Map(loaded.map(record => [record.id, record]));
+      const records = ids.map(id => recordMap.get(id));
+      if (records.some(record => !record)) return res.status(404).json({ message: 'A salary record was not found.' });
 
       return res.json({ records });
     } catch (err) {
@@ -321,60 +338,22 @@ export function registerSalaryRoutes(app: Express): void {
     }
   });
 
-  app.patch('/api/salary-records/:id', requireAdmin(), async (req, res) => {
+  app.patch('/api/salary-records/:id', requireAdmin(), requirePayrollWrite, async (req, res) => {
     try {
       const id = parseNumericId(req.params.id);
       if (id === null) {
         return res.status(400).json({ message: 'Invalid ID' });
       }
 
-      const settings = await storage.getSettings();
-      if (!settings) {
-        return res.status(500).json({ message: 'Settings must be configured before updating salary records.' });
-      }
-
-      const existingRecord = await salaryRepository.getSalaryRecordById(id);
-      if (!existingRecord) {
-        return res.status(404).json({ message: 'Salary record not found' });
-      }
-
-      const validatedData = insertSalaryRecordSchema.partial().parse(req.body);
-      // x-force-update: true means "accept my values as-is and skip server recalculation".
-      const skipRecalculation = req.headers['x-force-update'] === 'true';
-      const updateData: Partial<InsertSalaryRecord> = { ...validatedData };
-
-      if (shouldRecalculateSalary(updateData, skipRecalculation)) {
-        const mergedData = {
-          ...existingRecord,
-          ...updateData,
-        } as InsertSalaryRecord;
-
-        const recalculatedRecord = await buildCalculatedSalaryRecord(mergedData, settings, {
-          previousRecord: {
-            employeeId: existingRecord.employeeId,
-            salaryYear: existingRecord.salaryYear,
-            salaryMonth: existingRecord.salaryMonth,
-            totalHolidayPay: existingRecord.totalHolidayPay,
-            baseSalary: existingRecord.baseSalary,
-          },
-        });
-
-        updateData.deductions = recalculatedRecord.deductions;
-        updateData.totalOT1Hours = recalculatedRecord.totalOT1Hours;
-        updateData.totalOT2Hours = recalculatedRecord.totalOT2Hours;
-        updateData.totalOvertimePay = recalculatedRecord.totalOvertimePay;
-        updateData.totalHolidayPay = recalculatedRecord.totalHolidayPay;
-        updateData.grossSalary = recalculatedRecord.grossSalary;
-        updateData.totalDeductions = recalculatedRecord.totalDeductions;
-        updateData.netSalary = recalculatedRecord.netSalary;
-      }
-
-      const record = await salaryRepository.updateSalaryRecord(id, updateData);
-      if (!record) {
-        return res.status(404).json({ message: 'Salary record not found' });
-      }
-
-      return res.json(record);
+      if (req.headers['x-force-update']) throw new PayrollCorrectionError(400, 'FORCE_UPDATE_REMOVED', 'Client-calculated salary overrides are no longer supported.');
+      const request = manualEditSchema.parse(req.body);
+      const { idempotencyKey, revision, reason, paymentHandling, ...values } = request;
+      const actor = correctionActor(req);
+      const result = await salaryRepository.commitSalaryCorrection(id, { ...actor, idempotencyKey, requestHash: payrollHash(request), previewTokenHash: payrollHash({ kind: 'manual-edit', revision }) }, record => {
+        if ((record.revision ?? 0) !== revision) throw new PayrollCorrectionError(409, 'REVISION_CONFLICT', 'Salary record changed; reopen the editor before saving.');
+        return buildHistorySalaryEdit(record, values, reason, paymentHandling);
+      });
+      return res.json(result.record);
     } catch (err) {
       return handleRouteError(err, res);
     }

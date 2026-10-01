@@ -1,3 +1,4 @@
+import { assertPayrollWritesEnabled } from '../config/payrollWrites';
 import { and, desc, eq, ne } from 'drizzle-orm';
 
 import {
@@ -7,7 +8,6 @@ import {
 } from '@shared/schema';
 
 import { db } from '../db';
-import { assertPayrollWritesEnabled } from '../config/payrollWrites';
 
 export interface AcquireMonthlySalaryRunParams {
   year: number;

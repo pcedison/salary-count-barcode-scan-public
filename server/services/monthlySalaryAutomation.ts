@@ -1,3 +1,4 @@
+import { arePayrollWritesPaused } from '../config/payrollWrites';
 import type {
   Employee,
   InsertSalaryRecord,
@@ -15,7 +16,6 @@ import {
   type SalaryAutomationConfig,
 } from '../config/salaryAutomation';
 import { storage } from '../storage';
-import { assertPayrollWritesEnabled } from '../config/payrollWrites';
 import { monthlySalaryRunRepository } from '../repositories/monthlySalaryRunRepository';
 import { salaryRepository, type SalaryRecordWrite } from '../repositories/salaryRepository';
 import { createLogger } from '../utils/logger';
@@ -226,7 +226,6 @@ async function markRunFailed(run: MonthlySalaryRun | undefined, error: unknown) 
 export async function runMonthlySalaryAutomation(
   options: MonthlySalaryAutomationOptions = {}
 ): Promise<MonthlySalaryAutomationResult> {
-  assertPayrollWritesEnabled();
   const config = options.config ?? getSalaryAutomationConfig();
   const target = options.target ?? getPreviousSalaryMonthTarget(options.now, config.timeZone);
   const sendEmail = options.sendEmail ?? true;
@@ -235,6 +234,11 @@ export async function runMonthlySalaryAutomation(
   const skippedEmployees: MonthlySalaryAutomationResult['skippedEmployees'] = [];
 
   let run: MonthlySalaryRun | undefined;
+
+  if (arePayrollWritesPaused()) {
+    return { target, status: 'skipped', reason: 'payroll_writes_paused', calculatedRecords,
+      persistedRecords, skippedEmployees, emailRecipients: [] };
+  }
 
   try {
     if (!options.dryRun) {
@@ -315,14 +319,15 @@ export async function runMonthlySalaryAutomation(
       }
 
       const draft = buildSalaryDraftForEmployee(employee, attendance, settings, target);
-      const finalRecord = await buildCalculatedSalaryRecord(draft, settings);
+      const finalRecord = await buildCalculatedSalaryRecord(draft, settings, { attendanceRecords: attendance });
       calculatedRecords.push(finalRecord);
 
       if (options.dryRun) {
         continue;
       }
 
-      pendingWrites.push({ existingId: existingRecord?.id, record: finalRecord });
+      pendingWrites.push({ existingId: existingRecord?.id,
+        ...(existingRecord ? { expectedRevision: existingRecord.revision ?? 0 } : {}), record: finalRecord });
     }
 
     if (pendingWrites.length > 0) {

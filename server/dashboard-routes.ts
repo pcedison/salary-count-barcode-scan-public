@@ -1,4 +1,5 @@
 import type { Express, Response } from 'express';
+import { z } from 'zod';
 
 import {
   getAvailableLogDates,
@@ -14,6 +15,7 @@ import {
   deleteBackup,
   getBackupsList,
   getConnectionHistory,
+  getRestorePreflight,
   restoreFromBackup,
   validateBackupId
 } from './db-monitoring';
@@ -22,8 +24,18 @@ import { requireAdmin } from './middleware/requireAdmin';
 import { getOperationalMetricsSummary, recordCounter } from './observability/runtimeMetrics';
 import { handleRouteError } from './routes/route-helpers';
 import { createLogger } from './utils/logger';
+import { clearAdminSession } from './session';
+import { requirePayrollWrite } from './middleware/payrollRequest';
+import { assertRestoreMaintenance, arePayrollWritesPaused } from './config/payrollWrites';
 
 const log = createLogger('dashboard');
+const backupTypeSchema = z.enum(['daily', 'weekly', 'monthly', 'manual']);
+const restoreRequestSchema = z.object({
+  type: backupTypeSchema.optional(),
+  confirmRestore: z.literal(true),
+  confirmJournalReplacement: z.boolean().optional(),
+  confirmationToken: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
 
 function setNoStore(res: Response) {
   res.setHeader('Cache-Control', 'no-store');
@@ -128,7 +140,17 @@ export function registerDashboardRoutes(app: Express) {
     }
   });
 
-  app.post(/^\/api\/dashboard\/backups\/(.+)\/restore$/, strictLimiter, requireSuperAdmin, async (req, res) => {
+  app.get('/api/dashboard/backups/:backupId/restore-preview', requireSuperAdmin, async (req, res) => {
+    try {
+      setNoStore(res);
+      const backupId = validateBackupId(req.params.backupId);
+      const type = backupTypeSchema.optional().parse(req.query.type);
+      return res.json({ success: true, data: await getRestorePreflight(backupId, parseBackupType(type)), payrollWritesPaused: arePayrollWritesPaused(),
+        warning: '還原會替換備份涵蓋的資料與更正歷程，並使管理員登入失效。請核對金額差額後明確確認。' });
+    } catch (err) { return handleDashboardError(res, err, 'Failed to preview restore'); }
+  });
+
+  app.post(/^\/api\/dashboard\/backups\/(.+)\/restore$/, strictLimiter, requireSuperAdmin, requirePayrollWrite, async (req, res) => {
     if (req.originalUrl.includes('..')) {
       return res.status(400).json({
         success: false,
@@ -156,16 +178,28 @@ export function registerDashboardRoutes(app: Express) {
 
     try {
       setNoStore(res);
-      const type = typeof req.body?.type === 'string' ? req.body.type : undefined;
+      const request = restoreRequestSchema.parse(req.body);
+      assertRestoreMaintenance();
+      const type = request.type;
       const backupType = parseBackupType(type);
+      const impact = await getRestorePreflight(safeBackupId, backupType);
+      if (request.confirmationToken !== impact.confirmationToken) return res.status(409).json({
+        success: false, code: 'RESTORE_STATE_CHANGED', message: '資料或備份已變更，請重新核對還原預覽。'
+      });
+      if (impact.requiresJournalConfirmation && request.confirmJournalReplacement !== true) return res.status(409).json({
+        success: false, code: 'RESTORE_JOURNAL_CONFIRMATION_REQUIRED', message: '本次還原會替換更正歷程，須確認預覽的影響與差額。'
+      });
       const currentBackupId = await createDatabaseBackup(
         BackupType.MANUAL,
         `Pre-restore safeguard ${new Date().toISOString()}`
       );
 
       await restoreFromBackup(safeBackupId, backupType, {
-        skipPreRestoreBackup: true
+        skipPreRestoreBackup: true,
+        confirmJournalReplacement: request.confirmJournalReplacement,
+        confirmationToken: request.confirmationToken,
       });
+      await clearAdminSession(req, res);
 
       logOperation(OperationType.RESTORE, `Restored backup ${safeBackupId}`, {
         success: true

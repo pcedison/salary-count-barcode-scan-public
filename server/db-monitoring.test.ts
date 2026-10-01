@@ -31,6 +31,7 @@ const transactionMock = vi.hoisted(() =>
     callback({
       delete: txDeleteMock,
       insert: txInsertMock,
+      select: selectMock,
       execute: txExecuteMock
     })
   )
@@ -151,6 +152,42 @@ function buildAuthorityMetadata() {
   };
 }
 
+function journalBackupFixture() {
+  const projection = { id: 7, revision: 1, salaryYear: 2026, salaryMonth: 9,
+    employeeId: 8, employeeName: 'Synthetic employee', baseSalary: 30000,
+    holidayCalculationBaseSalary: 30000, housingAllowance: 0, welfareAllowance: 0,
+    totalOT1Hours: 0, totalOT2Hours: 0, totalOvertimePay: 0, holidayDays: 1,
+    holidayDailySalary: 1000, totalHolidayPay: 1000, grossSalary: 31000,
+    deductions: [{ name: 'Synthetic withholding', amount: 1000 }], allowances: [],
+    totalDeductions: 1000, netSalary: 30000,
+    attendanceData: [{ id: 1, employeeId: 8, date: '2026-09-25', clockIn: '08:00',
+      clockOut: '16:00', isHoliday: true, isBarcodeScanned: false,
+      holidayId: null, holidayType: 'national_holiday', createdAt: '2026-09-25T00:00:00.000Z' }],
+    specialLeaveInfo: { usedDays: 0, usedDates: [] as string[], cashDays: 0, cashAmount: 0, notes: 'Private note' },
+    createdAt: '2026-09-30T00:00:00.000Z' };
+  const after = { ...projection, employeeId: null, employeeName: null, employeeSnapshot: null,
+    deductions: projection.deductions.map(row => ({ ...row })),
+    attendanceData: projection.attendanceData.map(row => ({ ...row, employeeId: null })),
+    specialLeaveInfo: { usedDays: 0, usedDates: [] as string[], cashDays: 0, cashAmount: 0 } };
+  const before = { ...after, revision: 0, grossSalary: 30000, netSalary: 29000,
+    holidayDays: 0, totalHolidayPay: 0 };
+  return { metadata: { timestamp: projection.createdAt, type: 'manual', databaseType: 'postgres', ...buildAuthorityMetadata() },
+    employees: [{ id: 8 }], settings: null, holidays: [], pendingBindings: [],
+    salaryRecords: [projection], temporaryAttendance: [], calculationRules: [], taiwanHolidays: [],
+    salaryCorrections: [{ id: 1, salaryRecordId: 7, originalRecordId: 7, revision: 1,
+      idempotencyKey: '11111111-1111-4111-8111-111111111111', requestHash: 'a'.repeat(64),
+      previewTokenHash: 'b'.repeat(64), actorId: 'c'.repeat(64), actorRole: 'SUPER_ADMIN',
+      reason: 'Synthetic correction', paymentHandling: 'unpaid', holidays: [],
+      delta: { grossSalary: 1000, totalDeductions: 0, netSalary: 1000, totalHolidayPay: 1000, holidayDays: 1 },
+      beforeSnapshot: before, afterSnapshot: after, createdAt: projection.createdAt }] };
+}
+
+function inspectSyntheticJournal() {
+  return inspectBackupFileAtPath('/tmp/synthetic-journal.json', {
+    backupId: 'synthetic-journal', backupType: BackupType.MANUAL,
+  });
+}
+
 function getSchemaTableForPayloadKey(payloadKey: (typeof AUTHORITATIVE_RESTORE_DELETE_ORDER)[number]) {
   switch (payloadKey) {
     case 'employees':
@@ -163,6 +200,8 @@ function getSchemaTableForPayloadKey(payloadKey: (typeof AUTHORITATIVE_RESTORE_D
       return schema.holidays;
     case 'salaryRecords':
       return schema.salaryRecords;
+    case 'salaryCorrections':
+      return schema.salaryCorrections;
     case 'temporaryAttendance':
       return schema.temporaryAttendance;
     case 'calculationRules':
@@ -236,7 +275,7 @@ describe('db-monitoring scheduler guards', () => {
     expect(first).toBe(timer);
     expect(second).toBe(timer);
     expect(setIntervalSpy).toHaveBeenCalledTimes(1);
-    expect(getAllEmployeesMock).toHaveBeenCalledTimes(1);
+    expect(transactionMock).toHaveBeenCalledTimes(1);
 
     stopAutomaticBackups();
     expect(clearIntervalSpy).toHaveBeenCalledWith(timer);
@@ -350,16 +389,14 @@ describe('db-monitoring scheduler guards', () => {
     await Promise.resolve();
 
     expect(setupResult).toBe(timer);
-    expect(getAllEmployeesMock).toHaveBeenCalledTimes(1);
+    expect(transactionMock).toHaveBeenCalledTimes(1);
   });
 
-  it('does not start legacy JSON backup scheduling in production maintenance', async () => {
+  it('delays the bootstrap daily backup in production to avoid startup memory pressure', async () => {
     const originalNodeEnv = process.env.NODE_ENV;
-    const originalPaused = process.env.PAYROLL_WRITES_PAUSED;
 
     try {
       process.env.NODE_ENV = 'production';
-      process.env.PAYROLL_WRITES_PAUSED = 'true';
 
       const timer = { kind: 'backup-timer-delayed' } as unknown as NodeJS.Timeout;
       const startupTimer = {
@@ -374,14 +411,21 @@ describe('db-monitoring scheduler guards', () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      expect(setupResult).toBeNull();
-      expect(setIntervalSpy).not.toHaveBeenCalled();
-      expect(setTimeoutSpy).not.toHaveBeenCalled();
-      expect(getAllEmployeesMock).not.toHaveBeenCalled();
+      expect(setupResult).toBe(timer);
+      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 10 * 60 * 1000);
+      expect(transactionMock).not.toHaveBeenCalled();
+
+      const delayedBackupCallback = setTimeoutSpy.mock.calls[0]?.[0];
+      expect(typeof delayedBackupCallback).toBe('function');
+      (delayedBackupCallback as () => void)();
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(transactionMock).toHaveBeenCalledTimes(1);
     } finally {
       process.env.NODE_ENV = originalNodeEnv;
-      if (originalPaused === undefined) delete process.env.PAYROLL_WRITES_PAUSED;
-      else process.env.PAYROLL_WRITES_PAUSED = originalPaused;
     }
   });
 
@@ -493,8 +537,139 @@ describe('db-monitoring scheduler guards', () => {
 describe('db-monitoring restore safety', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    selectFromMock.mockResolvedValue([]);
     existsSyncMock.mockImplementation(() => true);
     readFileSyncMock.mockReturnValue('{}');
+  });
+
+  it('compares redacted audit payroll fields with the current projection without exposing identity', () => {
+    const payload = journalBackupFixture();
+    readFileSyncMock.mockReturnValue(JSON.stringify(payload));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
+  });
+
+  it.each(['amounts', 'deduction-details', 'attendance', 'basis', 'leave'])('rejects same-revision projection %s mismatch', kind => {
+    const payload = journalBackupFixture();
+    const projection = payload.salaryRecords[0];
+    if (kind === 'amounts') { projection.grossSalary += 500; projection.netSalary += 500; }
+    if (kind === 'deduction-details') projection.deductions[0].name = 'Different withholding';
+    if (kind === 'attendance') projection.attendanceData[0].holidayType = 'regular_day_off';
+    if (kind === 'basis') projection.holidayCalculationBaseSalary = 32000;
+    if (kind === 'leave') projection.specialLeaveInfo.usedDates.push('2026-09-28');
+    readFileSyncMock.mockReturnValue(JSON.stringify(payload));
+    const inspection = inspectSyntheticJournal();
+    expect(inspection.errors).toContain('salaryCorrections latest snapshot does not match its salary projection.');
+    expect(JSON.stringify(inspection.errors)).not.toContain('Synthetic employee');
+    expect(transactionMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: 'numeric string', revision: '1' },
+    { label: 'padded numeric string', revision: ' 1 ' },
+    { label: 'zero string', revision: '0' },
+    { label: 'null', revision: null },
+    { label: 'boolean', revision: true },
+    { label: 'array', revision: [1] },
+    { label: 'object', revision: { valueOf: '1', toString: '1' } },
+    { label: 'negative number', revision: -1 },
+    { label: 'fraction', revision: 1.5 },
+    { label: 'PostgreSQL integer overflow', revision: 2147483648 },
+    { label: 'unsafe integer', revision: Number.MAX_SAFE_INTEGER + 1 },
+  ])('rejects a projection $label revision before restore or journal comparisons', async ({ revision }) => {
+    const payload = journalBackupFixture();
+    Object.assign(payload.salaryRecords[0], { revision });
+    payload.salaryRecords[0].grossSalary += 500;
+    payload.salaryRecords[0].netSalary += 500;
+    const raw = JSON.stringify(payload);
+    readFileSyncMock.mockReturnValue(raw);
+    readFileMock.mockResolvedValue(raw);
+    expect(inspectSyntheticJournal().errors).toContain(
+      'salaryRecords contains an invalid revision; expected a nonnegative PostgreSQL integer number.');
+    await expect(restoreFromBackup('synthetic-journal', BackupType.MANUAL, { skipPreRestoreBackup: true }))
+      .rejects.toMatchObject({ code: 'INVALID_RESTORE_BACKUP' });
+    expect(transactionMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a string revision that hides a null-linked same-original projection mismatch', () => {
+    const payload = journalBackupFixture();
+    Object.assign(payload.salaryRecords[0], { revision: '1' });
+    payload.salaryRecords[0].grossSalary += 500;
+    payload.salaryRecords[0].netSalary += 500;
+    const artifact = { ...payload,
+      salaryCorrections: payload.salaryCorrections.map(row => ({ ...row, salaryRecordId: null })) };
+    readFileSyncMock.mockReturnValue(JSON.stringify(artifact));
+    expect(inspectSyntheticJournal().errors).toEqual([
+      'salaryRecords contains an invalid revision; expected a nonnegative PostgreSQL integer number.']);
+  });
+
+  it.each([0, 2147483647])('accepts numeric projection revision %s within PostgreSQL integer bounds', revision => {
+    const payload = journalBackupFixture();
+    payload.salaryRecords[0].revision = revision;
+    readFileSyncMock.mockReturnValue(JSON.stringify({ ...payload, salaryCorrections: [] }));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
+  });
+
+  it('preserves omitted projection revisions in unrevised legacy v2 backups', () => {
+    const payload = journalBackupFixture();
+    const { salaryCorrections: _journal, ...legacy } = payload;
+    const { revision: _revision, ...projection } = payload.salaryRecords[0];
+    const artifact = { ...legacy, salaryRecords: [projection], metadata: {
+      ...legacy.metadata, authorityVersion: 2,
+      authoritativeTables: legacy.metadata.authoritativeTables.filter(name => name !== 'salary_corrections'),
+      excludedTables: legacy.metadata.excludedTables.filter(table => table.tableName !== 'monthly_salary_runs'),
+    } };
+    readFileSyncMock.mockReturnValue(JSON.stringify(artifact));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
+  });
+
+  it('permits projection revisions advanced by automation after the latest stored journal', () => {
+    const payload = journalBackupFixture();
+    payload.salaryRecords[0].revision = 7;
+    payload.salaryRecords[0].grossSalary += 500;
+    payload.salaryRecords[0].netSalary += 500;
+    readFileSyncMock.mockReturnValue(JSON.stringify(payload));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
+  });
+
+  it('does not let a null journal link bypass an extant same-revision projection mismatch', () => {
+    const payload = journalBackupFixture();
+    payload.salaryRecords[0].grossSalary += 500;
+    payload.salaryRecords[0].netSalary += 500;
+    const artifact = { ...payload,
+      salaryCorrections: payload.salaryCorrections.map(row => ({ ...row, salaryRecordId: null })) };
+    readFileSyncMock.mockReturnValue(JSON.stringify(artifact));
+    expect(inspectSyntheticJournal().errors)
+      .toEqual(['salaryCorrections latest snapshot does not match its salary projection.']);
+  });
+
+  it('normalizes equivalent timestamp representations in audit and projection', () => {
+    const payload = journalBackupFixture();
+    payload.salaryCorrections[0].afterSnapshot.createdAt = '2026-09-30T00:00:00+00:00';
+    payload.salaryCorrections[0].afterSnapshot.attendanceData[0].createdAt = '2026-09-25T00:00:00+00:00';
+    readFileSyncMock.mockReturnValue(JSON.stringify(payload));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
+  });
+
+  it('rejects an older same-original projection beneath a null-linked journal', () => {
+    const payload = journalBackupFixture();
+    const before = payload.salaryCorrections[0].beforeSnapshot;
+    const artifact = { ...payload,
+      salaryRecords: payload.salaryRecords.map(record => ({ ...record, ...before,
+        employeeId: record.employeeId, employeeName: record.employeeName,
+        attendanceData: before.attendanceData.map(row => ({ ...row, employeeId: record.employeeId })) })),
+      salaryCorrections: payload.salaryCorrections.map(row => ({ ...row, salaryRecordId: null })) };
+    readFileSyncMock.mockReturnValue(JSON.stringify(artifact));
+    expect(inspectSyntheticJournal().errors)
+      .toEqual(['salaryCorrections latest journal is newer than its salary projection.']);
+    expect(transactionMock).not.toHaveBeenCalled();
+  });
+
+  it('retains null-linked journal history after the salary projection is deleted', () => {
+    const payload = journalBackupFixture();
+    const artifact = { ...payload, salaryRecords: [],
+      salaryCorrections: payload.salaryCorrections.map(row => ({ ...row, salaryRecordId: null })) };
+    readFileSyncMock.mockReturnValue(JSON.stringify(artifact));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
   });
 
   it('rejects path traversal backup ids before touching the filesystem', () => {
@@ -571,6 +746,7 @@ describe('db-monitoring restore safety', () => {
           rejectReason: null
         }
       ],
+      salaryCorrections: [],
       salaryRecords: [
         {
           id: 9,
@@ -664,7 +840,7 @@ describe('db-monitoring restore safety', () => {
         }
       ]
     ]);
-    expect(txExecuteMock).toHaveBeenCalledTimes(AUTHORITATIVE_SEQUENCE_TABLES.length);
+    expect(txExecuteMock).toHaveBeenCalledTimes(AUTHORITATIVE_SEQUENCE_TABLES.length + 2);
     expect(createEmployeeMock).not.toHaveBeenCalled();
     expect(createOrUpdateSettingsMock).not.toHaveBeenCalled();
     expect(createHolidayMock).not.toHaveBeenCalled();
@@ -697,6 +873,7 @@ describe('db-monitoring restore safety', () => {
         ],
         pendingBindings: [],
         salaryRecords: [],
+        salaryCorrections: [],
         temporaryAttendance: [],
         calculationRules: [],
         taiwanHolidays: []
@@ -756,7 +933,8 @@ describe('db-monitoring restore safety', () => {
           }
         ],
         pendingBindings: [],
-        salaryRecords: [
+        salaryCorrections: [],
+      salaryRecords: [
           {
             id: 9,
             salaryYear: 2026,
@@ -871,6 +1049,7 @@ describe('db-monitoring restore safety', () => {
           }
         ],
         salaryRecords: [],
+        salaryCorrections: [],
         temporaryAttendance: [],
         calculationRules: [],
         taiwanHolidays: []
@@ -914,7 +1093,8 @@ describe('db-monitoring restore safety', () => {
         settings: null,
         holidays: [],
         pendingBindings: [],
-        salaryRecords: [
+        salaryCorrections: [],
+      salaryRecords: [
           {
             id: 9,
             salaryYear: 2026,
@@ -1047,6 +1227,7 @@ describe('db-monitoring restore safety', () => {
         pendingBindings: [],
         holidays: [],
         salaryRecords: [],
+        salaryCorrections: [],
         temporaryAttendance: [],
         calculationRules: [],
         taiwanHolidays: []
@@ -1054,18 +1235,19 @@ describe('db-monitoring restore safety', () => {
     );
     readFileMock.mockResolvedValue(readFileSyncMock());
 
-    executeMock
-      .mockResolvedValueOnce([{ count: 2 }])
-      .mockResolvedValueOnce([{ count: 1 }])
-      .mockResolvedValueOnce([{ count: 1 }])
-      .mockResolvedValueOnce([{ count: 1 }])
-      .mockResolvedValueOnce([{ count: 4 }])
-      .mockResolvedValueOnce([{ count: 3 }])
-      .mockResolvedValueOnce([{ count: 2 }])
-      .mockResolvedValueOnce([{ count: 10 }]);
+    selectFromMock.mockImplementation(async table => {
+      const counts = new Map([[schema.employees, 2], [schema.settings, 1], [schema.pendingBindings, 1],
+        [schema.holidays, 1], [schema.salaryRecords, 4], [schema.salaryCorrections, 0],
+        [schema.temporaryAttendance, 3], [schema.calculationRules, 2], [schema.taiwanHolidays, 10]]);
+      return Array.from({ length: counts.get(table) ?? 0 }, (_, id) => ({ id: id + 1,
+        ...(table === schema.salaryRecords ? { revision: 0, grossSalary: 0, totalDeductions: 0, netSalary: 0 } : {}) }));
+    });
 
     txExecuteMock
+      .mockResolvedValueOnce([]) // Restore table lock.
+      .mockResolvedValueOnce([]) // Transactional administrator-session invalidation.
       .mockResolvedValueOnce([{ count: 1 }])
+      .mockResolvedValueOnce([{ count: 0 }])
       .mockResolvedValueOnce([{ count: 0 }])
       .mockResolvedValueOnce([{ count: 0 }])
       .mockResolvedValueOnce([{ count: 0 }])
@@ -1084,6 +1266,7 @@ describe('db-monitoring restore safety', () => {
       pendingBindings: 0,
       holidays: 0,
       salaryRecords: 0,
+      salaryCorrections: 0,
       temporaryAttendance: 0,
       calculationRules: 0,
       taiwanHolidays: 0
@@ -1094,6 +1277,7 @@ describe('db-monitoring restore safety', () => {
       pendingBindings: 1,
       holidays: 1,
       salaryRecords: 4,
+      salaryCorrections: 0,
       temporaryAttendance: 3,
       calculationRules: 2,
       taiwanHolidays: 10
@@ -1104,6 +1288,7 @@ describe('db-monitoring restore safety', () => {
       pendingBindings: 0,
       holidays: 0,
       salaryRecords: 0,
+      salaryCorrections: 0,
       temporaryAttendance: 0,
       calculationRules: 0,
       taiwanHolidays: 0
@@ -1128,6 +1313,7 @@ describe('db-monitoring restore safety', () => {
         pendingBindings: [],
         holidays: [],
         salaryRecords: [],
+        salaryCorrections: [],
         temporaryAttendance: [],
         calculationRules: [],
         taiwanHolidays: []
@@ -1145,6 +1331,7 @@ describe('db-monitoring restore safety', () => {
         callback({
           delete: txDeleteMock,
           insert: txInsertMock,
+          select: selectMock,
           execute: txExecuteMock
         })
       );

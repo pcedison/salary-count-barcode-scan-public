@@ -12,6 +12,10 @@ const checkDatabaseConnectionMock = vi.hoisted(() => vi.fn(async () => ({
 })));
 const createDatabaseBackupMock = vi.hoisted(() => vi.fn(async () => 'backup-1'));
 const restoreFromBackupMock = vi.hoisted(() => vi.fn(async () => ({ success: true })));
+const getRestorePreflightMock = vi.hoisted(() => vi.fn(async () => ({
+  requiresJournalConfirmation: true, replacedJournalRows: 1, confirmationToken: 'a'.repeat(64),
+  payrollTotals: { delta: { grossSalary: 0, totalDeductions: 1000, netSalary: -1000 } },
+})));
 const deleteBackupMock = vi.hoisted(() => vi.fn(async () => true));
 const getOperationalMetricsSummaryMock = vi.hoisted(() =>
   vi.fn(() => ({
@@ -54,6 +58,7 @@ vi.mock('./db-monitoring', () => ({
   },
   getBackupsList: vi.fn(() => []),
   restoreFromBackup: restoreFromBackupMock,
+  getRestorePreflight: getRestorePreflightMock,
   deleteBackup: deleteBackupMock,
   getConnectionHistory: vi.fn(() => []),
   validateBackupId: validateBackupIdMock
@@ -87,6 +92,7 @@ beforeEach(() => {
   checkDatabaseConnectionMock.mockClear();
   createDatabaseBackupMock.mockClear();
   restoreFromBackupMock.mockClear();
+  getRestorePreflightMock.mockClear();
   deleteBackupMock.mockClear();
   getOperationalMetricsSummaryMock.mockClear();
   validateBackupIdMock.mockClear();
@@ -94,6 +100,64 @@ beforeEach(() => {
 });
 
 describe('dashboard routes integration', () => {
+  it('previews payroll impact without creating a backup or restoring data', async () => {
+    const server = await createJsonTestServer(registerDashboardRoutes, { setupApp: setupTestAdminSession });
+    try {
+      const result = await jsonRequest<Record<string, any>>(server.baseUrl,
+        '/api/dashboard/backups/backup-1/restore-preview?type=manual', { headers: { [TEST_ADMIN_HEADER]: 'true' } });
+      expect(result.response.status).toBe(200);
+      expect(result.response.headers.get('cache-control')).toBe('no-store');
+      expect(result.body?.data.payrollTotals.delta.netSalary).toBe(-1000);
+      expect(getRestorePreflightMock).toHaveBeenCalledWith('backup-1', 'manual');
+      expect(createDatabaseBackupMock).not.toHaveBeenCalled();
+      expect(restoreFromBackupMock).not.toHaveBeenCalled();
+    } finally { await server.close(); }
+  });
+
+  it.each([
+    [{}, 400],
+    [{ confirmRestore: true, confirmationToken: 'b'.repeat(64), confirmJournalReplacement: true }, 409],
+    [{ confirmRestore: true, confirmationToken: 'a'.repeat(64) }, 409],
+  ])('refuses unconfirmed or stale restore requests before side effects', async (body, status) => {
+    const server = await createJsonTestServer(registerDashboardRoutes, { setupApp: setupTestAdminSession });
+    try {
+      const result = await jsonRequest(server.baseUrl, '/api/dashboard/backups/backup-1/restore', {
+        method: 'POST', headers: { [TEST_ADMIN_HEADER]: 'true', 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      expect(result.response.status).toBe(status);
+      expect(createDatabaseBackupMock).not.toHaveBeenCalled();
+      expect(restoreFromBackupMock).not.toHaveBeenCalled();
+    } finally { await server.close(); }
+  });
+
+  it('passes explicit confirmation into the locked restore and expires the current admin cookie', async () => {
+    const server = await createJsonTestServer(registerDashboardRoutes, { setupApp: setupTestAdminSession });
+    try {
+      const result = await jsonRequest(server.baseUrl, '/api/dashboard/backups/backup-1/restore', {
+        method: 'POST', headers: { [TEST_ADMIN_HEADER]: 'true', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'manual', confirmRestore: true, confirmJournalReplacement: true, confirmationToken: 'a'.repeat(64) }),
+      });
+      expect(result.response.status).toBe(200);
+      expect(createDatabaseBackupMock).toHaveBeenCalledTimes(1);
+      expect(restoreFromBackupMock).toHaveBeenCalledWith('backup-1', 'manual', {
+        skipPreRestoreBackup: true, confirmJournalReplacement: true, confirmationToken: 'a'.repeat(64),
+      });
+      expect(result.response.headers.get('set-cookie')).toContain('Expires=Thu, 01 Jan 1970');
+    } finally { await server.close(); }
+  });
+
+  it('refuses cross-origin restores before reading the backup or creating safeguards', async () => {
+    const server = await createJsonTestServer(registerDashboardRoutes, { setupApp: setupTestAdminSession });
+    try {
+      const result = await jsonRequest(server.baseUrl, '/api/dashboard/backups/backup-1/restore', {
+        method: 'POST', headers: { [TEST_ADMIN_HEADER]: 'true', 'Content-Type': 'application/json', Origin: 'https://untrusted.invalid' }, body: '{}',
+      });
+      expect(result.response.status).toBe(403);
+      expect(getRestorePreflightMock).not.toHaveBeenCalled();
+      expect(createDatabaseBackupMock).not.toHaveBeenCalled();
+    } finally { await server.close(); }
+  });
+
   it('requires admin authorization for all dashboard operations routes', async () => {
     const server = await createJsonTestServer(registerDashboardRoutes, {
       setupApp: async (app) => {
@@ -106,6 +170,7 @@ describe('dashboard routes integration', () => {
         { method: 'GET', path: '/api/dashboard/connection-history' },
         { method: 'POST', path: '/api/dashboard/backups', body: {} },
         { method: 'GET', path: '/api/dashboard/backups' },
+        { method: 'GET', path: '/api/dashboard/backups/backup-1/restore-preview' },
         { method: 'POST', path: '/api/dashboard/backups/backup-1/restore', body: {} },
         { method: 'GET', path: '/api/dashboard/logs' },
         { method: 'GET', path: '/api/dashboard/logs/dates' },

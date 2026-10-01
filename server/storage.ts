@@ -1,4 +1,5 @@
-﻿import { eq, and, desc, or, isNull, isNotNull, inArray, lte, ilike, type SQL, sql as drizzleSql } from "drizzle-orm";
+import { assertPayrollWritesEnabled } from './config/payrollWrites';
+import { eq, and, gt, desc, or, isNull, isNotNull, inArray, lte, ilike, type SQL, sql as drizzleSql } from "drizzle-orm";
 import { normalizeDateToDash, normalizeDateToSlash } from "../shared/utils/specialLeaveSync";
 import { createLogger } from "./utils/logger";
 import {
@@ -17,7 +18,6 @@ import {
 } from "@shared/schema";
 
 import { db } from './db';
-import { assertPayrollWritesEnabled } from './config/payrollWrites';
 import { DatabaseEmployeeRepository } from './repositories/employeeRepository';
 import { compareAttendanceByLatestEvent } from './routes/scan-helpers';
 
@@ -116,6 +116,8 @@ function buildTemporaryAttendancePageWhere(filters?: TemporaryAttendancePageFilt
   return conditions.length > 0 ? and(...conditions) : undefined;
 }
 
+export type SettingsWrite = Omit<InsertSettings, 'adminPin'> & { adminPin?: string };
+
 export interface IStorage {
   // Employee methods - for barcode scanning
   getAllEmployees(): Promise<Employee[]>;
@@ -148,7 +150,9 @@ export interface IStorage {
 
   // Settings methods
   getSettings(): Promise<Settings | undefined>;
-  createOrUpdateSettings(newSettings: InsertSettings): Promise<Settings>;
+  createOrUpdateSettings(newSettings: SettingsWrite): Promise<Settings>;
+
+  compareAndSwapAdminPin(expectedHash: string, newHash: string): Promise<boolean>;
 
   // Salary records and monthly salary runs live in
   // server/repositories/salaryRepository.ts and
@@ -178,6 +182,7 @@ export interface IStorage {
   createOAuthState(state: InsertOAuthState): Promise<OAuthState>;
   getOAuthState(stateValue: string): Promise<OAuthState | undefined>;
   deleteOAuthState(stateValue: string): Promise<boolean>;
+  consumeOAuthState(stateValue: string): Promise<OAuthState | undefined>;
   cleanupExpiredOAuthStates(): Promise<void>;
 
   // Encryption migration
@@ -478,7 +483,18 @@ export class DatabaseStorage implements IStorage {
     return setting;
   }
 
-  async createOrUpdateSettings(newSettings: InsertSettings): Promise<Settings> {
+  async compareAndSwapAdminPin(expectedHash: string, newHash: string): Promise<boolean> {
+    const current = await this.getSettings();
+    if (!current) return false;
+    const [updated] = await db.update(settings)
+      .set({ adminPin: newHash, updatedAt: new Date() })
+      .where(and(eq(settings.id, current.id), eq(settings.adminPin, expectedHash)))
+      .returning({ id: settings.id });
+    return !!updated;
+  }
+
+  // Holiday methods
+  async createOrUpdateSettings(newSettings: SettingsWrite): Promise<Settings> {
     const existingSettings = await this.getSettings();
 
     if (existingSettings) {
@@ -489,6 +505,7 @@ export class DatabaseStorage implements IStorage {
         .returning();
       return updatedSettings;
     } else {
+      if (!newSettings.adminPin) throw new Error('An administrator PIN is required to initialize settings.');
       const [createdSettings] = await db
         .insert(settings)
         .values(newSettings as typeof settings.$inferInsert)
@@ -497,7 +514,8 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  // Holiday methods
+  // Salary record methods
+
   async getAllHolidays(): Promise<Holiday[]> {
     return await db.select().from(holidays);
   }
@@ -700,6 +718,11 @@ export class DatabaseStorage implements IStorage {
       .where(eq(oauthStates.state, stateValue))
       .returning();
     return !!deleted;
+  }
+
+  async consumeOAuthState(stateValue: string): Promise<OAuthState | undefined> {
+    const [consumed] = await db.delete(oauthStates).where(and(eq(oauthStates.state, stateValue), gt(oauthStates.expiresAt, new Date()))).returning();
+    return consumed;
   }
 
   async cleanupExpiredOAuthStates(): Promise<void> {

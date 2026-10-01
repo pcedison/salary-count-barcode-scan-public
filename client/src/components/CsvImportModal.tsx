@@ -5,6 +5,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/hooks/use-toast';
 import { Loader2, Upload, FileText, Check, AlertCircle } from 'lucide-react';
 import { apiRequest } from '@/lib/queryClient';
+import { useEmployees } from '@/hooks/useEmployees';
+import { salaryImportTarget } from '@/lib/csvImportTarget';
+import { Label } from '@/components/ui/label';
+import { parseCsvRows } from '@shared/utils/csv';
 
 interface CsvImportModalProps {
   open: boolean;
@@ -22,16 +26,21 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
   const [activeTab, setActiveTab] = useState<'attendance' | 'salary'>('attendance');
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const { activeEmployees } = useEmployees();
+  const [targetValue, setTargetValue] = useState('');
+  const importing = useRef(false);
+  const target = salaryImportTarget('employee', targetValue);
   const [parseResult, setParseResult] = useState<{
     success: boolean;
     message: string;
-    preview?: unknown[];
+    preview?: any[];
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const resetState = () => {
     setFile(null);
     setParseResult(null);
+    setTargetValue('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -63,7 +72,7 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
     reader.onload = (e) => {
       try {
         const text = e.target?.result as string;
-        const rows = text.split('\n');
+        const rows = parseCsvRows(text).filter(row => row.some(cell => cell.trim()));
 
         // 簡單驗證CSV格式
         if (rows.length < 2) {
@@ -73,20 +82,17 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
         // 依據當前標籤頁驗證
         if (activeTab === 'attendance') {
           // 驗證考勤數據格式
-          const headers = rows[0].split(',');
-          const requiredFields = ['日期', '上班時間', '下班時間'];
+          const headers = rows[0].map(cell => cell.trim());
+          const requiredFields = [['日期', 'Date'], ['上班時間', 'Clock In'], ['下班時間', 'Clock Out']];
 
           for (const field of requiredFields) {
-            if (!headers.includes(field)) {
-              throw new Error(`缺少必要欄位: ${field}`);
+            if (!field.some(alias => headers.includes(alias))) {
+              throw new Error(`缺少必要欄位: ${field[0]}`);
             }
           }
 
           // 預覽解析結果 (最多5行)
-          const preview = rows.slice(0, Math.min(6, rows.length)).map(row => {
-            const cells = row.split(',');
-            return cells.map(cell => cell.trim());
-          });
+          const preview = rows.slice(0, Math.min(6, rows.length));
 
           setParseResult({
             success: true,
@@ -95,8 +101,9 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
           });
         } else {
           // 驗證完整薪資記錄格式
-          const firstLine = rows[0].split(',');
-          const requiredFields = ['薪資年份', '薪資月份', '基本底薪', '總薪資', '實領金額'];
+          const snapshot = rows[0][0] === 'Salary record';
+          const firstLine = snapshot ? rows.map(row => row[0]) : rows[0];
+          const requiredFields = snapshot ? ['Year', 'Month', 'Base salary', 'Gross salary', 'Net salary'] : ['薪資年份', '薪資月份', '基本底薪', '總薪資', '實領金額'];
 
           for (const field of requiredFields) {
             if (!firstLine.includes(field)) {
@@ -107,21 +114,21 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
           // 薪資記錄檔案結構較複雜，檢查是否包含考勤詳細記錄部分
           let hasAttendanceSection = false;
           for (const row of rows) {
-            if (row.includes('考勤詳細記錄')) {
+            if (row[0] === (snapshot ? 'Finalized attendance snapshot' : '考勤詳細記錄')) {
               hasAttendanceSection = true;
               break;
             }
           }
 
           if (!hasAttendanceSection) {
-            throw new Error("找不到考勤詳細記錄部分，請確認是否使用系統匯出的完整薪資記錄檔案");
+            throw new Error('找不到封存出勤快照或考勤詳細記錄段落。');
           }
 
           // 顯示基本解析結果
           setParseResult({
             success: true,
             message: "成功解析完整薪資記錄檔案",
-            preview: rows.slice(0, Math.min(10, rows.length)).map(row => row.split(','))
+            preview: rows.slice(0, Math.min(10, rows.length))
           });
         }
       } catch (error) {
@@ -147,7 +154,12 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
   };
 
   const handleImport = async () => {
-    if (!file || !parseResult?.success) return;
+    if (!file || !parseResult?.success || importing.current) return;
+    if (activeTab === 'salary' && !target) {
+      toast({ title: '請選擇匯入員工', description: '請明確選擇員工，並確認 CSV 是該員工尚未結算的月份。', variant: 'destructive' });
+      return;
+    }
+    importing.current = true;
 
     setLoading(true);
 
@@ -164,7 +176,8 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
 
       // 準備請求數據
       const requestData = {
-        csvContent: fileContent
+        csvContent: fileContent,
+        ...(activeTab === 'salary' ? target : {}),
       };
 
       // 發送API請求
@@ -198,18 +211,20 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
         variant: "destructive",
       });
     } finally {
+      importing.current = false;
       setLoading(false);
     }
   };
 
   const handleClose = () => {
+    if (loading || importing.current) return;
     resetState();
     onOpenChange(false);
   };
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="sm:max-w-[600px] w-[calc(100%-1rem)] max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>匯入 CSV 資料</DialogTitle>
           <DialogDescription>
@@ -226,9 +241,9 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
           }}
           className="w-full"
         >
-          <TabsList className="grid w-full grid-cols-1 sm:grid-cols-2">
-            <TabsTrigger value="attendance">考勤記錄匯入</TabsTrigger>
-            <TabsTrigger value="salary">完整薪資記錄匯入</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="attendance" disabled={loading}>考勤記錄匯入</TabsTrigger>
+            <TabsTrigger value="salary" disabled={loading}>完整薪資記錄匯入</TabsTrigger>
           </TabsList>
 
           <TabsContent value="attendance" className="mt-4">
@@ -248,15 +263,23 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
           <TabsContent value="salary" className="mt-4">
             <div className="space-y-4">
               <div className="text-sm text-muted-foreground">
-                <p>匯入完整薪資記錄，包含薪資計算結果和考勤詳情。使用此功能恢復之前匯出的薪資記錄。</p>
-                <p className="mt-2 font-semibold">注意：匯入完整薪資記錄將會覆蓋現有的薪資數據，請謹慎操作。</p>
+                <p>支援系統匯出的封存薪資快照 CSV，以及舊版中文欄位與「考勤詳細記錄」格式。此流程只新增所選員工尚未結算月份的薪資紀錄，保留檔案內的薪資與出勤資料。</p>
+                <p className="mt-2">CSV 的員工必須與所選員工一致。「Record ID」是封存來源參考，會保留在 CSV 中；匯入時由系統建立新紀錄，請勿改寫 ID 來繞過保護。</p>
+                <p className="mt-2 font-semibold">已存在的結算紀錄不能以 CSV 覆寫，帶更正修訂的快照也不能重新匯入。請到歷史薪資使用更正預覽，確認影響與差額後再保存。</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="salary-import-employee">匯入員工（必選）</Label>
+                <select id="salary-import-employee" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={targetValue} disabled={loading} onChange={(event) => setTargetValue(event.target.value)}>
+                  <option value="">請選擇員工</option>
+                  {activeEmployees.map((employee) => <option value={employee.id} key={employee.id}>{employee.name}</option>)}
+                </select>
               </div>
             </div>
           </TabsContent>
         </Tabs>
 
         <div className="mt-4">
-          <div className="flex flex-col items-center justify-center rounded-md border-2 border-dashed p-5 sm:p-6">
+          <div className="flex flex-col items-center justify-center border-2 border-dashed rounded-md p-6">
             <input
               ref={fileInputRef}
               type="file"
@@ -278,7 +301,6 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
               variant="outline"
               onClick={() => fileInputRef.current?.click()}
               disabled={loading}
-              className="w-full sm:w-auto"
             >
               {loading ? (
                 <>
@@ -313,7 +335,7 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
                             {parseResult.preview.map((row, rowIndex) => (
                               <tr key={rowIndex} className={rowIndex === 0 ? 'bg-gray-100' : ''}>
                                 {Array.isArray(row) && row.map((cell, cellIndex) => (
-                                  <td key={cellIndex} className="max-w-[8rem] truncate px-2 py-1 text-xs sm:max-w-[10rem]">
+                                  <td key={cellIndex} className="px-2 py-1 text-xs truncate max-w-[100px]">
                                     {cell}
                                   </td>
                                 ))}
@@ -335,14 +357,12 @@ export function CsvImportModal({ open, onOpenChange, onImportSuccess }: CsvImpor
             variant="outline"
             onClick={handleClose}
             disabled={loading}
-            className="w-full sm:w-auto"
           >
             取消
           </Button>
           <Button
             onClick={handleImport}
-            disabled={loading || !file || !parseResult?.success}
-            className="w-full sm:w-auto"
+            disabled={loading || !file || !parseResult?.success || (activeTab === 'salary' && !target)}
           >
             {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             匯入

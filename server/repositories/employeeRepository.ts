@@ -1,3 +1,4 @@
+import { assertPayrollWritesEnabled } from '../config/payrollWrites';
 import { and, desc, eq, inArray, isNotNull, isNull, lte } from 'drizzle-orm';
 
 import {
@@ -13,7 +14,6 @@ import {
 import { isAESEncrypted } from '@shared/utils/encryption';
 
 import { db } from '../db';
-import { assertPayrollWritesEnabled } from '../config/payrollWrites';
 import {
   EMPLOYEE_RECYCLE_RETENTION_DAYS,
   SALARY_RETENTION_POLICY,
@@ -431,7 +431,8 @@ export class DatabaseEmployeeRepository {
     const records = await executor
       .select()
       .from(salaryRecords)
-      .where(eq(salaryRecords.employeeId, employee.id));
+      .where(eq(salaryRecords.employeeId, employee.id))
+      .for('update');
 
     if (records.length === 0) {
       return 0;

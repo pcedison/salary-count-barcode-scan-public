@@ -117,7 +117,7 @@ export function useAttendanceQueries({ isAdmin, employees, baseMonthSalary }: Us
   const { data: rawSalaryRecords = [] } = useQuery<
     FinalizedSalaryRecordLike[] | PaginatedPayload<FinalizedSalaryRecordLike>
   >({
-    queryKey: ['/api/salary-records'],
+    queryKey: ['/api/salary-records/finalized-months'],
     enabled: isAdmin,
     staleTime: 30_000,
     refetchInterval: 60_000,

@@ -7,6 +7,10 @@ import {
 } from "./databaseUrl";
 
 describe("getDatabaseProviderInfo", () => {
+  it("recognizes an IPv6 loopback database", () => {
+    expect(getDatabaseProviderInfo("postgresql://synthetic@[::1]:5432/payroll_test_ipv6"))
+      .toMatchObject({ key: "postgres", host: "::1", isExternal: false });
+  });
   it("detects synthetic external PostgreSQL hosts", () => {
     expect(
       getDatabaseProviderInfo("postgresql://user:pass@db.internal.test:5432/postgres"),

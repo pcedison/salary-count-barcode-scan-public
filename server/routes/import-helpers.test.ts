@@ -109,11 +109,7 @@ describe('import helpers', () => {
         clockIn: '08:00',
         clockOut: '17:00',
         isHoliday: false,
-        isBarcodeScanned: false,
-        employeeId: null,
-        holidayId: null,
-        holidayType: null,
-        createdAt: null
+        isBarcodeScanned: false
       }
     ]);
   });
