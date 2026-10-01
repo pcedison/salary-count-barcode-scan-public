@@ -13,13 +13,13 @@ version 2.2.1. The private PR #12 is a separate repository and deployment line.
 | Historical welfare detail disagreed with saved total | Saved total remains authoritative; signed reconciliation exposes missing/contradictory detail | Positive, negative, complete and missing detail PDF cases pass |
 | Old-binary backout could overwrite corrections | Separate compatible maintenance build blocks HTTP, repository, batch, automation, retention and legacy JSON backup writes; strict production startup | 27 actual HTTP attempts blocked; salary/journal fingerprints unchanged; desktop/mobile reads remain available |
 | New public settlements omitted calculation basis | Calculation builder captures the actual monthly base; manual edits and CSV preserve the archived basis or legacy null | Actual PostgreSQL new/atomic/rerun/manual/CSV cases pass |
-| Ordinary administrator credentials could elevate SUPER outside production | Every environment requires an independently configured supported SUPER hash | 17 direct auth cases and HTTP elevation regressions pass; production hashed flow remains compatible |
+| Ordinary administrator credentials could elevate SUPER outside production, while unsupported configuration falsely appeared ready | Every environment requires an independently configured supported SUPER hash; startup and configured flags use the same validation | 127 targeted auth/configuration/HTTP cases pass; current and legacy hash flows remain compatible |
 | Latest journal and salary could contradict each other | Reject older projections even for null links; compare same-revision archived payroll fields while preserving audit redaction and legal retention changes | Corrupted artifacts are refused before mutation; retained and higher-automation-revision cases still restore |
 | Fresh restore could reuse a deleted salary's retained audit ID | Salary sequence reserves the maximum journal original ID as well as live IDs and the existing sequence highwater | Actual fresh database restore, next salary insert and first correction keep old/new histories separate |
 | CSV offered a record-ID target that could never succeed | Offer only the explicit employee target and direct existing/revised records to correction preview | Direct form tests and connected Chrome desktop/390px mobile pass; export IDs and backend protection remain unchanged |
 
-Public candidate: TypeScript, build and runtime audit pass; 651 unit tests and
-201 smoke tests pass (overlap exists; do not sum them). Actual PostgreSQL correction
+Public candidate: TypeScript, build and runtime audit pass; 713 unit tests and
+206 smoke tests pass (overlap exists; do not sum them). Actual PostgreSQL correction
 runner: 30/30; backup: 34/34; external whole-database recovery session invalidation:
 6/6. The generic release command's restore check skips without DATABASE_URL;
 the separate guarded backup runner supplies a nonempty backup and mandatory checks.
@@ -63,6 +63,12 @@ retains them. Cluster globals and managed storage object contents were not backe
 up. The live baseline did not attest that all writers were drained, so it is not
 the final migration cutpoint. No application was started against private raw copies.
 
+The runtime's existing PDF, JSON backups and audit logs also have independent
+account-encrypted copies with successful decrypt/hash roundtrips. This preservation
+does not create or rerun a report. The compatible maintenance PR #102 was merged
+at `24e94ca935548d627019ef9265a881c9750edc5c`; its production deployment is checked
+separately from GitHub merge status.
+
 ## Remaining release gates
 
 - Native Chrome file chooser upload remains unverified because the connected
@@ -71,7 +77,7 @@ the final migration cutpoint. No application was started against private raw cop
   rendering. Docker CI and deployed browser/PDF acceptance remain separate gates.
 - The production service has no mounted volume at the read-only baseline; existing
   container JSON backups must not be treated as durable recovery copies.
-- A final drained migration cutpoint, runtime PDF preservation, old-instance drain,
+- A final drained migration cutpoint, old-instance drain,
   additive migration and post-deployment smoke checks remain separate operations.
   See [the release and recovery runbook](PAYROLL_CORRECTION_RELEASE_RUNBOOK.md).
 - Unknown historical calculation bases, actual attendance, holiday transfers and

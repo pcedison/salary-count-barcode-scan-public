@@ -109,6 +109,7 @@ describe('bounded admin authentication integration', () => {
     try {
       const login = await postPin(server.baseUrl, '/api/verify-admin', { pin: TEST_PIN });
       expect(login.response.status).toBe(200);
+      expect(login.body.superAdminConfigured).toBe(false);
       const cookie = login.response.headers.get('set-cookie')!.split(';')[0];
       storageMock.getSettings.mockClear();
 
@@ -117,7 +118,7 @@ describe('bounded admin authentication integration', () => {
       expect(elevation.body).toMatchObject({ success: false });
       expect(storageMock.getSettings).not.toHaveBeenCalled();
       const session = await jsonRequest<Record<string, any>>(server.baseUrl, '/api/admin/session', { headers: { cookie } });
-      expect(session.body).toMatchObject({ isAdmin: true, permissionLevel: 3 });
+      expect(session.body).toMatchObject({ isAdmin: true, permissionLevel: 3, superAdminConfigured: false });
     } finally {
       await server.close();
     }
@@ -128,6 +129,7 @@ describe('bounded admin authentication integration', () => {
     try {
       const login = await postPin(server.baseUrl, '/api/verify-admin', { pin: TEST_PIN });
       expect(login.response.status).toBe(200);
+      expect(login.body.superAdminConfigured).toBe(true);
       const cookie = login.response.headers.get('set-cookie')!.split(';')[0];
       expect((await postPin(server.baseUrl, '/api/admin/elevate-super', { pin: TEST_PIN }, cookie)).response.status).toBe(401);
       const ordinarySession = await jsonRequest<Record<string, any>>(server.baseUrl, '/api/admin/session', { headers: { cookie } });
@@ -564,11 +566,14 @@ describe('admin routes integration', () => {
     }
   });
 
-  it('rejects plaintext SUPER_ADMIN_PIN values in production even when the route is reachable', async () => {
-    process.env.NODE_ENV = 'production';
+  it.each(['development', 'test', 'production'].flatMap(nodeEnv => [
+    { nodeEnv, caseName: 'plaintext', configured: TEST_SUPER_PIN },
+    { nodeEnv, caseName: 'malformed hash', configured: 'invalid:hash' },
+  ]))('treats unsupported SUPER $caseName as unconfigured in $nodeEnv even when startup validation is bypassed', async ({ nodeEnv, configured }) => {
+    process.env.NODE_ENV = nodeEnv;
     process.env.SESSION_SECRET = 'admin-session-secret-1234567890123456';
     process.env.SESSION_SECURE = 'false';
-    process.env.SUPER_ADMIN_PIN = TEST_SUPER_PIN;
+    process.env.SUPER_ADMIN_PIN = configured;
 
     const server = await createJsonTestServer(registerAdminRoutes, {
       setupApp: async (app) => {
@@ -601,11 +606,16 @@ describe('admin routes integration', () => {
         })
       });
 
-      expect(elevateResult.response.status).toBe(401);
+      expect(loginResult.body.superAdminConfigured).toBe(false);
+      expect(elevateResult.response.status).toBe(nodeEnv === 'production' ? 503 : 401);
       expect(elevateResult.body).toMatchObject({
         success: false,
-        message: 'Super-admin credential is incorrect'
+        message: nodeEnv === 'production' ? 'SUPER_ADMIN_PIN is not configured for this deployment.' : 'Super-admin credential is incorrect'
       });
+      const session = await jsonRequest<Record<string, any>>(server.baseUrl, '/api/admin/session', {
+        headers: { cookie: cookieHeader || '' }
+      });
+      expect(session.body).toMatchObject({ isAdmin: true, permissionLevel: 3, superAdminConfigured: false });
     } finally {
       await server.close();
     }

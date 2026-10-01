@@ -46,6 +46,34 @@ function buildEnv(overrides: Record<string, string | undefined> = {}): NodeJS.Pr
 }
 
 describe('validateEnv', () => {
+  const configurationCases = [
+    { caseName: 'missing', configured: undefined, supported: true },
+    { caseName: 'empty', configured: '', supported: true },
+    { caseName: 'whitespace', configured: '   ', supported: true },
+    { caseName: 'plaintext', configured: 'synthetic-invalid-super', supported: false },
+    { caseName: 'malformed hash', configured: 'invalid:hash', supported: false },
+    { caseName: 'noncanonical iterations', configured: `${'ab'.repeat(16)}:0600000:${'cd'.repeat(64)}`, supported: false },
+    { caseName: 'excessive iterations', configured: `${'ab'.repeat(16)}:2000001:${'cd'.repeat(64)}`, supported: false },
+    { caseName: 'current hash', configured: `${'ab'.repeat(16)}:600000:${'cd'.repeat(64)}`, supported: true },
+    { caseName: 'legacy hash', configured: `${'ab'.repeat(16)}:${'cd'.repeat(64)}`, supported: true },
+  ];
+
+  it.each(['development', 'test', 'production'].flatMap(nodeEnv => configurationCases.map(testCase => ({ nodeEnv, ...testCase }))))(
+    'validates SUPER configuration $caseName consistently in $nodeEnv', ({ nodeEnv, configured, supported }) => {
+      process.env = buildEnv({
+        NODE_ENV: nodeEnv, SUPER_ADMIN_PIN: configured,
+        SESSION_SECRET: 'synthetic-startup-session-secret-1234567890', SESSION_SECURE: 'true',
+        BACKUP_ENCRYPTION_KEY: 'synthetic-startup-backup-key-1234567890',
+      });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      if (supported) {
+        expect(validateEnv().NODE_ENV).toBe(nodeEnv);
+      } else {
+        expect(() => validateEnv()).toThrow(new Error('SUPER_ADMIN_PIN must use a supported hash format'));
+      }
+    },
+  );
+
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
     vi.restoreAllMocks();
@@ -163,7 +191,7 @@ describe('validateEnv', () => {
     });
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    expect(() => validateEnv()).toThrow('SUPER_ADMIN_PIN must be hashed in production');
+    expect(() => validateEnv()).toThrow('SUPER_ADMIN_PIN must use a supported hash format');
   });
 
   it('accepts hashed SUPER_ADMIN_PIN in production', () => {

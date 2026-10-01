@@ -70,7 +70,8 @@ function getConfiguredSuperAdminPin(): string | null {
 }
 
 export function isSuperAdminPinConfigured(): boolean {
-  return Boolean(getConfiguredSuperAdminPin());
+  const configured = getConfiguredSuperAdminPin();
+  return configured !== null && isHashedPin(configured);
 }
 
 export async function verifyAdminPermission(
