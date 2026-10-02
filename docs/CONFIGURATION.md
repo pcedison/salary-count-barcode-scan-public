@@ -70,6 +70,12 @@ If you are using a known Supabase pooler host that presents an untrusted certifi
 
 This exception is only accepted for known Supabase pooler hosts and should not be used for arbitrary database hosts.
 
+維運腳本的 `scripts/lib/postgres-client.mjs` 亦預設驗證外部資料庫憑證；
+只有顯式設定上述例外且主機屬於 `.pooler.supabase.com` 才能停用驗證，並顯示警告。
+僅 loopback (`localhost`、`127.0.0.1`、`::1`) 合成資料庫使用非 TLS 連線。
+連線 URL 的 `sslmode=disable` 不會覆蓋外部 TLS 政策；正式執行前須確認憑證鏈，
+不可為讓檢查通過而對任意主機關閉驗證。本次修正沒有更動平台環境變數。
+
 ## Runtime path variables
 
 | Variable | Default | Notes |

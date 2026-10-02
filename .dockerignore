@@ -7,6 +7,12 @@ dist
 coverage
 backups
 logs
+.jev-workflow
+tmp
+.claude
+.local
+playwright-report
+test-results
 .github
 
 .env

@@ -24,6 +24,7 @@ import {
   encryptEmployeeIdentityForStorage,
   getEmployeeDisplayId,
   maskEmployeeIdentityForLog,
+  matchesEmployeeIdentity,
   normalizeEmployeeIdentity,
   prepareUpdatedEmployeeIdentityForStorage
 } from '../utils/employeeIdentity';
@@ -176,7 +177,14 @@ export class DatabaseEmployeeRepository {
     for (const candidate of lookupCandidates.map(normalizeEmployeeIdentity)) {
       const cachedEmployee = lookupCache.get(candidate);
       if (cachedEmployee) {
-        return cachedEmployee;
+        // Cached identities locate a row, but cannot authorize its current state:
+        // another instance or an app restore may bypass this instance's invalidation.
+        const currentEmployee = await this.getEmployeeById(cachedEmployee.id);
+        if (currentEmployee && matchesEmployeeIdentity(currentEmployee, idNumber)) {
+          return currentEmployee;
+        }
+        this.invalidateIdentityLookupCache();
+        return undefined;
       }
     }
 

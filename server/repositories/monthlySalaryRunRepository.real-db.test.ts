@@ -25,6 +25,21 @@ afterAll(async () => {
 });
 
 describe('monthlySalaryRunRepository.acquireRun (real database)', () => {
+  it('handles competing run-key and month uniqueness checks across repeated first acquisitions', async () => {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const month = 12;
+      await db.delete(monthlySalaryRuns).where(and(eq(monthlySalaryRuns.salaryYear, TEST_YEAR), eq(monthlySalaryRuns.salaryMonth, month)));
+      const results = await Promise.all(Array.from({ length: 6 }, () => monthlySalaryRunRepository.acquireRun({
+        year: TEST_YEAR, month, runKey: `${TEST_YEAR}-12`, force: true, emailRecipients: [],
+      })));
+      expect(results.filter(result => !result.skipReason)).toHaveLength(1);
+      expect(results.filter(result => result.skipReason === 'monthly salary run is already running')).toHaveLength(5);
+      const rows = await db.select().from(monthlySalaryRuns).where(and(eq(monthlySalaryRuns.salaryYear, TEST_YEAR), eq(monthlySalaryRuns.salaryMonth, month)));
+      expect(rows).toHaveLength(1);
+      expect(rows[0].status).toBe('running');
+    }
+  });
+
   it('creates a new running run when none exists', async () => {
     const result = await monthlySalaryRunRepository.acquireRun({
       year: TEST_YEAR,

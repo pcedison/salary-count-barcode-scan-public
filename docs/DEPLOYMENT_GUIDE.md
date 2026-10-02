@@ -23,10 +23,10 @@ Supported targets:
 Before deploying, confirm all of the following:
 
 - `npm run verify:release` is green
-- `npm run test:real-db` is green
+- `npm run test:real-db` passes against a disposable loopback database containing only synthetic data
 - production secrets are stored in the deployment platform
 - `APP_RUNTIME_DIR`, `APP_BACKUP_DIR`, and `APP_LOG_DIR` resolve outside the repository workspace
-- the latest backup passes `npm run restore:check`
+- the selected backup passes `npm run restore:check:required`; a skipped check is not a pass
 - GitHub Actions `required-checks`, `docker-smoke`, and
   `Mobile UI structural checks` are green
 
@@ -76,13 +76,17 @@ npm test
 npm run build
 ```
 
-Apply schema updates:
+正式資料庫不得使用不受限制的 `db:push`。若需要 schema 變更，先提出確切 SQL、
+受影響資料表、備份、復原方式與逐筆薪資影響，取得明確同意後只執行已審核的 migration。
+既有薪資更正 migration 不應因重新部署而重做；依
+[薪資更正上線與復原規則](PAYROLL_CORRECTION_RELEASE_RUNBOOK.md) 核對實際 schema。
 
-```bash
-npm run db:push
-```
+Run the release gate in an isolated test environment:
 
-Run the release gate:
+`test:real-db` 會新增／清理測試資料，且可能讀取工作目錄 `.env`。執行前確認
+`.env`、`DATABASE_URL` 與 `REAL_DB_TEST_DATABASE_URL` 均不會指向正式或共用資料庫；
+只允許使用可丟棄、僅 loopback 連線且全為合成資料的測試庫。
+`verify:release` 中的 `restore:check` 若略過，須另列為未驗證。
 
 ```bash
 npm run verify:release
@@ -176,9 +180,13 @@ Rollback procedure:
 1. stop widening traffic
 2. preserve logs and operational metrics evidence
 3. create a fresh manual backup if the system is still stable enough
-4. revert to the previous application version
+4. follow the [payroll recovery runbook](PAYROLL_CORRECTION_RELEASE_RUNBOOK.md#回退與恢復運作方式) and deploy an explicitly verified compatible artifact with payroll writes paused; preserve the current schema and correction journal
 5. rerun health probes and smoke checks
 6. document the incident in the operator log
+
+應用程式回退與資料還原是不同操作。不得直接回退未支援寫入暫停的原始 2.2.1；
+候選 artifact 的 SHA／映像與每日快照相容性必須重新核對。需要資料還原時，
+先核對專用流程的逐筆預覽、journal replacement、工作階段失效與薪資差額，再取得明確同意。
 
 ## 9. External Platform Steps
 

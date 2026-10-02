@@ -81,7 +81,11 @@ Core release verification:
 npm run verify:release
 ```
 
-Extended real-database verification:
+Extended real-database verification (isolated synthetic data only):
+
+`test:real-db` 會新增／清理資料，且可能讀取 `.env`。先核對 `.env`、`DATABASE_URL`
+及 `REAL_DB_TEST_DATABASE_URL`，只允許可丟棄、僅 loopback 連線的合成測試庫；
+不得對正式或共用資料庫執行。
 
 ```bash
 npm run test:real-db
@@ -91,6 +95,13 @@ Backup readiness:
 
 ```bash
 npm run restore:check:required
+```
+
+這項檢查只檢視備份並讀取目前筆數，不是實際還原演練；一般 `restore:check` 的
+skip 不算通過。以下演練會取得資料表鎖並在交易內替換後回復資料，只能在隔離的
+合成測試庫執行，不能當成正式唯讀檢查：
+
+```bash
 npm run restore:rehearse
 ```
 
@@ -130,13 +141,16 @@ Before restoring:
 
 Restore steps:
 
-1. trigger restore from the dashboard with a validated backup ID
-2. wait for completion
-3. rerun:
+薪資更正後的還原必須遵循
+[薪資更正上線與復原規則](PAYROLL_CORRECTION_RELEASE_RUNBOOK.md#備份還原)，
+不能只還原薪資列或只憑 backup ID 執行。
 
-```bash
-npm run restore:check
-```
+1. 先用 SUPER 權限取得所選備份的還原預覽，核對每筆 `changedSalaryRecords`、
+   journal replacement、修訂與總薪資／扣款／實領差額；總差額為零不能取代逐筆核對。
+2. 提出確切影響並取得同意，保留還原前保護備份，再確認同一份有效預覽；
+   若資料或備份已改變，重新預覽，不沿用舊確認權杖。
+3. 按專用流程完成原子還原、管理員工作階段失效及重新登入。完整 PostgreSQL 外部還原
+   另須停止並排空全部 writer、處理 epoch 與既有列印權杖；應用程式 JSON 還原測試不涵蓋此步驟。
 
 4. validate:
 
@@ -147,6 +161,9 @@ npm run restore:check
 - attendance list
 - salary record list
 
+另核對薪資、journal、修訂與序列一致性，以及未納入 JSON 還原的
+`monthly_salary_runs`、PDF 和已寄送紀錄。不得用自動重算或重寄補救。
+
 5. document:
 
 - operator
@@ -154,6 +171,9 @@ npm run restore:check
 - pre-restore backup ID
 - timestamp
 - post-restore validation result
+
+若只需回退應用程式，依[相容維護回退規則](PAYROLL_MAINTENANCE_ROLLBACK.md)
+核對確切 artifact／SHA 與資料相容性；保留目前 schema 和 journal，不等同執行資料還原。
 
 ## 7. Incident Response
 

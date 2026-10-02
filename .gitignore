@@ -34,6 +34,7 @@ supabase_config.json
 
 # Temporary files
 /tmp
+.jev-workflow/
 *.tmp
 *.temp
 test-*.js
