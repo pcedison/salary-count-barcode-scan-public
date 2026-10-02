@@ -67,7 +67,7 @@ const createSalarySchema = insertSalaryRecordSchema.extend({
     for (const issue of attendance.error.issues) context.addIssue({ ...issue, path: ['attendanceData', ...issue.path] });
     return;
   }
-  const dates = new Set<string>();
+  const dates = new Map<string, Array<{ row: z.infer<typeof settlementAttendanceRow>; index: number }>>();
   attendance.data.forEach((row, index) => {
     const parts = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(row.date);
     const [year, month, day] = parts ? parts.slice(1).map(Number) : [0, 0, 0];
@@ -77,10 +77,9 @@ const createSalarySchema = insertSalaryRecordSchema.extend({
       context.addIssue({ code: 'custom', path: ['attendanceData', index, 'date'], message: '出勤快照必須是結算月份內的有效日期。' });
     }
     const dateKey = `${year}-${month}-${day}`;
-    if (dates.has(dateKey)) {
-      context.addIssue({ code: 'custom', path: ['attendanceData', index, 'date'], message: '同一天有多筆出勤，請先核對，避免重複計薪或扣款。' });
-    }
-    dates.add(dateKey);
+    const dayRows = dates.get(dateKey) ?? [];
+    dayRows.push({ row, index });
+    dates.set(dateKey, dayRows);
     if (row.employeeId !== input.employeeId) {
       context.addIssue({ code: 'custom', path: ['attendanceData', index, 'employeeId'], message: '出勤快照必須屬於結算員工。' });
     }
@@ -91,6 +90,25 @@ const createSalarySchema = insertSalaryRecordSchema.extend({
       }
     }
   });
+  for (const dayRows of dates.values()) {
+    if (dayRows.length < 2) continue;
+    // A completed scan can be followed by another shift on the same date.
+    // Permit distinct normal work intervals, without merging them or changing
+    // the existing per-row overtime calculation. Leave/day-based adjustments
+    // remain ambiguous when more than one row describes the same date.
+    const intervals = dayRows.map(({ row }) => {
+      const start = parseClockTimeMinutes(row.clockIn);
+      const end = parseClockTimeMinutes(row.clockOut);
+      const normalType = row.holidayType == null || ['', 'none', 'normal'].includes(row.holidayType);
+      if (row.isHoliday === true || !normalType || start === null || end === null || start === end) return null;
+      return { start, end: end < start ? end + 24 * 60 : end };
+    });
+    const completed = intervals.filter(interval => interval !== null).sort((a, b) => a.start - b.start);
+    if (completed.length !== dayRows.length || completed.some((interval, index) => index > 0 && interval.start < completed[index - 1].end)) {
+      context.addIssue({ code: 'custom', path: ['attendanceData', dayRows[1].index, 'date'],
+        message: '同一天的出勤有重複、重疊、未完成班次或假別衝突，請先核對，避免重複計薪或扣款。' });
+    }
+  }
 });
 const manualEditSchema = insertSalaryRecordSchema.partial().extend({
   baseSalary: money.optional(), housingAllowance: money.nullable().optional(),

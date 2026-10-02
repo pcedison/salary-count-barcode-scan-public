@@ -2,7 +2,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createJsonTestServer, jsonRequest } from '../test-utils/http-test-server';
 import { TEST_ADMIN_HEADER, setupTestAdminSession } from '../test-utils/admin-test-session';
 import type { InsertSalaryRecord, Settings, TemporaryAttendance } from '@shared/schema';
-import { calculateOvertime } from '@shared/utils/salaryMath';
+import { calculateDailyOvertimeSummary, calculateOvertime } from '@shared/utils/salaryMath';
+import { calculateHolidayPayAdjustments } from '../utils/salaryCalculator';
 
 const storageMock = vi.hoisted(() => ({
   getSettings: vi.fn(async () => ({
@@ -183,6 +184,73 @@ describe('new salary settlement input validation with the real calculator', () =
     const row = { id: 1, employeeId: 7, date: '2026/9/1', clockIn: '--:--', clockOut: '--:--', isHoliday: true, holidayType: 'sick_leave' };
     const result = await postSalary({ ...draft(), attendanceData: [row, { ...row, id: 2, date: '2026-09-01' }] });
     expect(result.response.status, JSON.stringify({ deductions: result.body?.totalDeductions, net: result.body?.netSalary })).toBe(400);
+    expect(repositoryMock.createSalaryRecord).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: 'split shifts', clocks: [['08:00', '12:00'], ['13:00', '17:00']], ot1: 1, net: 30650 },
+    { label: 'adjacent shifts', clocks: [['08:00', '12:00'], ['12:00', '17:00']], ot1: 1, net: 30650 },
+    { label: 'cross-midnight shift and earlier shift in reverse order', clocks: [['18:00', '01:00'], ['08:00', '12:00']], ot1: 0, net: 30500 },
+  ])('preserves the existing per-row preview totals for same-day $label', async ({ clocks, ot1, net }) => {
+    const attendanceData = clocks.map(([clockIn, clockOut], index) => ({
+      id: index + 1, employeeId: 7, date: index ? '2026-09-01' : '2026/9/1',
+      clockIn, clockOut, isHoliday: false, holidayType: index ? 'none' : null,
+    }));
+    // This is the same per-row calculation used by useAttendanceData's preview.
+    // Do not merge shifts or substitute a different daily overtime rule.
+    const summaries = attendanceData.map(row => calculateDailyOvertimeSummary(row.clockIn, row.clockOut, {
+      baseHourlyRate: 100, ot1Multiplier: 1.5, ot2Multiplier: 2,
+    }));
+    const totalOT1Hours = summaries.reduce((sum, row) => sum + row.ot1, 0);
+    const totalOT2Hours = summaries.reduce((sum, row) => sum + row.ot2, 0);
+    expect(totalOT1Hours).toBe(ot1);
+    const result = await postSalary({ ...draft(), attendanceData, totalOT1Hours, totalOT2Hours });
+    expect(result.response.status, JSON.stringify(result.body)).toBe(201);
+    expect(result.body).toMatchObject({ totalOT1Hours: ot1, totalOT2Hours: 0,
+      totalOvertimePay: summaries.reduce((sum, row) => sum + row.pay, 0),
+      totalDeductions: 0, grossSalary: net, netSalary: net,
+    });
+    // Archived daily-hour evidence still conservatively declines multiple rows
+    // on a date. Successful settlement must preserve the selected rows as-is.
+    expect(result.body?.attendanceData).toEqual(attendanceData);
+    expect(storageMock.getTemporaryAttendanceByEmployeeAndMonth).not.toHaveBeenCalled();
+    expect(repositoryMock.createSalaryRecord).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { label: 'copied work rows with normalized dates and clocks', second: { clockIn: '8:00', clockOut: '12:00' } },
+    { label: 'overlapping shifts', second: { clockIn: '11:00', clockOut: '17:00' } },
+    { label: 'incomplete second shift', second: { clockIn: '13:00', clockOut: '' } },
+    { label: 'zero-duration second shift', second: { clockIn: '13:00', clockOut: '13:00' } },
+    { label: 'work mixed with full sick leave', second: { clockIn: '--:--', clockOut: '--:--', isHoliday: true, holidayType: 'sick_leave' } },
+    { label: 'work mixed with partial sick leave', second: { clockIn: '13:00', clockOut: '17:00', isHoliday: true, holidayType: 'sick_leave' } },
+    { label: 'work mixed with personal leave', second: { clockIn: '13:00', clockOut: '17:00', isHoliday: true, holidayType: 'personal_leave' } },
+    { label: 'work mixed with leave despite a false holiday flag', second: { clockIn: '13:00', clockOut: '17:00', isHoliday: false, holidayType: 'sick_leave' } },
+    { label: 'work mixed with an unclassified holiday flag', second: { clockIn: '13:00', clockOut: '17:00', isHoliday: true, holidayType: null } },
+  ])('rejects ambiguous same-day $label before calculation or storage', async ({ second }) => {
+    const first = { id: 1, employeeId: 7, date: '2026/9/1', clockIn: '08:00', clockOut: '12:00', isHoliday: false, holidayType: null };
+    const result = await postSalary({ ...draft(), attendanceData: [first, { ...first, id: 2, date: '2026-09-01', ...second }] });
+    expect(result.response.status).toBe(400);
+    expect(storageMock.getSettings).not.toHaveBeenCalled();
+    expect(repositoryMock.createSalaryRecord).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: 'duplicate sick leave', types: ['sick_leave', 'sick_leave'], clocks: ['--:--', '--:--'], deduction: 1000, bonus: 0 },
+    { label: 'conflicting leave categories', types: ['sick_leave', 'personal_leave'], clocks: ['--:--', '--:--'], deduction: 1500, bonus: 0 },
+    { label: 'two worked-holiday rows', types: ['worked', 'worked'], clocks: ['08:00', '12:00'], deduction: 0, bonus: 2000 },
+  ])('rejects same-day $label whose existing adjustments are counted per row', async ({ types, clocks, deduction, bonus }) => {
+    const attendanceData = types.map((holidayType, index) => ({
+      id: index + 1, employeeId: 7, date: index ? '2026-09-01' : '2026/9/1',
+      clockIn: index && holidayType === 'worked' ? '13:00' : clocks[0],
+      clockOut: index && holidayType === 'worked' ? '17:00' : clocks[1], isHoliday: true, holidayType,
+    }));
+    const adjustments = calculateHolidayPayAdjustments(attendanceData, 30000);
+    expect(adjustments.deductionItems.reduce((sum, row) => sum + row.amount, 0)).toBe(deduction);
+    expect(adjustments.workedHolidayPay).toBe(bonus);
+    const result = await postSalary({ ...draft(), attendanceData, totalHolidayPay: bonus });
+    expect(result.response.status).toBe(400);
+    expect(storageMock.getSettings).not.toHaveBeenCalled();
     expect(repositoryMock.createSalaryRecord).not.toHaveBeenCalled();
   });
 

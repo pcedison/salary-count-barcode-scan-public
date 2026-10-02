@@ -14,8 +14,11 @@
 並保存逐檔manifest及Windows使用者範圍的加密副本；未將私人檔案上傳Git。
 唯讀repeatable-read查詢確認當期月結已succeeded，到期員工／薪資清理候選均0；
 這只是檢查當下狀態，並非停用既有排程或承諾未來不會有新資料。
-合併候選2.2.9已重新安裝lockfile並完成verify:release：unit885、smoke276、
-TypeScript/runtime/build通過；generic restore仍因無備份檔略過。新的PR與main CI另行核對。
+合併候選2.2.9已重新安裝lockfile，並在分段班修復後再次完成verify:release：unit900、smoke291、
+TypeScript/runtime/build通過；generic restore因未設定測試DATABASE_URL略過。新的PR與main CI另行核對。
+17:27前以Chrome平台終端唯讀確認2.2.8的/live、/ready、/api/health皆HTTP200，health為healthy；
+同時確認新容器salary-reports及recovered-runtime目錄已不存在，部署前副本仍完整保留於容器外。
+這是未掛volume的實際檔案存續問題，尚未正式回填，不能把健康探針通過說成完整資料復原。
 
 ## 正式基準與備份
 
@@ -34,7 +37,7 @@ TypeScript/runtime/build通過；generic restore仍因無備份檔略過。新�
 | 新結算輸入驗證不足 | 負扣款 -100 原可保存，合成正常實領 31,000 變成 31,100；非法月份、JSON 與金額也可進入保存 | POST 重用既有 JSON 驗證契約，檢查年月、金額範圍及運算結果；合法負實領仍保留 |
 | 結算保存混入預覽以外的出勤 | snapshot 沒有的病假仍扣500；半天預覽改以 live 全天算，另多扣250 | 新結算明確以提交的已選快照為計算範圍，檢查快照員工/月分/日期；自動月結保留既有完整出勤入口 |
 | 工作假日薪資重複加計 | client total 已含1,000，server 再加1,000；合成實領32,000變33,000 | 明確區別POST的完整假日total與自動月結的base輸入，不改工資倍率或四捨五入規則 |
-| 同日出勤用不同格式重複提交 | 同日病假分別用斜線/連字號日期，原會重複扣款 | 正規化日期後檢查唯一性，歧義輸入拒絕保存，不自動合併班次 |
+| 同日出勤用不同格式重複提交 | 同日病假分別用斜線/連字號日期，原會重複扣款 | 正規化日期；允許完整且不重疊的正常分段班次，拒絕重複、重疊、未完成或假別衝突，不自動合併班次 |
 | 月結首次並行可能撞run_key唯一鍵 | 新空PG兩個請求同時取得月份時，其中一個可能拋23505 | 僅捕捉指定run_key constraint，查回相同月份及key才安全略過，其餘錯誤仍拋出；不新增migration |
 | 維運腳本未驗證外部DB憑證 | helper原固定rejectUnauthorized=false；亦強制TLS而阻擋隔離本機演練 | 外部預設驗證，僅顯式設定且已知pooler才允許例外；拒絕多host解析繞過並綁定driver目的地；loopback可本機演練 |
 | 私人工作證據未明確排除 | main 的 `.jev-workflow/` 未被Git/Docker忽略，Docker亦未排除tmp等本機證據目錄 | 補Git與Docker排除；不宣稱遠端已發生私人資料外洩 |
@@ -42,12 +45,19 @@ TypeScript/runtime/build通過；generic restore仍因無備份檔略過。新�
 
 這些差額只來自去識別化合成資料，沒有掃描或推定正式受影響員工，也沒有回填正式薪資。
 
+### PR #109 審查發現的回歸
+
+GitHub 審查指出首次修復的「同日唯一」限制也會拒絕正常分段班；合成修前測試確實有3項合法分段／相鄰／跨午夜班次回400。
+修後保留每筆快照，允許完整且互不重疊的正常工作時段。08–12與13–17沿用目前逐列預覽規則，OT1合計1小時、加班費150、實領30,650；保存與預覽一致，沒有改工時倍率或把班次合併重算。
+同日病假重複、假別衝突及按日加給的假日多列仍拒絕；直接套用既有calculator時，雙病假扣1,000（單筆500），雙worked假日列加2,000（單筆1,000），不可因放寬分段班就放行重複計算。
+限制：同日假日分段班尚未支援；跨相鄰日期的重疊檢查未擴充；同日多班的歷史逐行加班證據仍由既有archive規則標記unverified，不能說完整歷史更正流程已支援。保存總額及原始兩列已驗證。
+
 ## 依賴安全
 
 本輪 `npm audit --omit=dev` 在2.2.7的 Nodemailer 9.1.1 查到一個受影響套件、五項公告，最高 high；與先前「audit通過」是不同時間的結果。
 [官方公告](https://github.com/advisories/GHSA-v53p-9fqp-m79j)與[10.0.13發行說明](https://github.com/nodemailer/nodemailer/releases/tag/v10.0.13)已核對。
 受影響版本存在不代表已證明正式路由可利用或已洩漏。主版本升級在獨立 `codex/payroll-mail-security` 分支檢測，不混入薪資修復；不自動合併既有 Dependabot #101。
-獨立分支已測 Nodemailer 10.0.13，runtime audit為0，unit796、smoke212與合成郵件transport6項通過；草稿 [PR #108](https://github.com/pcedison/salary-count-barcode-scan-public/pull/108) 尚未合併。正式SMTP認證/TLS/投遞未驗證。
+獨立分支已測 Nodemailer 10.0.13，runtime audit為0，unit796、smoke212與合成郵件transport6項通過；[PR #108](https://github.com/pcedison/salary-count-barcode-scan-public/pull/108) 後續已合併並以Chrome確認正式容器2.2.8。正式SMTP認證/TLS/投遞未驗證。
 
 ## 效能基準
 
