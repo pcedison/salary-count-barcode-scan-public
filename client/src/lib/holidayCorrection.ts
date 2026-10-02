@@ -128,6 +128,7 @@ export function correctionErrorMessage(error: unknown): string {
   if (message.startsWith('400:') || message.startsWith('422:')) {
     try {
       const body = JSON.parse(message.slice(message.indexOf(':') + 1));
+      if (body.message === 'Validation error') return '更正內容未通過檢查，請確認各項金額、更正原因與發薪狀態。';
       if (typeof body.error === 'string') return body.error;
       if (typeof body.message === 'string') return body.message;
     } catch { /* Keep a concise, non-sensitive fallback. */ }

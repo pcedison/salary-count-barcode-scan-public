@@ -28,7 +28,9 @@ import { handleRouteError, parseNumericId } from './route-helpers';
 
 const log = createLogger('salary');
 const money = z.number().finite().nonnegative();
-const deductionItem = z.object({ name: z.string().trim().min(1).max(100), amount: money }).strict();
+const deductionItem = z.object({ name: z.string().trim().min(1).max(100), amount: money,
+  description: z.string().max(1000).nullable().optional(),
+}).strict();
 const allowanceItem = deductionItem.extend({ description: z.string().max(1000).optional() }).strict();
 const manualEditSchema = insertSalaryRecordSchema.partial().extend({
   baseSalary: money.optional(), housingAllowance: money.nullable().optional(),

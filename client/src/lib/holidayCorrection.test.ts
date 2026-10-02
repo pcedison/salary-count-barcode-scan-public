@@ -48,6 +48,7 @@ describe('correction dates and errors', () => {
     expect(normalizeSnapshotDate('2026-09-02T00:00:00Z')).toBe('2026-09-02');
   });
   it('shows a concurrency recovery path and hides unknown internal error details', () => {
+    expect(correctionErrorMessage(new Error('400: {"message":"Validation error","errors":[{"path":["deductions",0,"description"]}]}'))).toBe('更正內容未通過檢查，請確認各項金額、更正原因與發薪狀態。');
     expect(correctionErrorMessage(new Error('409: stale'))).toContain('重新讀取');
     expect(correctionErrorMessage(new Error('500: internal connection details'))).not.toContain('connection');
     expect(correctionErrorMessage(new Error('403: forbidden'))).toContain('重新登入');

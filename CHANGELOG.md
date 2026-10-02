@@ -6,7 +6,9 @@ This repository follows Keep a Changelog style and uses the clean-room public hi
 
 ## [Unreleased]
 
-- No unreleased notes yet.
+- 歷史薪資金額更正支援既有扣款的說明欄位，移除誤植扣款時可保存，並保留版本與更正歷程檢查。
+- 薪資列印移除重複的福利津貼合計列，保留津貼明細、舊資料差異提示與原結算金額。
+- 驗證錯誤改以繁體中文提示。
 
 ## [2.2.1] - 2026-08-01
 

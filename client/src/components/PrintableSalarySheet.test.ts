@@ -61,10 +61,9 @@ describe('archived salary print snapshot', () => {
     const before = JSON.stringify(input);
     const html = render(input);
     const difference = html.match(/<tr class="summary-size-row welfare-reconciliation-row">([\s\S]*?)<\/tr>/)?.[1] ?? '';
-    const subtotal = html.match(/<tr class="summary-size-row welfare-row welfare-total-row">([\s\S]*?)<\/tr>/)?.[1] ?? '';
     expect(difference).toContain('歷史津貼明細差異');
     expect(difference).toContain('>' + expected + '</td>');
-    expect(subtotal).toContain('>' + welfareAllowance + '</td>');
+    expect(html).not.toContain('福利津貼合計（結算快照）');
     expect(html).toContain('>' + input.grossSalary + '</td>');
     expect(html).toContain('>' + input.netSalary + '</td>');
     expect(JSON.stringify(input)).toBe(before);
@@ -74,6 +73,8 @@ describe('archived salary print snapshot', () => {
     const absent = render({ ...record, welfareAllowance: 1200, allowances: [] });
     const unknown = render({ ...record, welfareAllowance: null, allowances: [{ name: 'Legacy detail', amount: 700 }] });
     for (const html of [complete, absent, unknown]) expect(html).not.toContain('<tr class="summary-size-row welfare-reconciliation-row">');
+    expect(complete).not.toContain('福利津貼合計（結算快照）');
+    expect(complete).toContain('Full detail');
     expect(absent).toContain('福利津貼：');
     expect(absent).toContain('>1200</td>');
     expect(unknown).toContain('>700</td>');

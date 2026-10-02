@@ -195,10 +195,6 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
           </td>
           <td className="amount-cell">{difference > 0 ? '+' : ''}{difference}</td>
         </tr>}
-        {hasSavedTotal && <tr className="summary-size-row welfare-row welfare-total-row">
-          <td colSpan={5}>福利津貼合計（結算快照）：</td>
-          <td className="amount-cell">{result.welfareAllowance}</td>
-        </tr>}
       </>;
     }
     // 向下相容：如果沒有 allowances 陣列，使用舊的 welfareAllowance 欄位
