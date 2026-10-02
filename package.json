@@ -1,6 +1,6 @@
 {
   "name": "rest-express",
-  "version": "2.2.7",
+  "version": "2.2.8",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -83,7 +83,7 @@
     "jszip": "^3.10.2",
     "lucide-react": "^1.48.0",
     "nanoid": "^6.0.1",
-    "nodemailer": "^9.1.1",
+    "nodemailer": "^10.0.13",
     "pg": "^8.23.0",
     "postgres": "^3.4.7",
     "puppeteer-core": "^25.12.0",
