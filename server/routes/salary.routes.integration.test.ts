@@ -319,6 +319,44 @@ describe('salary routes integration', () => {
     } finally { await server.close(); }
   });
 
+  it.each(['Saved synthetic description', null])('removes a deduction after a holiday revision while preserving deduction metadata: %s', async (description) => {
+    const server = await testServer();
+    const retained = { name: 'Synthetic retained deduction', amount: 500, description };
+    const erroneous = { name: 'Synthetic mistaken deduction', amount: 120, description: 'Synthetic previous-period item' };
+    const original = { ...salary(), revision: 1, deductions: [retained, erroneous], totalDeductions: 620, netSalary: 30680 };
+    salaryState.records = [structuredClone(original)];
+    const request = { revision: 1, reason: 'Remove synthetic mistaken deduction', paymentHandling: 'unknown_adjustment',
+      idempotencyKey: randomUUID(), baseSalary: original.baseSalary, housingAllowance: 0,
+      deductions: [retained], specialLeaveInfo: null };
+    try {
+      let cookie = '';
+      const save = () => jsonRequest<SalaryRecord>(server.baseUrl, '/api/salary-records/7', {
+        method: 'PATCH', headers: { [TEST_ADMIN_HEADER]: 'true', 'content-type': 'application/json', ...(cookie ? { cookie } : {}) }, body: JSON.stringify(request),
+      });
+      const result = await save();
+      cookie = result.response.headers.get('set-cookie')!.split(';')[0];
+      expect(result.response.status).toBe(200);
+      expect(result.body).toMatchObject({ revision: 2, deductions: [retained], totalDeductions: 500, grossSalary: 31300, netSalary: 30800 });
+      expect(result.body?.attendanceData).toEqual(original.attendanceData);
+      expect(result.body?.totalOvertimePay).toBe(original.totalOvertimePay);
+      expect(result.body?.totalHolidayPay).toBe(original.totalHolidayPay);
+      expect(salaryState.corrections).toHaveLength(1);
+      expect(salaryState.corrections[0].beforeSnapshot).toEqual(original);
+      expect(salaryState.corrections[0].delta.netSalary).toBe(120);
+      const replay = await save();
+      expect(replay.response.status).toBe(200);
+      expect(replay.body?.revision).toBe(2);
+      expect(salaryState.corrections).toHaveLength(1);
+      const changedMetadata = await jsonRequest(server.baseUrl, '/api/salary-records/7', {
+        method: 'PATCH', headers: { [TEST_ADMIN_HEADER]: 'true', 'content-type': 'application/json', cookie },
+        body: JSON.stringify({ ...request, deductions: [{ ...retained, description: 'Changed synthetic metadata' }] }),
+      });
+      expect(changedMetadata.response.status).toBe(409);
+      expect(salaryState.corrections).toHaveLength(1);
+      expect(salaryState.records[0].deductions).toEqual([retained]);
+    } finally { await server.close(); }
+  });
+
   it.each(['revision', 'reason', 'paymentHandling', 'idempotencyKey'])('requires %s for an audited historical edit', async (field) => {
     const server = await testServer();
     try {
@@ -340,6 +378,9 @@ describe('salary routes integration', () => {
     { deductions: [null] },
     { deductions: { name: 'invalid array', amount: 1 } },
     { deductions: [{ name: 'negative amount', amount: -1 }] },
+    { deductions: [{ name: 'invalid description', amount: 1, description: {} }] },
+    { deductions: [{ name: 'long description', amount: 1, description: 'x'.repeat(1001) }] },
+    { deductions: [{ name: 'unexpected metadata', amount: 1, employeeId: 99 }] },
     { allowances: [{ name: 42, amount: 1 }] },
     { allowances: [{ name: '   ', amount: 1 }] },
     { allowances: [{ name: 'x'.repeat(101), amount: 1 }] },

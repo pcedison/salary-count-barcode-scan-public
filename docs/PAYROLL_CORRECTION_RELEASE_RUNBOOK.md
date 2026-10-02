@@ -1,148 +1,136 @@
-# Payroll correction release and recovery
+# 薪資更正上線與復原操作規則
 
-This is a release plan, not evidence of a production migration or payroll change.
-Use synthetic identities in test results and pull requests. Never include employee
-names, attendance exports, government identifiers, session cookies or secrets.
+本文件說明上線計畫，不代表正式資料庫已完成變更，也不代表正式薪資已被修改。
+測試結果與 PR 必須使用去識別化的測試資料。不得包含員工姓名、出勤匯出資料、
+身分證件號碼、工作階段 Cookie 或任何機密資訊。
 
-## Release gates
+## 上線前的必要檢查與操作順序
 
-1. Verify the canonical deployment source. Zeabur production for
-   `https://barcode-scan.zeabur.app` follows `pcedison/salary-count-barcode-scan-public`
-   `main`. The private PR does not publish to that repository automatically.
-2. Finish unit, HTTP, build, database, backup/restore, PDF and desktop/mobile
-   acceptance in isolated environments. Public and private implementations have
-   different repository boundaries; validate both. Preserve their original
-   dependency, authentication and deployment policies.
-3. Prepare a **compatible maintenance build** based on the current public release:
-   it must contain `PAYROLL_WRITES_PAUSED` guards in HTTP routes, salary and batch
-   repositories, monthly automation and retention. Test its legacy salary handlers
-   with maintenance enabled. Record the exact commit and image as the backout
-   target before changing schema. An unmodified old binary ignores this variable
-   and is not a safe rollback target.
-4. Set `PAYROLL_WRITES_PAUSED=true`, deploy the compatible maintenance build, wait
-   for the deployment to finish and verify salary reads remain available and all
-   salary mutation routes, import, automation and retention are paused. Drain old
-   instances and in-flight requests, including login, before migration. Correction
-   tokens are signed and stateless; a restart with the same secret does not revoke
-   them. A restored database advances a persistent administrator session epoch,
-   invalidates saved administrator sessions and forces a fresh login and preview.
-   The pause affects payroll editing/settlement, import and scheduled payroll
-   processing. Communicate the maintenance window to the operator.
-5. Produce a fresh full PostgreSQL backup through platform tooling and validate it; verify persistent backup storage and
-   retain a copy independent of the application container. The compatibility
-   maintenance artifact disables legacy application JSON backup creation and restore;
-   do not use its exporter after the new journal exists. Record counts and stored
-   gross, deduction and net totals. The backup contains private data and must not
-   be attached to a PR or published. Rehearse restoration using a disposable copy.
-   At the read-only 2026-10-01 baseline, Zeabur showed no mounted volume and the
-   JSON backup log pointed inside the container. Such files are not a durable
-   migration recovery source; preserve an independent copy before deployment.
-6. Obtain the operator's explicit approval for production migration, showing the
-   SQL, affected tables, backup identifier, maintenance/backout plan and payroll
-   delta. Deployment approval does not authorize a production salary correction,
-   re-settlement or unapproved database migration.
-7. Apply only the reviewed additive SQL migration. It adds `salary_records.revision`
-   (default 0), nullable `holiday_calculation_base_salary`, `salary_corrections`,
-   its indexes and access restrictions. Existing monetary amounts, attendance,
-   deductions and employee identities are unchanged; migration payroll delta is 0.
-   Do not run an unrestricted schema sync or remove the new journal in recovery.
-8. Merge the validated public feature PR and wait for required GitHub checks and
-   Zeabur deployment success. Verify both the source SHA and the deployed release;
-   a successful push or a frontend version string alone is insufficient.
-9. Use the connected browser to verify production reads and non-saving previews.
-   Keep payroll writes paused until the operator approves resuming them. Verify
-   settings, archived salary details, export/PDF and correction preview without
-   saving changes or invoking monthly processing. Repeat desktop/mobile checks.
+1. 確認正式部署來源。Zeabur 正式站 `https://barcode-scan.zeabur.app`
+   使用 `pcedison/salary-count-barcode-scan-public` 的 `main` 分支。
+   私有儲存庫的 PR 不會自動發布到這個公開儲存庫。
+2. 在隔離環境完成單元測試、HTTP 測試、建置、資料庫、備份與還原、PDF，
+   以及桌面與手機版驗收。公開與私有版本的儲存庫界線不同，兩者都必須驗證，
+   並保留各自既有的相依套件、登入驗證與部署規則。
+3. 以目前的公開版本準備**相容的維護版本**。HTTP 路由、薪資與批次資料存取層、
+   自動月結及保留期處理，都必須加入 `PAYROLL_WRITES_PAUSED` 寫入防護。
+   在維護模式下測試既有薪資處理入口。變更資料庫結構前，先記錄可供回退使用的
+   確切提交與容器映像。未修改的舊程式會忽略這個環境變數，不能作為安全的回退版本。
+4. 設定 `PAYROLL_WRITES_PAUSED=true`，部署相容的維護版本，等待部署完成。
+   確認薪資仍可讀取，所有薪資變更路由、匯入、自動月結及保留期處理均已暫停。
+   執行資料庫結構變更前，必須排空舊執行個體與處理中的請求，包括登入請求。
+   更正權杖採用簽章且不保留伺服器端狀態；沿用相同密鑰重新啟動，不會使權杖失效。
+   資料庫還原後，系統會遞增持久保存的管理員工作階段世代編號，使已保存的管理員
+   工作階段失效，並要求重新登入及重新預覽。維護暫停涵蓋薪資編輯、結算、匯入
+   與薪資排程處理。必須向負責人說明維護期間。
+5. 使用平台工具建立最新的完整 PostgreSQL 備份並驗證。確認備份有持久保存的位置，
+   並保留一份獨立於應用程式容器的副本。相容的維護版本會停用舊版應用程式的
+   JSON 備份建立與還原；新增更正紀錄表後，不得使用該維護版本的匯出功能。
+   記錄筆數，以及已保存的總薪資、扣款與實領金額合計。備份含有私人資料，
+   不得附加到 PR 或公開發布。使用可丟棄的副本演練還原。
+   2026-10-01 的唯讀基準檢查顯示，Zeabur 未掛載持久儲存磁碟，JSON 備份日誌
+   指向容器內部。這類檔案不能作為可持久保存的資料庫變更復原來源，
+   因此部署前必須另行保留獨立副本。
+6. 正式執行資料庫結構變更前，必須取得負責人的明確同意，並提供 SQL、
+   受影響的資料表、備份識別碼、維護與回退計畫，以及薪資差額。
+   同意部署，不等於同意更正正式薪資、重新結算，或執行未核准的資料庫變更。
+7. 只執行已審核、僅新增結構的 SQL。新增項目為 `salary_records.revision`
+   （預設值 0）、可為空值的 `holiday_calculation_base_salary`、`salary_corrections`，
+   以及相關索引與存取限制。既有金額、出勤、扣款與員工身分資料均不變，
+   這次資料庫結構變更的薪資差額為 0。不得執行不受限制的資料庫結構同步，
+   復原時也不得刪除新增的更正紀錄表。
+8. 合併已驗證的公開功能 PR，等待必要的 GitHub 檢查與 Zeabur 部署成功。
+   必須同時核對來源提交的 SHA 與實際部署版本；不能只憑推送成功，
+   或前端顯示的版本字串，認定正式站已更新。
+9. 使用已連接的瀏覽器，驗證正式站讀取與不保存的預覽。
+   **取得負責人明確同意恢復寫入之前，薪資寫入必須保持暫停。**
+   核對設定、已封存的薪資明細、匯出、PDF 與更正預覽，驗收時不得保存變更，
+   也不得執行月結。桌面與手機版都必須檢查。
 
-## Restoring backups
+## 備份還原
 
-Backup authority version 3 includes correction history. Export reads all included
-tables in one repeatable-read snapshot; restoration locks them and replaces their
-contents in one transaction. Restore correction rows after salary rows, reset all
-included sequences, and preserve original revision, idempotency keys, request and
-preview hashes, before/after snapshots, delta and nullable retention references.
+第 3 版薪資完整備份包含更正歷程。匯出時，所有納入備份的資料表都取自同一份
+可重複讀取的資料快照；還原時，必須鎖定這些資料表，並在同一筆交易內替換內容。
+先還原薪資資料，再還原更正紀錄，並重設所有納入備份的流水號序列。
+必須保留原有修訂編號、防止重複執行的識別碼、請求與預覽雜湊、變更前後快照、
+差額，以及允許為空值的保留期關聯。
 
-For a production restore, first GET
-`/api/dashboard/backups/:backupId/restore-preview?type=manual` with a SUPER session.
-Review `liveCounts`, `backupCounts`, `replacedJournalRows`, `journalCoverage` and
-`payrollTotals.before/after/delta` and **every `changedSalaryRecords` entry**.
-Offsetting changes can leave aggregate delta at zero; classification-only changes
-also appear even when their monetary delta is zero. Then explicitly confirm the same preview by
-POSTing JSON to `/api/dashboard/backups/:backupId/restore` with
-`confirmRestore: true`, its `confirmationToken`, and, when required,
-`confirmJournalReplacement: true`. Include the selected backup type. Cross-origin
-requests are refused. The route makes a safeguard backup only after confirmation.
-The transaction rechecks freshness after acquiring locks; a changed database or
-artifact requires a new preview. Successful restore expires administrator sessions,
-so old correction previews require reauthentication and a fresh preview.
+正式還原前，先使用 SUPER 權限的工作階段，以 GET 請求取得還原預覽：
+`/api/dashboard/backups/:backupId/restore-preview?type=manual`。
+核對 `liveCounts`、`backupCounts`、`replacedJournalRows`、`journalCoverage`、
+`payrollTotals.before/after/delta`，以及**每一筆 `changedSalaryRecords`**。
+不同紀錄的金額增減可能互相抵銷，造成合計差額為 0；只變更類別的紀錄，
+即使金額差額為 0，也會列出。接著必須明確確認同一份預覽，
+以 POST 請求將 JSON 傳送至 `/api/dashboard/backups/:backupId/restore`，
+包含 `confirmRestore: true`、該預覽的 `confirmationToken`，
+必要時也必須包含 `confirmJournalReplacement: true`，並指定選定的備份類型。
+系統會拒絕跨來源請求，且只有在確認後才建立還原前的保護備份。
+交易取得鎖定後，會重新核對預覽是否仍有效；資料庫或備份檔案若已變更，
+就必須重新預覽。還原成功後，管理員工作階段會失效，因此舊的更正預覽
+必須重新登入，並重新取得預覽。
 
-A legacy backup without the journal is allowed only when its salary revisions are
-zero and the destination contains no correction journal or nonzero salary revision. Otherwise it is refused
-without replacing data. Never synthesize missing audit evidence or clear a live
-journal to make a legacy backup pass. A failed restore rolls back all data changes.
+缺少更正紀錄的舊版備份，只有在備份中的薪資修訂全部為 0，且目標資料庫
+沒有更正紀錄或非零薪資修訂時，才允許還原。否則系統會拒絕，且不替換資料。
+不得捏造缺少的稽核證據，也不得清空正式更正紀錄來讓舊版備份通過檢查。
+還原失敗時，會回復全部資料變更。
 
-The application JSON backup covers its listed authority tables; it is not a full
-PostgreSQL snapshot. `monthly_salary_runs` execution, PDF and email metadata are
-not restored. Before resuming, separately reconcile run status against restored
-payroll and delivery records. Never force a rerun or resend email to compensate
-without approval. For schema migration recovery, retain a separately verified
-full database backup as well as this application backup. Administrator epoch is
-kept outside backup authority so an earlier backup cannot revive old logins.
+應用程式 JSON 備份只涵蓋規定納入的資料表，並不是完整 PostgreSQL 快照。
+`monthly_salary_runs` 的執行紀錄、PDF 與郵件中繼資料不會還原。
+恢復運作前，必須另行將執行狀態與已還原薪資、寄送紀錄核對。
+未取得同意，不得強制重新執行或重新寄送郵件來補救。
+資料庫結構變更的復原，除了應用程式備份，也必須保留一份已獨立驗證的完整資料庫備份。
+管理員工作階段世代編號不納入應用程式備份範圍，避免較早的備份重新啟用舊登入狀態。
 
-A full PostgreSQL restore also restores `user_sessions` and the epoch. It bypasses
-the application restore helper: do not assume administrator invalidation occurred.
-Keep every application instance stopped or paused and drain requests, then run
-`npm run restore:invalidate-admin-sessions -- --confirm` with an explicitly selected
-`DATABASE_URL` and `PAYROLL_WRITES_PAUSED=true` before restarting writers. The command
-does not load `.env`, refuses missing confirmation or maintenance before connecting,
-and atomically removes administrator sessions and advances the epoch. It preserves
-non-administrator scan/LINE sessions and fails if the session table is absent.
-Verify its success before allowing logins or payroll writes. This operation belongs
-to the separately approved full-database recovery; it is not authorization to run
-a production restore. The isolated auth recovery check does not establish that an
-external Zeabur full restore or old-instance drain has already been rehearsed.
+完整 PostgreSQL 還原也會還原 `user_sessions` 與工作階段世代編號。
+這種還原不經過應用程式的還原工具，因此不得假設管理員登入狀態已經失效。
+所有應用程式執行個體必須保持停止或暫停，並排空請求。
+恢復寫入程式前，必須明確指定 `DATABASE_URL`，設定 `PAYROLL_WRITES_PAUSED=true`，
+再執行 `npm run restore:invalidate-admin-sessions -- --confirm`。
+此指令不會讀取 `.env`；缺少明確確認或維護設定時，會在連線前拒絕執行。
+它會在同一筆交易內移除管理員工作階段，並遞增世代編號。
+非管理員的掃描與 LINE 工作階段會保留；工作階段資料表不存在時，指令會失敗。
+允許登入或薪資寫入前，必須確認指令執行成功。
+此操作屬於另行核准的完整資料庫復原流程，不構成執行正式還原的授權。
+隔離環境的登入復原測試，也不代表已演練 Zeabur 的完整外部還原或排空舊執行個體。
 
-Existing signed batch-print URLs have a five-minute lifetime and use a separate
-print secret; the administrator epoch does not invalidate them. In an approved
-full-database recovery, have the operator rotate `SALARY_PRINT_TOKEN_SECRET` on
-every instance before allowing reads (or wait out and verify all existing tokens
-with every instance stopped). Replacing credentials is an operator handoff, not
-an automatic side effect of this migration or the session-invalidation command.
+既有的批次列印簽章網址有效期為五分鐘，使用獨立的列印密鑰；
+管理員工作階段世代編號不會使這些網址失效。
+在已核准的完整資料庫復原流程中，允許讀取前，必須由負責人更換所有執行個體的
+`SALARY_PRINT_TOKEN_SECRET`；或在所有執行個體保持停止的情況下，
+等待並確認全部既有權杖已失效。更換憑證必須交由負責人操作，
+不是這次資料庫結構變更或工作階段失效指令會自動執行的動作。
 
-## Backout choices
+## 回退與恢復運作方式
 
-- **Application problem:** keep the additive schema and current journal intact.
-  Turn on maintenance and deploy the tested compatible maintenance commit. Confirm
-  legacy editing, delete, CSV import, forced batch runs and retention cannot write;
-  salary reads and stored amounts should match the pre-backout snapshot. Reverting
-  only the interface or deploying the original old release is insufficient.
-  The compatible maintenance artifact disables legacy JSON backup creation and
-  restoration: that exporter cannot preserve the new journal. Use the verified
-  full database snapshot, or the current repair build's version 3 backup tooling;
-  do not produce new backups through the maintenance artifact.
-- **Data recovery:** use the restore preview above. Restoring an earlier snapshot
-  can replace newer payroll projections and journal entries. Show the exact counts
-  and gross/deduction/net differences, preserve a current safeguard backup and get
-  approval before executing. Restore the salary projection and its journal together.
-- **Resume:** inspect totals, journal integrity, sequences, session invalidation
-  and idempotent correction replay in isolation. Deploy the validated repair build
-  and clear maintenance only after the operator approves. Do not compensate by
-  manually changing stored net salary or automatically adding holiday wages.
+- **應用程式出現問題：**保留新增的資料庫結構與目前的更正紀錄。
+  啟用維護模式，部署已測試的相容維護版本提交。
+  確認既有編輯、刪除、CSV 匯入、強制批次執行與保留期處理都不能寫入，
+  並確認薪資讀取與已保存金額符合回退前的快照。
+  只還原介面或部署原本未修改的舊版本並不足夠。
+  相容的維護版本會停用舊版 JSON 備份建立與還原，因為其匯出功能無法保留新增的更正紀錄。
+  應使用已驗證的完整資料庫快照，或目前修正版的第 3 版備份工具；
+  不得透過維護版本產生新備份。
+- **資料復原：**使用前述還原預覽。還原較早的快照，可能替換較新的薪資結算資料與更正紀錄。
+  執行前必須列出確切筆數，以及總薪資、扣款與實領金額的差異，
+  保留目前資料的保護備份，並取得同意。薪資結算資料與其更正紀錄必須一併還原。
+- **恢復運作：**在隔離環境檢查金額合計、更正紀錄完整性、流水號序列、
+  工作階段失效，以及重複送出更正時不會重複執行。
+  部署已驗證的修正版，並在取得負責人同意後，才解除維護。
+  不得以手動修改已保存的實領金額，或自動加上假日薪資的方式補救。
 
-## Acceptance evidence
+## 驗收證據
 
-Run `npm run verify:release`, the guarded `npm run test:payroll-db` and
-`npm run test:payroll-backup-db` against fresh loopback `payroll_test_*` databases.
-Use the mandatory disposable flags; these runners reject external targets, an
-existing schema, `.env` fallback and unapproved forwarded arguments. Test new and
-same-database restoration, refused legacy recovery, confirmation freshness,
-transaction rollback, sequences and administrator session invalidation. Verify
-duplicate dates, cross-month dates, canceled preview, double confirmation,
-concurrent edits, reopening history, CSV round trips and actual PDF amounts.
+使用全新、僅限本機回環連線的 `payroll_test_*` 資料庫，執行 `npm run verify:release`，
+以及帶有防護檢查的 `npm run test:payroll-db` 與 `npm run test:payroll-backup-db`。
+必須使用指定的可丟棄測試資料庫旗標；這些執行程式會拒絕外部目標、
+既有資料庫結構、從 `.env` 讀取備用設定，以及未核准的轉送參數。
+測試全新資料庫與同一資料庫內的還原、拒絕不相容的舊版備份、確認預覽是否仍有效、
+交易回復、流水號序列，以及管理員工作階段失效。
+驗證重複日期、跨月日期、取消預覽、連按確認、同時編輯、重開歷史紀錄、
+CSV 匯入匯出往返，以及實際 PDF 金額。
 
-PDF acceptance includes a 31-day month, multiple allowances, eight deductions,
-positive/negative/missing historical allowance detail and multiple employees.
-Every date and monetary row must appear; every continuation repeats employee,
-month, revision and column headings; the next employee starts a fresh page.
-Compare stored gross/deduction/net totals with CSV and PDF. Rendering/export must
-not mutate the archived record.
+PDF 驗收必須涵蓋 31 天的月份、多筆津貼、八筆扣款、歷史津貼明細為正差額、
+負差額或缺漏，以及多位員工。每個日期與金額列都必須完整顯示。
+每一張續頁都必須重複員工、月份、修訂編號與欄位標題，下一位員工必須從新頁開始。
+將已保存的總薪資、扣款與實領金額，分別與 CSV、PDF 核對。
+畫面呈現與匯出不得修改已封存的紀錄。
