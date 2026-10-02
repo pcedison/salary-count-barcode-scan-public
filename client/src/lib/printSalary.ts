@@ -11,7 +11,7 @@ export function toPrintableSalarySnapshot(record: ExportSalaryRecord) {
     totalOT1Hours: record.totalOT1Hours ?? 0, totalOT2Hours: record.totalOT2Hours ?? 0,
     totalOvertimePay: record.totalOvertimePay ?? 0, holidayDays: record.holidayDays ?? 0,
     totalHolidayPay: record.totalHolidayPay ?? 0,
-    deductions: [...(record.deductions ?? [])], totalDeductions: record.totalDeductions ?? 0,
+    deductions: [...(record.deductions ?? [])], totalDeductions: record.totalDeductions ?? undefined,
     specialLeaveInfo: record.specialLeaveInfo ?? undefined,
     attendanceData: (record.attendanceData ?? []).map(row => ({
       date: row.date, clockIn: row.clockIn ?? '--:--', clockOut: row.clockOut ?? '--:--',
