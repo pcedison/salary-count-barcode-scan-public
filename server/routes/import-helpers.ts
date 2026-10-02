@@ -21,6 +21,7 @@ export interface AttendanceImportRow {
   holidayType?: string | null;
   holidayId?: number | null;
   isBarcodeScanned?: boolean;
+  overtimeHours?: { ot1: number; ot2: number };
 }
 
 export interface SalaryRecordImportPayload {
@@ -55,6 +56,7 @@ export interface ImportedHistoryAttendanceRow {
   clockOut: string;
   isHoliday: boolean;
   isBarcodeScanned: boolean;
+  overtimeHours?: { ot1: number; ot2: number };
   employeeId?: number;
   holidayId?: number | null;
   holidayType?: string | null;
@@ -131,6 +133,13 @@ export function parseOptionalFloat(value: string | undefined): number {
 }
 
 export function validateAttendanceImportRow(row: AttendanceImportRow): AttendanceImportRow {
+  if (row.overtimeHours !== undefined) {
+    for (const [stage, hours] of [['第一階段', row.overtimeHours?.ot1], ['第二階段', row.overtimeHours?.ot2]] as const) {
+      if (typeof hours !== 'number' || !Number.isFinite(hours) || hours < 0 || hours > 24) {
+        throw new Error(`${stage}加班時數快照必須是 0 至 24 的有限數值，兩階段都須提供`);
+      }
+    }
+  }
   if (!DATE_PATTERN.test(row.date)) {
     throw new Error(`日期格式不正確: ${row.date}`);
   }
@@ -168,6 +177,28 @@ function findRequiredColumnIndex(headers: string[], fieldName: string): number {
     throw new Error(`CSV檔案格式不正確，缺少必要欄位 (${fieldName})`);
   }
   return index;
+}
+
+function parseOvertimeHoursSnapshot(headers: string[], fields: string[]): AttendanceImportRow['overtimeHours'] {
+  const ot1Index = headers.indexOf('OT1 hours snapshot');
+  const ot2Index = headers.indexOf('OT2 hours snapshot');
+  if (ot1Index === -1 && ot2Index === -1) return undefined;
+  if (ot1Index === -1 || ot2Index === -1) throw new Error('加班時數快照缺少第一階段或第二階段欄位');
+  const ot1 = fields[ot1Index]?.trim() ?? '';
+  const ot2 = fields[ot2Index]?.trim() ?? '';
+  if (!ot1 && !ot2) return undefined;
+  if (!ot1 || !ot2) throw new Error('加班時數快照必須同時提供第一階段與第二階段，無加班請填 0');
+  const parseHours = (value: string, stage: string) => {
+    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) {
+      throw new Error(`${stage}加班時數快照必須是 0 至 24 的有限數值`);
+    }
+    const hours = Number(value);
+    if (!Number.isFinite(hours) || hours < 0 || hours > 24) {
+      throw new Error(`${stage}加班時數快照必須是 0 至 24 的有限數值`);
+    }
+    return hours;
+  };
+  return { ot1: parseHours(ot1, '第一階段'), ot2: parseHours(ot2, '第二階段') };
 }
 
 export function parseAttendanceImportCsv(csvContent: string): {
@@ -212,6 +243,7 @@ export function parseAttendanceImportCsv(csvContent: string): {
     }
 
     try {
+      const overtimeHours = parseOvertimeHoursSnapshot(headers, fields);
       const row = validateAttendanceImportRow({
         date: fields[dateIndex].trim(),
         clockIn: fields[clockInIndex].trim(),
@@ -219,7 +251,8 @@ export function parseAttendanceImportCsv(csvContent: string): {
         isHoliday: isHolidayIndex !== -1 ? parseBooleanCsvValue(fields[isHolidayIndex]) : false,
         ...(holidayTypeIndex !== -1 ? { holidayType: fields[holidayTypeIndex]?.trim() || null } : {}),
         ...(holidayIdIndex !== -1 ? { holidayId: fields[holidayIdIndex]?.trim() ? snapshotNumber(fields[holidayIdIndex], 'Holiday ID') : null } : {}),
-        ...(barcodeIndex !== -1 ? { isBarcodeScanned: parseBooleanCsvValue(fields[barcodeIndex]) } : {})
+        ...(barcodeIndex !== -1 ? { isBarcodeScanned: parseBooleanCsvValue(fields[barcodeIndex]) } : {}),
+        ...(overtimeHours !== undefined ? { overtimeHours } : {})
       });
 
       rows.push(row);
@@ -292,12 +325,14 @@ export function parseSalaryImportCsv(csvContent: string): SalaryRecordImportPayl
       continue;
     }
 
+    const overtimeHours = parseOvertimeHoursSnapshot(attendanceHeaders, fields);
     attendanceData.push(
       validateAttendanceImportRow({
         date,
         clockIn,
         clockOut,
-        isHoliday: isHolidayIndex !== -1 ? parseBooleanCsvValue(fields[isHolidayIndex]) : false
+        isHoliday: isHolidayIndex !== -1 ? parseBooleanCsvValue(fields[isHolidayIndex]) : false,
+        ...(overtimeHours !== undefined ? { overtimeHours } : {}),
       })
     );
   }
@@ -387,7 +422,8 @@ export function toImportedHistoryAttendanceData(
     isHoliday: row.isHoliday,
     isBarcodeScanned: row.isBarcodeScanned ?? false,
     ...(row.holidayType !== undefined ? { holidayType: row.holidayType } : {}),
-    ...(row.holidayId !== undefined ? { holidayId: row.holidayId } : {})
+    ...(row.holidayId !== undefined ? { holidayId: row.holidayId } : {}),
+    ...(row.overtimeHours !== undefined ? { overtimeHours: { ...row.overtimeHours } } : {})
   }));
 }
 
@@ -435,7 +471,8 @@ function parseSalarySnapshotRows(rows: string[][]): SalaryRecordImportPayload {
   const dates = new Set<string>();
   const attendanceData = rows.slice(attendanceIndex + 2).filter(row => row.some(cell => cell)).map(row => {
     if (row.length !== attendanceHeaders.length) throw new Error('Incomplete attendance snapshot row.');
-    const attendance = validateAttendanceImportRow({ date: row[dateIndex], clockIn: row[inIndex], clockOut: row[outIndex], isHoliday: parseBooleanCsvValue(row[holidayIndex]), holidayType: row[typeIndex] || null, holidayId: row[idIndex]?.trim() ? snapshotNumber(row[idIndex], 'Holiday ID') : null, isBarcodeScanned: parseBooleanCsvValue(row[barcodeIndex]) });
+    const overtimeHours = parseOvertimeHoursSnapshot(attendanceHeaders, row);
+    const attendance = validateAttendanceImportRow({ date: row[dateIndex], clockIn: row[inIndex], clockOut: row[outIndex], isHoliday: parseBooleanCsvValue(row[holidayIndex]), holidayType: row[typeIndex] || null, holidayId: row[idIndex]?.trim() ? snapshotNumber(row[idIndex], 'Holiday ID') : null, isBarcodeScanned: parseBooleanCsvValue(row[barcodeIndex]), ...(overtimeHours !== undefined ? { overtimeHours } : {}) });
     if (dates.has(attendance.date)) throw new Error('Duplicate snapshot attendance date.');
     dates.add(attendance.date);
     return attendance;

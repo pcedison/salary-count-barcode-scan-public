@@ -548,12 +548,20 @@ describe('db-monitoring restore safety', () => {
     expect(inspectSyntheticJournal().errors).toEqual([]);
   });
 
-  it.each(['amounts', 'deduction-details', 'attendance', 'basis', 'leave'])('rejects same-revision projection %s mismatch', kind => {
+  it('compares persisted daily overtime evidence while keeping legacy snapshots compatible', () => {
+    const payload = journalBackupFixture();
+    Object.assign(payload.salaryRecords[0].attendanceData[0], { overtimeHours: { ot1: 2, ot2: 0.5 } });
+    Object.assign(payload.salaryCorrections[0].afterSnapshot.attendanceData[0], { overtimeHours: { ot1: 2, ot2: 0.5 } });
+    readFileSyncMock.mockReturnValue(JSON.stringify(payload));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
+  });
+  it.each(['amounts', 'deduction-details', 'attendance', 'overtime-hours', 'basis', 'leave'])('rejects same-revision projection %s mismatch', kind => {
     const payload = journalBackupFixture();
     const projection = payload.salaryRecords[0];
     if (kind === 'amounts') { projection.grossSalary += 500; projection.netSalary += 500; }
     if (kind === 'deduction-details') projection.deductions[0].name = 'Different withholding';
     if (kind === 'attendance') projection.attendanceData[0].holidayType = 'regular_day_off';
+    if (kind === 'overtime-hours') Object.assign(projection.attendanceData[0], { overtimeHours: { ot1: 2, ot2: 0.5 } });
     if (kind === 'basis') projection.holidayCalculationBaseSalary = 32000;
     if (kind === 'leave') projection.specialLeaveInfo.usedDates.push('2026-09-28');
     readFileSyncMock.mockReturnValue(JSON.stringify(payload));

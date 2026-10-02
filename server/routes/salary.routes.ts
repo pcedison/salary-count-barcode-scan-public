@@ -17,6 +17,7 @@ import {
 } from '../services/salaryPrintToken';
 import { createLogger } from '../utils/logger';
 import type { OvertimeHours } from '../utils/salaryCalculator';
+import { captureSettlementOvertime } from '@shared/utils/archivedOvertime';
 
 import {
   deriveHolidayPayBase,
@@ -243,6 +244,8 @@ export async function buildCalculatedSalaryRecord(
     deductions: allDeductions,
     totalOT1Hours: salaryResult.totalOT1Hours,
     totalOT2Hours: salaryResult.totalOT2Hours,
+    attendanceData: captureSettlementOvertime({ ...draft,
+      totalOT1Hours: salaryResult.totalOT1Hours, totalOT2Hours: salaryResult.totalOT2Hours }),
     totalOvertimePay: salaryResult.totalOvertimePay,
     totalHolidayPay,
     grossSalary: salaryResult.grossSalary + specialLeaveCashAmount,

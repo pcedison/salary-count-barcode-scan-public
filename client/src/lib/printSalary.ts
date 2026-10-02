@@ -8,7 +8,7 @@ export function toPrintableSalarySnapshot(record: ExportSalaryRecord) {
     baseSalary: record.baseSalary, grossSalary: record.grossSalary, netSalary: record.netSalary,
     housingAllowance: record.housingAllowance ?? undefined, welfareAllowance: record.welfareAllowance ?? undefined,
     allowances: record.allowances ? [...record.allowances] : undefined,
-    totalOT1Hours: record.totalOT1Hours ?? 0, totalOT2Hours: record.totalOT2Hours ?? 0,
+    totalOT1Hours: record.totalOT1Hours, totalOT2Hours: record.totalOT2Hours,
     totalOvertimePay: record.totalOvertimePay ?? 0, holidayDays: record.holidayDays ?? 0,
     totalHolidayPay: record.totalHolidayPay ?? 0,
     deductions: [...(record.deductions ?? [])], totalDeductions: record.totalDeductions ?? undefined,
@@ -16,6 +16,7 @@ export function toPrintableSalarySnapshot(record: ExportSalaryRecord) {
     attendanceData: (record.attendanceData ?? []).map(row => ({
       date: row.date, clockIn: row.clockIn ?? '--:--', clockOut: row.clockOut ?? '--:--',
       isHoliday: row.isHoliday ?? false, holidayType: row.holidayType ?? undefined,
+      overtimeHours: row.overtimeHours,
     })),
   };
 }

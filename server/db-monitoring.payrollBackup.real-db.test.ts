@@ -147,6 +147,25 @@ async function restoreEpoch() {
 }
 
 describe('actual PostgreSQL authoritative payroll backup and restore', () => {
+  it('preserves daily overtime evidence through correction journal and actual restore, refusing a divergent projection', async () => {
+    const { record } = await fixture(true);
+    const attendanceData = record.attendanceData!.map(row => ({ ...row, overtimeHours: { ot1: 0, ot2: 0 } }));
+    await db.update(schema.salaryRecords).set({ attendanceData }).where(eq(schema.salaryRecords.id, record.id));
+    const corrected = await correct(record, request('2026-09-28'));
+    expect(corrected.correction.beforeSnapshot.attendanceData?.[0].overtimeHours).toEqual({ ot1: 0, ot2: 0 });
+    expect(corrected.correction.afterSnapshot.attendanceData?.[0].overtimeHours).toEqual({ ot1: 0, ot2: 0 });
+    const { id, payload } = await backup();
+    const before = await snapshot();
+    await backups.restoreFromBackup(id, backups.BackupType.MANUAL, { skipPreRestoreBackup: true });
+    expect(await snapshot()).toEqual(before);
+    payload.salaryRecords[0].attendanceData[0].overtimeHours.ot1 = 1;
+    const corruptId = await writeArtifact(payload);
+    expect(backups.inspectBackupFile(corruptId, backups.BackupType.MANUAL).errors)
+      .toContain('salaryCorrections latest snapshot does not match its salary projection.');
+    await expect(backups.restoreFromBackup(corruptId, backups.BackupType.MANUAL, { skipPreRestoreBackup: true }))
+      .rejects.toMatchObject({ code: 'INVALID_RESTORE_BACKUP' });
+    expect(await snapshot()).toEqual(before);
+  });
   it('exports journal, nullable retention link and idempotency evidence in authority v3', async () => {
     const { record } = await fixture();
     const metadata = commitMetadata();

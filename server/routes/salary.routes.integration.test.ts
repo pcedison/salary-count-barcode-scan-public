@@ -128,6 +128,28 @@ beforeEach(() => {
 });
 
 describe('salary routes integration', () => {
+  it('captures server-derived daily hours for a new settlement and discards forged client hours', async () => {
+    salaryState.records = [];
+    salaryCalculatorMock.calculateSalary.mockReturnValueOnce({
+      totalOT1Hours: 3, totalOT2Hours: 0.5, totalOvertimePay: 888, grossSalary: 30888, netSalary: 30888,
+    });
+    const server = await testServer();
+    try {
+      const attendanceData = ['17:00', '18:20'].map((clockOut, index) => ({
+        id: index + 1, employeeId: 5, date: `2026-03-0${index + 2}`, clockIn: '08:00', clockOut,
+        isHoliday: false, isBarcodeScanned: false, holidayType: null, holidayId: null, createdAt: null,
+        overtimeHours: { ot1: 24, ot2: 24 },
+      }));
+      const result = await jsonRequest<SalaryRecord>(server.baseUrl, '/api/salary-records', {
+        method: 'POST', headers: { [TEST_ADMIN_HEADER]: 'true', 'content-type': 'application/json' },
+        body: JSON.stringify({ ...salary(), attendanceData }),
+      });
+      expect(result.response.status).toBe(201);
+      expect(result.body?.attendanceData?.map(row => row.overtimeHours)).toEqual([{ ot1: 1, ot2: 0 }, { ot1: 2, ot2: 0.5 }]);
+      expect(result.body).toMatchObject({ totalOT1Hours: 3, totalOT2Hours: 0.5, totalOvertimePay: 888 });
+      expect(result.body?.attendanceData?.map(row => row.date)).toEqual(attendanceData.map(row => row.date));
+    } finally { await server.close(); }
+  });
   it('saves the base actually used for a new settlement, rather than current settings or a client basis', async () => {
     salaryState.records = [];
     const server = await testServer();

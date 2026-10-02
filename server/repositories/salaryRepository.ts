@@ -25,6 +25,7 @@ function payrollAuditSnapshot(record: SalaryRecord): SalaryRecord {
       id: row.id, employeeId: null, date: row.date, clockIn: row.clockIn, clockOut: row.clockOut,
       isHoliday: row.isHoliday, isBarcodeScanned: row.isBarcodeScanned,
       holidayId: row.holidayId, holidayType: row.holidayType, createdAt: row.createdAt,
+      ...(row.overtimeHours !== undefined ? { overtimeHours: row.overtimeHours } : {}),
     })) ?? null,
     specialLeaveInfo: record.specialLeaveInfo ? {
       usedDays: record.specialLeaveInfo.usedDays, usedDates: record.specialLeaveInfo.usedDates,

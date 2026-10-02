@@ -67,6 +67,9 @@ export const insertTemporaryAttendanceSchema = createInsertSchema(temporaryAtten
 
 export type InsertTemporaryAttendance = z.infer<typeof insertTemporaryAttendanceSchema>;
 export type TemporaryAttendance = typeof temporaryAttendance.$inferSelect;
+export type SalaryAttendanceSnapshot = TemporaryAttendance & {
+  overtimeHours?: { ot1: number; ot2: number };
+};
 
 // Salary settings.
 export const settings = pgTable("settings", {
@@ -112,7 +115,7 @@ export const salaryRecords = pgTable("salary_records", {
   allowances: json("allowances").$type<{ name: string; amount: number; description?: string }[]>().default([]),
   totalDeductions: doublePrecision("total_deductions").default(0),
   netSalary: doublePrecision("net_salary").notNull(),
-  attendanceData: json("attendance_data").$type<TemporaryAttendance[]>(),
+  attendanceData: json("attendance_data").$type<SalaryAttendanceSnapshot[]>(),
   specialLeaveInfo: json("special_leave_info").$type<{
     usedDays: number;
     usedDates: string[];
