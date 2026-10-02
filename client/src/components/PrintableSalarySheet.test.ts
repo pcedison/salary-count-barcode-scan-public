@@ -37,7 +37,9 @@ describe('archived salary print snapshot', () => {
     const html = render({ ...record, totalOT1Hours: 12.5, totalOT2Hours: 3.5, totalOvertimePay: 3210, grossSalary: 33210, netSalary: 32210 });
     for (const amount of ['12.5', '3.5', '3210']) expect(summary(html)).toContain('>' + amount + '</td>');
     expect(html).toContain('>33210</td>');
-    expect(html).toContain('>1000</td>');
+    expect(html).toContain('Synthetic Deduction');
+    expect(html).toContain('>-1000</td>');
+    expect(html).not.toContain('扣款合計');
     expect(html).toContain('>32210</td>');
   });
   it('prints newly corrected no-clock holidays and handles missing legacy attendance safely', () => {
@@ -46,6 +48,31 @@ describe('archived salary print snapshot', () => {
     expect(html).toContain('2026-09-28');
     expect(html.match(/國定假日/g)).toHaveLength(2);
     expect(() => render({ ...record, attendanceData: null })).not.toThrow();
+  });
+  it.each([
+    { total: 1200, detail: 300, expected: '-900' },
+    { total: 300, detail: 1200, expected: '+900' },
+    { total: 1200, detail: 0, expected: '-1200' },
+    { total: 0, detail: 300, expected: '+300' },
+    { total: 300, detail: -300, expected: '-300' },
+  ])('reconciles only displayed historical deductions to the saved total: $expected', ({ total, detail, expected }) => {
+    const input = { ...record, totalDeductions: total, deductions: detail === 0 ? [] : [{ name: 'Legacy deduction detail', amount: detail }], netSalary: record.grossSalary - total };
+    const before = JSON.stringify(input);
+    const html = render(input);
+    const difference = html.match(/<tr class="deduction-row summary-size-row deduction-reconciliation-row">([\s\S]*?)<\/tr>/)?.[1] ?? '';
+    expect(difference).toContain('歷史扣款明細差異');
+    expect(difference).toContain('>' + expected + '</td>');
+    expect(html).not.toContain('扣款合計');
+    expect(html).toContain('>' + input.grossSalary + '</td>');
+    expect(html).toContain('>' + input.netSalary + '</td>');
+    expect(JSON.stringify(input)).toBe(before);
+  });
+  it('omits the total and any reconciliation when deduction details are complete or the saved total is unknown', () => {
+    for (const input of [record, { ...record, deductions: [], totalDeductions: 0 }, { ...record, totalDeductions: null }]) {
+      const html = render(input);
+      expect(html).not.toContain('扣款合計');
+      expect(html).not.toContain('<tr class="deduction-row summary-size-row deduction-reconciliation-row">');
+    }
   });
   it('escapes employee identity through React instead of injecting raw HTML', () => {
     const html = render({ ...record, employeeName: '<script>synthetic()</script>' });

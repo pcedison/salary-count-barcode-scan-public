@@ -21,7 +21,7 @@ interface PrintableSalarySheetProps {
     totalHolidayPay: number;
     grossSalary: number;
     deductions: Array<{ name: string; amount: number }>;
-    totalDeductions: number;
+    totalDeductions?: number;
     netSalary: number;
     attendanceData: Array<{
       date: string;
@@ -115,6 +115,12 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
   // 總加班費
   const totalOTPay = result.archived ? safeNumber(result.totalOvertimePay) : safeNumber(attendanceWithOT.reduce((sum, record) => sum + safeNumber(record.pay), 0));
   const specialLeaveCashAmount = safeNumber(result.specialLeaveInfo?.cashAmount);
+  const visibleDeductions = (result.deductions ?? []).filter(deduction =>
+    Number.isFinite(safeNumber(deduction.amount)) && safeNumber(deduction.amount) > 0);
+  // 舊 CSV 可分別保存扣款總額與部分明細，差異須保留，但不重算薪資快照。
+  const visibleDeductionTotal = visibleDeductions.reduce((sum, deduction) => sum + safeNumber(deduction.amount), 0);
+  const deductionDifference = result.archived && Number.isFinite(result.totalDeductions)
+    ? Math.round((visibleDeductionTotal - result.totalDeductions!) * 100) / 100 : 0;
 
   // 檢查日期是否為特別假
   const isSpecialLeaveDate = (date: string): boolean => {
@@ -499,20 +505,24 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
             {renderHousingAllowanceRow()}
             {renderAllowancesRows()}
             {/* 動態遍歷所有扣款項目 */}
-            {result.deductions && result.deductions.length > 0 && result.deductions.map((deduction: { name: string; amount: number }, index: number) => (
-              deduction.amount > 0 && (
+            {visibleDeductions.map((deduction, index) => (
                 <tr key={index} className="deduction-row summary-size-row">
                   <td colSpan={5}>{deduction.name}：</td>
-                  <td className="amount-cell">-{deduction.amount}</td>
+                  <td className="amount-cell">-{safeNumber(deduction.amount)}</td>
                 </tr>
-              )
             ))}
+            {deductionDifference !== 0 && <tr className="deduction-row summary-size-row deduction-reconciliation-row">
+              <td colSpan={5}>
+                歷史扣款明細差異：
+                <span className="reconciliation-note">歷史明細與結算快照的對照，薪資採用已保存總額。</span>
+              </td>
+              <td className="amount-cell">{deductionDifference > 0 ? '+' : ''}{deductionDifference}</td>
+            </tr>}
           </tbody>
           <tbody className="salary-totals">
-            {result.archived && <>
+            {result.archived && (
               <tr className="summary-size-row"><td colSpan={5}>總薪資：</td><td className="amount-cell">{safeNumber(result.grossSalary)}</td></tr>
-              <tr className="summary-size-row"><td colSpan={5}>扣款合計：</td><td className="amount-cell">{safeNumber(result.totalDeductions)}</td></tr>
-            </>}
+            )}
             <tr className="total-amount summary-size-row">
               <td colSpan={5}>實領金額：</td>
               <td className="amount-cell">{safeNumber(result.netSalary)}</td>
