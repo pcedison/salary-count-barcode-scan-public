@@ -147,6 +147,7 @@ describe('snapshot payroll holiday corrections', () => {
 
   it('supports worked holidays only from actual original clock times and preserves overtime and allowances', () => {
     const original = salary([row('2026-09-25')]);
+    original.attendanceData![0].overtimeHours = { ot1: 1, ot2: 0 };
     const preview = buildPayrollHolidayCorrection(original, request({ holidays: [
       { date: '2026-09-25', holidayType: 'worked', name: 'Synthetic worked holiday', mode: 'replace' },
     ], paymentHandling: 'unpaid' }));
@@ -155,6 +156,7 @@ describe('snapshot payroll holiday corrections', () => {
     expect(preview.delta.holidayDays).toBe(1);
     expect(preview.after.attendanceData?.[0].clockIn).toBe('08:00');
     expect(preview.after.attendanceData?.[0].clockOut).toBe('17:00');
+    expect(preview.after.attendanceData?.[0].overtimeHours).toEqual({ ot1: 1, ot2: 0 });
     expect(preview.after.totalOT1Hours).toBe(original.totalOT1Hours);
     expect(preview.after.totalOT2Hours).toBe(original.totalOT2Hours);
     expect(preview.after.totalOvertimePay).toBe(original.totalOvertimePay);

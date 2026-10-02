@@ -8,6 +8,7 @@ export interface ExportAttendanceSnapshot {
   holidayType?: string | null;
   holidayId?: number | null;
   isBarcodeScanned?: boolean | null;
+  overtimeHours?: { ot1: number; ot2: number };
 }
 
 export interface ExportSalaryRecord {
@@ -46,7 +47,7 @@ export interface ExportSalaryRecord {
 
 function attendanceRows(record: ExportSalaryRecord): CsvCell[][] {
   return [
-    ['Record ID', 'Revision', 'Date', 'Clock In', 'Clock Out', 'Holiday', 'Holiday Type', 'Holiday ID', 'Barcode Scanned'],
+    ['Record ID', 'Revision', 'Date', 'Clock In', 'Clock Out', 'Holiday', 'Holiday Type', 'Holiday ID', 'Barcode Scanned', 'OT1 hours snapshot', 'OT2 hours snapshot'],
     ...(record.attendanceData ?? []).map((attendance) => [
       record.id,
       record.revision ?? 0,
@@ -59,6 +60,8 @@ function attendanceRows(record: ExportSalaryRecord): CsvCell[][] {
       attendance.holidayId,
       attendance.isBarcodeScanned === null || attendance.isBarcodeScanned === undefined
         ? '' : attendance.isBarcodeScanned ? 'Yes' : 'No',
+      attendance.overtimeHours?.ot1,
+      attendance.overtimeHours?.ot2,
     ]),
   ];
 }

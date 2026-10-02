@@ -4,7 +4,9 @@ import {
   parseAttendanceImportCsv,
   parseSalaryImportCsv,
   splitCsvLine,
-  toImportedHistoryAttendanceData
+  toImportedHistoryAttendanceData,
+  validateAttendanceImportRow,
+  type AttendanceImportRow,
 } from './import-helpers';
 
 describe('import helpers', () => {
@@ -112,5 +114,47 @@ describe('import helpers', () => {
         isBarcodeScanned: false
       }
     ]);
+  });
+
+  it('手動出勤匯入可保留每日快照，雙空白維持舊資料未知狀態', () => {
+    const parsed = parseAttendanceImportCsv([
+      '日期,上班時間,下班時間,OT1 hours snapshot,OT2 hours snapshot',
+      '2026-09-01,08:00,18:00,1.75,0',
+      '2026-09-02,08:00,18:00,0,0',
+      '2026-09-03,08:00,18:00,,',
+    ].join('\n'));
+    expect(parsed.result).toMatchObject({ successCount: 3, failCount: 0 });
+    expect(parsed.rows.map(row => row.overtimeHours)).toEqual([{ ot1: 1.75, ot2: 0 }, { ot1: 0, ot2: 0 }, undefined]);
+    const rebuilt = toImportedHistoryAttendanceData(parsed.rows);
+    expect(rebuilt[0].overtimeHours).toEqual({ ot1: 1.75, ot2: 0 });
+    expect(rebuilt[0].overtimeHours).not.toBe(parsed.rows[0].overtimeHours);
+  });
+
+  it('舊薪資格式的考勤區段也可保留每日時數快照', () => {
+    const parsed = parseSalaryImportCsv([
+      '薪資年份,薪資月份,基本底薪', '2026,9,10000', '考勤詳細記錄',
+      '日期,上班時間,下班時間,OT1 hours snapshot,OT2 hours snapshot',
+      '2026-09-01,08:00,19:00,2,0.25',
+    ].join('\n'));
+    expect(parsed.attendanceData[0].overtimeHours).toEqual({ ot1: 2, ot2: 0.25 });
+  });
+
+  it.each([
+    { ot1: undefined, ot2: 0 }, { ot1: 0, ot2: undefined },
+    { ot1: Number.NaN, ot2: 0 }, { ot1: 0, ot2: Number.POSITIVE_INFINITY },
+    { ot1: -1, ot2: 0 }, { ot1: 0, ot2: 24.1 }, { ot1: '1', ot2: 0 }, null,
+  ])('直接校驗拒絕不完整、非數字或超出範圍的時數 %j', overtimeHours => {
+    expect(() => validateAttendanceImportRow({ date: '2026-09-01', clockIn: '08:00', clockOut: '18:00', isHoliday: false, overtimeHours: overtimeHours as unknown as AttendanceImportRow['overtimeHours'] })).toThrow('加班時數快照');
+  });
+
+  it('直接校驗接受 0 與上限 24，原有欄位保持不變', () => {
+    const row = { date: '2026/09/01', clockIn: '08:00', clockOut: '18:00', isHoliday: false, overtimeHours: { ot1: 0, ot2: 24 } };
+    expect(validateAttendanceImportRow(row)).toEqual(row);
+  });
+
+  it('缺少任一階段快照欄的手動 CSV 會回報清楚錯誤', () => {
+    const parsed = parseAttendanceImportCsv('日期,上班時間,下班時間,OT1 hours snapshot\n2026-09-01,08:00,18:00,0');
+    expect(parsed.result.failCount).toBe(1);
+    expect(parsed.result.errors[0]).toContain('缺少第一階段或第二階段');
   });
 });

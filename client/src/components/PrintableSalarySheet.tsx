@@ -1,5 +1,6 @@
 import React from 'react';
 import { calculateOvertime, calculateDailyOvertimePay } from '@/lib/salaryCalculations';
+import { reconcileArchivedOvertime, type OvertimeHoursSnapshot } from '@shared/utils/archivedOvertime';
 
 interface PrintableSalarySheetProps {
   result: {
@@ -14,8 +15,8 @@ interface PrintableSalarySheetProps {
     housingAllowance?: number;
     welfareAllowance?: number;
     allowances?: Array<{ name: string; amount: number; description?: string }>;
-    totalOT1Hours: number;
-    totalOT2Hours: number;
+    totalOT1Hours?: number | null;
+    totalOT2Hours?: number | null;
     totalOvertimePay: number;
     holidayDays: number;
     totalHolidayPay: number;
@@ -29,6 +30,7 @@ interface PrintableSalarySheetProps {
       clockOut: string;
       isHoliday: boolean;
       holidayType?: string;
+      overtimeHours?: OvertimeHoursSnapshot;
     }>;
     specialLeaveInfo?: {
       usedDays: number;
@@ -48,6 +50,8 @@ const safeNumber = (value: any): number => {
   const num = Number(value);
   return isNaN(num) ? 0 : num;
 };
+
+const formatHours = (value: number): string => Number.isInteger(value * 10) ? value.toFixed(1) : String(value);
 
 // 根據假日類型返回顯示文字
 const getHolidayLabel = (holidayType?: string): string => {
@@ -98,14 +102,16 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
     return new Date(a.date.replace(/\//g, '-')).getTime() - new Date(b.date.replace(/\//g, '-')).getTime();
   });
 
-  // 計算每條記錄的加班費
-  const attendanceWithOT = sortedAttendance.map(record => {
+  const archivedHours = result.archived ? reconcileArchivedOvertime({ ...result, attendanceData: sortedAttendance }) : null;
+  // 每日時數採已保存明細；舊資料的打卡推導須先與結算合計吻合。
+  const attendanceWithOT = sortedAttendance.map((record, index) => {
     const dailyOT = result.archived ? { ot1: 0, ot2: 0, pay: 0 } : calculateDailyOT(record.clockIn, record.clockOut);
     return {
       ...record,
       ot1: dailyOT.ot1,
       ot2: dailyOT.ot2,
-      pay: dailyOT.pay
+      pay: dailyOT.pay,
+      archivedHours: archivedHours?.rows[index] ?? null
     };
   });
 
@@ -156,8 +162,8 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
           </td>
           <td className="time-cell">{record.clockIn}</td>
           <td className="time-cell">{record.clockOut}</td>
-          <td className="number-cell">{result.archived ? '—' : record.ot1.toFixed(1)}</td>
-          <td className="number-cell">{result.archived ? '—' : record.ot2.toFixed(1)}</td>
+          <td className="number-cell">{result.archived ? record.archivedHours ? formatHours(record.archivedHours.ot1) : '待核對' : formatHours(record.ot1)}</td>
+          <td className="number-cell">{result.archived ? record.archivedHours ? formatHours(record.archivedHours.ot2) : '待核對' : formatHours(record.ot2)}</td>
           <td className="amount-cell">{result.archived ? '—' : record.pay}</td>
         </tr>
       );
@@ -398,7 +404,8 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
         /* 確保表格內數字對齊 */
         .number-cell {
           text-align: center !important;
-          white-space: nowrap;
+          white-space: normal;
+          overflow-wrap: anywhere;
         }
 
         .amount-cell {
@@ -467,8 +474,8 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
 
             <tr className="summary-row">
               <td colSpan={3}>一般加班時數總計：</td>
-              <td className="number-cell">{totalOT1.toFixed(1)}</td>
-              <td className="number-cell">{totalOT2.toFixed(1)}</td>
+              <td className="number-cell">{formatHours(totalOT1)}</td>
+              <td className="number-cell">{formatHours(totalOT2)}</td>
               <td className="amount-cell">{totalOTPay}</td>
             </tr>
             <tr className="summary-size-row">

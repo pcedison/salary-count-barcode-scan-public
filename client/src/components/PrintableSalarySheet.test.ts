@@ -34,7 +34,8 @@ describe('archived salary print snapshot', () => {
     expect(summary(html)).toContain('>0.0</td>');
     expect(summary(html)).toContain('>0</td>');
     expect(html).not.toContain('>168</td>');
-    expect(html.match(/>—<\/td>/g)).toHaveLength(9);
+    expect(html.match(/>待核對<\/td>/g)).toHaveLength(6);
+    expect(html.match(/>—<\/td>/g)).toHaveLength(3);
     expect(html).not.toContain('加班及薪資合計採用此修訂的結算快照');
   });
   it('uses nonzero stored overtime aggregates rather than recomputing daily totals', () => {
@@ -45,6 +46,40 @@ describe('archived salary print snapshot', () => {
     expect(html).toContain('>-1000</td>');
     expect(html).not.toContain('扣款合計');
     expect(html).toContain('>32210</td>');
+  });
+  it('displays reconciled daily stage hours, zero-work holidays, and unchanged archived monetary totals', () => {
+    const input = { ...record, totalOT1Hours: 3, totalOT2Hours: 0.5, totalOvertimePay: 999,
+      grossSalary: 30999, netSalary: 29999,
+      attendanceData: [{ date: '2026-09-01', clockIn: '08:00', clockOut: '17:00', isHoliday: false },
+        { date: '2026-09-02', clockIn: '08:00', clockOut: '18:20', isHoliday: false },
+        ...record.attendanceData.slice(1)],
+    };
+    const original = JSON.stringify(input);
+    const html = render(input);
+    expect(html).not.toContain('待核對');
+    expect(html).toMatch(/2026-09-01[\s\S]*?number-cell">1.0<\/td><td class="number-cell">0.0<\/td>/);
+    expect(html).toMatch(/2026-09-02[\s\S]*?number-cell">2.0<\/td><td class="number-cell">0.5<\/td>/);
+    for (const amount of ['3.0', '0.5', '999']) expect(summary(html)).toContain('>' + amount + '</td>');
+    expect(html).toContain('>29999</td>');
+    expect(JSON.stringify(input)).toBe(original);
+  });
+  it('preserves saved daily hours through the print projection and never infers missing totals as zero', () => {
+    const input = { ...record, totalOT1Hours: 2, totalOT2Hours: 0.5,
+      attendanceData: [{ ...record.attendanceData![0], clockOut: '16:00', overtimeHours: { ot1: 2, ot2: 0.5 } }],
+    };
+    expect(render(input)).toMatch(/number-cell">2.0<\/td><td class="number-cell">0.5<\/td>/);
+    expect(render({ ...input, totalOT1Hours: null, totalOT2Hours: null })).toContain('待核對');
+  });
+  it('preserves fractional snapshot precision so daily rows still add up to the displayed aggregate', () => {
+    const input = { ...record, totalOT1Hours: 2.5, totalOT2Hours: 0,
+      attendanceData: [1, 2].map(day => ({ date: `2026-09-0${day}`, clockIn: '08:00', clockOut: '18:00',
+        isHoliday: false, overtimeHours: { ot1: 1.25, ot2: 0 } })),
+    };
+    const html = render(input);
+    expect(html.match(/number-cell">1.25<\/td>/g)).toHaveLength(2);
+    expect(summary(html)).toContain('>2.5</td>');
+    expect(render({ ...input, totalOT1Hours: 2.25, attendanceData: [{ ...input.attendanceData[0], overtimeHours: { ot1: 2.25, ot2: 0 } }] }))
+      .toMatch(/一般加班時數總計：[\s\S]*?>2.25<\/td>/);
   });
   it('prints newly corrected no-clock holidays and handles missing legacy attendance safely', () => {
     const html = render();

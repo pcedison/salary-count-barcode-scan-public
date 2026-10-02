@@ -40,7 +40,7 @@ describe('finalized salary CSV exports', () => {
     expect(csv).toContain('Overtime pay,765\r\n');
     expect(csv).toContain('Gross salary,13115\r\n');
     expect(csv).toContain('Net salary,13040\r\n');
-    expect(csv).toContain('41,0,2026-09-24,08:00,19:00,No,,,\r\n');
+    expect(csv).toContain('41,0,2026-09-24,08:00,19:00,No,,,,,\r\n');
     expect(csv).not.toContain('Daily OT Pay');
     expect(settledRecord).toEqual(before);
   });
@@ -67,7 +67,7 @@ describe('finalized salary CSV exports', () => {
     expect(csv).toContain('Holiday pay,800\r\n');
     expect(csv).toContain('Net salary,13840\r\n');
     for (const date of ['2026-09-25', '2026-09-28']) {
-      const row = `41,1,${date},,,Yes,national_holiday,,\r\n`;
+      const row = `41,1,${date},,,Yes,national_holiday,,,,\r\n`;
       expect(csv).toContain(row);
       expect(attendanceCsv).toContain(row);
     }
@@ -108,8 +108,28 @@ describe('finalized salary CSV exports', () => {
     expect(csv).toContain('Holiday daily salary,\r\n');
     expect(csv).toContain('Overtime pay,\r\n');
     expect(buildAttendanceCsv({ ...settledRecord, attendanceData: null })).toBe(
-      '\uFEFFRecord ID,Revision,Date,Clock In,Clock Out,Holiday,Holiday Type,Holiday ID,Barcode Scanned\r\n',
+      '\uFEFFRecord ID,Revision,Date,Clock In,Clock Out,Holiday,Holiday Type,Holiday ID,Barcode Scanned,OT1 hours snapshot,OT2 hours snapshot\r\n',
     );
+  });
+
+  it('匯出每日已保存的加班時數並保留零值，不從打卡時間重新計算', () => {
+    const record: ExportSalaryRecord = {
+      ...settledRecord,
+      attendanceData: [
+        { date: '2026-09-24', clockIn: '08:00', clockOut: '19:00', overtimeHours: { ot1: 1.25, ot2: 0 } },
+        { date: '2026-09-25', clockIn: '08:00', clockOut: '19:00', overtimeHours: { ot1: 0, ot2: 0 } },
+        { date: '2026-09-28', clockIn: '08:00', clockOut: '19:00' },
+      ],
+    };
+    const before = structuredClone(record);
+    for (const csv of [buildAttendanceCsv(record), buildSalaryRecordCsv(record)]) {
+      expect(csv).toContain('OT1 hours snapshot,OT2 hours snapshot\r\n');
+      expect(csv).toContain('2026-09-24,08:00,19:00,,,,,1.25,0\r\n');
+      expect(csv).toContain('2026-09-25,08:00,19:00,,,,,0,0\r\n');
+      expect(csv).toContain('2026-09-28,08:00,19:00,,,,,,\r\n');
+      expect(csv).not.toContain('Daily OT Pay');
+    }
+    expect(record).toEqual(before);
   });
 
   it('keeps all exports identifiable and UTF-8 spreadsheet compatible', () => {

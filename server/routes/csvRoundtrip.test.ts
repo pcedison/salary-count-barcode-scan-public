@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildAttendanceCsv, buildSalaryRecordCsv, type ExportSalaryRecord } from '../../client/src/lib/historyExport';
-import { parseCsvRows } from '@shared/utils/csv';
+import { encodeCsv, parseCsvRows } from '@shared/utils/csv';
 import { parseAttendanceImportCsv, parseSalaryImportCsv, toImportedHistoryAttendanceData } from './import-helpers';
 
 function snapshot(): ExportSalaryRecord {
@@ -25,6 +25,58 @@ describe('real finalized CSV export to server parser round trips', () => {
     const parsed = parseAttendanceImportCsv(buildAttendanceCsv(snapshot()));
     expect(parsed.result).toMatchObject({ successCount: 3, failCount: 0, totalRecords: 3 });
     expect(parsed.rows).toEqual(snapshot().attendanceData!.map(row => ({ ...row, date: row.date.replaceAll('-', '/') })));
+  });
+
+  it('新出勤及薪資 CSV 往返保留每日已保存時數，包括零值，重建歷史資料不遺失', () => {
+    const original = snapshot();
+    original.attendanceData = original.attendanceData!.map((row, index) => ({ ...row, overtimeHours: index === 0 ? { ot1: 1.25, ot2: 0.5 } : { ot1: 0, ot2: 0 } }));
+    const salaryParsed = parseSalaryImportCsv(buildSalaryRecordCsv(original));
+    const attendanceParsed = parseAttendanceImportCsv(buildAttendanceCsv(original));
+    expect(attendanceParsed.result.failCount).toBe(0);
+    const expected = original.attendanceData.map(row => ({ ...row, date: row.date.replaceAll('-', '/') }));
+    expect(salaryParsed.attendanceData).toEqual(expected);
+    expect(attendanceParsed.rows).toEqual(expected);
+    expect(toImportedHistoryAttendanceData(salaryParsed.attendanceData)).toEqual(expected.map((row, index) => ({ id: index + 1, ...row })));
+    const second = parseSalaryImportCsv(buildSalaryRecordCsv({ ...original, attendanceData: salaryParsed.attendanceData }));
+    expect(second.attendanceData).toEqual(expected);
+    expect(second.totalOvertimePay).toBe(original.totalOvertimePay);
+    expect(second.netSalary).toBe(original.netSalary);
+  });
+
+  it('舊版 CSV 缺少快照欄仍可匯入，新版雙空白也不發明每日時數', () => {
+    const original = snapshot();
+    for (const builder of [buildSalaryRecordCsv, buildAttendanceCsv]) {
+      const newRows = parseCsvRows(builder(original));
+      const headerIndex = newRows.findIndex(row => row.includes('OT1 hours snapshot'));
+      const oldRows = newRows.map((row, index) => index >= headerIndex ? row.slice(0, -2) : row);
+      const csv = encodeCsv(oldRows);
+      const oldAttendance = builder === buildSalaryRecordCsv ? parseSalaryImportCsv(csv).attendanceData : parseAttendanceImportCsv(csv).rows;
+      expect(oldAttendance.every(row => !Object.hasOwn(row, 'overtimeHours'))).toBe(true);
+      const newAttendance = builder === buildSalaryRecordCsv ? parseSalaryImportCsv(builder(original)).attendanceData : parseAttendanceImportCsv(builder(original)).rows;
+      expect(newAttendance.every(row => !Object.hasOwn(row, 'overtimeHours'))).toBe(true);
+    }
+  });
+
+  it.each([
+    ['1', '', '同時提供'], ['', '1', '同時提供'], ['NaN', '0', '有限數值'],
+    ['0', 'Infinity', '有限數值'], ['-0.5', '0', '0 至 24'], ['0', '24.01', '0 至 24'],
+    ['1e309', '0', '有限數值'], ['1hour', '0', '有限數值'],
+  ])('拒絕不完整或無效的每日快照 %s／%s', (ot1, ot2, message) => {
+    const rows = parseCsvRows(buildSalaryRecordCsv(snapshot()));
+    const headerIndex = rows.findIndex(row => row.includes('OT1 hours snapshot'));
+    rows[headerIndex + 1][9] = ot1;
+    rows[headerIndex + 1][10] = ot2;
+    expect(() => parseSalaryImportCsv(encodeCsv(rows))).toThrow(message);
+    const manual = parseAttendanceImportCsv(encodeCsv(rows.slice(headerIndex)));
+    expect(manual.result.failCount).toBe(1);
+    expect(manual.result.errors[0]).toContain(message);
+  });
+
+  it('缺少單邊快照欄時拒絕薪資 CSV', () => {
+    const rows = parseCsvRows(buildSalaryRecordCsv(snapshot()));
+    const headerIndex = rows.findIndex(row => row.includes('OT1 hours snapshot'));
+    for (let index = headerIndex; index < rows.length; index += 1) rows[index].pop();
+    expect(() => parseSalaryImportCsv(encodeCsv(rows))).toThrow('缺少第一階段或第二階段');
   });
 
   it.each([['', ''], ['--:--', '--:--']])('accepts missing clocks only as non-worked holiday placeholders: %j', (clockIn, clockOut) => {

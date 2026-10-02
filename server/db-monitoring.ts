@@ -1066,7 +1066,7 @@ function comparableCorrectionProjection(record: typeof schema.salaryRecords.$inf
     'holidayDailySalary', 'totalHolidayPay', 'grossSalary', 'deductions',
     'allowances', 'totalDeductions', 'netSalary'] as const;
   const attendanceKeys = ['id', 'date', 'clockIn', 'clockOut', 'isHoliday',
-    'isBarcodeScanned', 'holidayId', 'holidayType'] as const;
+    'isBarcodeScanned', 'holidayId', 'holidayType', 'overtimeHours'] as const;
   const leaveKeys = ['usedDays', 'usedDates', 'cashDays', 'cashAmount', 'cashMonth'] as const;
   return {
     ...Object.fromEntries(payrollKeys.map(key => [key, record[key] ?? null])),
