@@ -37,7 +37,9 @@ describe('archived salary print snapshot', () => {
     const html = render({ ...record, totalOT1Hours: 12.5, totalOT2Hours: 3.5, totalOvertimePay: 3210, grossSalary: 33210, netSalary: 32210 });
     for (const amount of ['12.5', '3.5', '3210']) expect(summary(html)).toContain('>' + amount + '</td>');
     expect(html).toContain('>33210</td>');
-    expect(html).toContain('>1000</td>');
+    expect(html).toContain('Synthetic Deduction');
+    expect(html).toContain('>-1000</td>');
+    expect(html).not.toContain('扣款合計');
     expect(html).toContain('>32210</td>');
   });
   it('prints newly corrected no-clock holidays and handles missing legacy attendance safely', () => {

@@ -509,10 +509,9 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
             ))}
           </tbody>
           <tbody className="salary-totals">
-            {result.archived && <>
+            {result.archived && (
               <tr className="summary-size-row"><td colSpan={5}>總薪資：</td><td className="amount-cell">{safeNumber(result.grossSalary)}</td></tr>
-              <tr className="summary-size-row"><td colSpan={5}>扣款合計：</td><td className="amount-cell">{safeNumber(result.totalDeductions)}</td></tr>
-            </>}
+            )}
             <tr className="total-amount summary-size-row">
               <td colSpan={5}>實領金額：</td>
               <td className="amount-cell">{safeNumber(result.netSalary)}</td>
