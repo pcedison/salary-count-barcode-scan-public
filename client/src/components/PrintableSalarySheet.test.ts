@@ -20,10 +20,14 @@ const render = (input: ExportSalaryRecord = record) => renderToStaticMarkup(crea
 const summary = (html: string) => html.match(/<tr class="summary-row">([\s\S]*?)<\/tr>/)?.[1] ?? '';
 
 describe('archived salary print snapshot', () => {
-  it('identifies employee, salary period, record and revision on every sheet', () => {
+  it('identifies employee and salary period without development annotations on every sheet', () => {
     const html = render();
     const repeatedHeader = html.match(/<thead>([\s\S]*?)<\/thead>/)?.[1] ?? '';
-    for (const text of ['Synthetic Employee', '員工 ID 7', '紀錄 ID 101', '修訂 2', '2026年9月', '上班時間']) expect(repeatedHeader).toContain(text);
+    for (const text of ['Synthetic Employee', '2026年9月', '上班時間']) expect(repeatedHeader).toContain(text);
+    for (const text of ['員工 ID', '紀錄 ID', '修訂', '已結算薪資快照', '原始計算規則']) expect(repeatedHeader).not.toContain(text);
+    const unnamed = render({ ...record, employeeName: null });
+    expect(unnamed).toContain('員工：未提供姓名');
+    expect(unnamed).not.toContain('員工代碼 #');
   });
   it('uses stored zero overtime even if current clock-based calculations would produce overtime', () => {
     const html = render();
@@ -31,7 +35,7 @@ describe('archived salary print snapshot', () => {
     expect(summary(html)).toContain('>0</td>');
     expect(html).not.toContain('>168</td>');
     expect(html.match(/>—<\/td>/g)).toHaveLength(9);
-    expect(html).toContain('加班及薪資合計採用此修訂的結算快照');
+    expect(html).not.toContain('加班及薪資合計採用此修訂的結算快照');
   });
   it('uses nonzero stored overtime aggregates rather than recomputing daily totals', () => {
     const html = render({ ...record, totalOT1Hours: 12.5, totalOT2Hours: 3.5, totalOvertimePay: 3210, grossSalary: 33210, netSalary: 32210 });
