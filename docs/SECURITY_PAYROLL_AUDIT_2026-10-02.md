@@ -3,6 +3,20 @@
 本次使用最新公開 `main`（`342b49c34f6749e811faf530fe65683c46b31f43`，2.2.7）建立隔離分支。
 所有重現與寫入測試均使用合成資料。正式環境僅透過已連接 Chrome 唯讀檢查，沒有更正、重算、付款、寄信、還原、migration、清除或部署。
 
+## 後續發布授權與候選版本
+
+使用者已於同日後續明確授權送出並合併PR #108／#109、確認CI及追蹤自動部署。
+上段「沒有部署」描述初次檢測階段，不再代表後续發布狀態。PR #108 的2.2.8已合併，
+本分支已整合該main並準備2.2.9，確保新舊修復可由版本、來源SHA共同核對。
+最終main、CI及正式平台證據保留於本機PROJECT_STATUS，不用候選文件預先宣稱部署完成。
+
+部署前已以Chrome取得當下runtime完整封裝（7,413,398 bytes），本機與容器SHA256一致，
+並保存逐檔manifest及Windows使用者範圍的加密副本；未將私人檔案上傳Git。
+唯讀repeatable-read查詢確認當期月結已succeeded，到期員工／薪資清理候選均0；
+這只是檢查當下狀態，並非停用既有排程或承諾未來不會有新資料。
+合併候選2.2.9已重新安裝lockfile並完成verify:release：unit885、smoke276、
+TypeScript/runtime/build通過；generic restore仍因無備份檔略過。新的PR與main CI另行核對。
+
 ## 正式基準與備份
 
 - 2026-10-02 台北時間約 15:54～16:12，GitHub main 與 Zeabur 運行中的 PR #107 對應；產品設定頁顯示 2.2.7，Chrome 載入 `/assets/index-B_NpHSpB.js`。本輪未直接取得 runtime Git SHA 或重算正式 bundle 雜湊，版本字串不能代替 SHA 證明。
