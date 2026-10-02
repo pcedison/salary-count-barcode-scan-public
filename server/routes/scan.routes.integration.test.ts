@@ -200,6 +200,35 @@ beforeEach(() => {
 });
 
 describe('scan routes integration', () => {
+  describe.each(['/api/barcode-scan', '/api/raspberry-scan'])('%s employee changes', (endpoint) => {
+    it.each(['deactivated', 'deleted', 'identity changed'] as const)(
+      'rejects a previously scanned employee after being %s without another attendance write',
+      async (change) => {
+        const server = await createJsonTestServer(registerScanRoutes);
+        const request = {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ idNumber: 'A123456789', deviceId: 'synthetic-device' })
+        };
+        try {
+          expect((await jsonRequest(server.baseUrl, endpoint, request)).response.status).toBe(200);
+          const before = JSON.stringify(scanState.attendanceRecords);
+          const original = scanState.employees[0];
+          scanState.employees = change === 'deleted' ? [] : [{
+            ...original,
+            ...(change === 'deactivated' ? { active: false } : { idNumber: 'B123456789' })
+          }];
+          const rejected = await jsonRequest(server.baseUrl, endpoint, request);
+          expect(rejected.response.status).toBe(change === 'deactivated' ? 403 : 404);
+          expect(JSON.stringify(scanState.attendanceRecords)).toBe(before);
+          expect(storageMock.upsertTemporaryAttendanceScan).toHaveBeenCalledTimes(1);
+        } finally {
+          await server.close();
+        }
+      }
+    );
+  });
+
   it('creates a clock-in then clock-out flow for a basic employee scan', async () => {
     const server = await createJsonTestServer(registerScanRoutes);
 

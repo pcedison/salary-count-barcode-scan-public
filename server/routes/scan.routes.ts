@@ -27,7 +27,6 @@ import {
 
 import { handleRouteError } from './route-helpers';
 import {
-  buildEmployeeCacheKey,
   buildScanSuccessResult,
   filterAttendanceByDate,
   getLatestAttendanceRecord,
@@ -38,14 +37,8 @@ import {
 
 const log = createLogger('scan');
 
-const EMPLOYEE_CACHE_TTL_MS = 4 * 60 * 60 * 1000;
 const HOLIDAY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const DEVICE_TOKEN_HEADER = 'x-scan-device-token';
-
-interface CacheEntry<T> {
-  value: T;
-  expiresAt: number;
-}
 
 interface HolidayCache {
   entries: Holiday[];
@@ -57,21 +50,6 @@ class DuplicateScanStateError extends Error {
     super('Scan state changed while another scan was being persisted.');
     this.name = 'DuplicateScanStateError';
   }
-}
-
-function getCachedValue<T>(entry: CacheEntry<T> | null | undefined, now: number): T | undefined {
-  if (!entry || entry.expiresAt <= now) {
-    return undefined;
-  }
-
-  return entry.value;
-}
-
-function setCachedValue<T>(value: T, ttlMs: number, now: number): CacheEntry<T> {
-  return {
-    value,
-    expiresAt: now + ttlMs
-  };
 }
 
 function isBrowserScanUnlockRequired(): boolean {
@@ -182,26 +160,13 @@ export function registerScanRoutes(app: Express): void {
   // ARCHITECTURE NOTE: In-memory caches are not shared across Node.js worker processes.
   // This design assumes single-process deployment (PM2 fork mode, not cluster mode).
   // If horizontal scaling is needed, migrate caches to Redis or a shared store.
-  const employeeCache = new Map<string, CacheEntry<Employee>>();
   let holidayCache: HolidayCache | null = null;
   let lastScanResult: ScanSuccessResult | null = null;
 
   async function findEmployee(rawIdNumber: string): Promise<Employee | undefined> {
-    const now = Date.now();
-    const normalizedInput = normalizeEmployeeIdentity(rawIdNumber);
-    const cacheKey = buildEmployeeCacheKey(normalizedInput);
-    const cachedEmployee = getCachedValue(employeeCache.get(cacheKey), now);
-    if (cachedEmployee) {
-      return cachedEmployee;
-    }
-
-    const directEmployee = await storage.getEmployeeByIdNumber(normalizedInput);
-    if (directEmployee) {
-      employeeCache.set(cacheKey, setCachedValue(directEmployee, EMPLOYEE_CACHE_TTL_MS, now));
-      return directEmployee;
-    }
-
-    return undefined;
+    // The repository owns identity-cache invalidation on employee changes.
+    // A route cache would keep accepting deactivated or removed identities.
+    return storage.getEmployeeByIdNumber(normalizeEmployeeIdentity(rawIdNumber));
   }
 
   async function isHoliday(dateKey: string): Promise<boolean> {

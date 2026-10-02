@@ -18,6 +18,7 @@ import {
 import { createLogger } from '../utils/logger';
 import type { OvertimeHours } from '../utils/salaryCalculator';
 import { captureSettlementOvertime } from '@shared/utils/archivedOvertime';
+import { parseClockTimeMinutes } from '@shared/utils/salaryMath';
 
 import {
   deriveHolidayPayBase,
@@ -33,15 +34,87 @@ const deductionItem = z.object({ name: z.string().trim().min(1).max(100), amount
   description: z.string().max(1000).nullable().optional(),
 }).strict();
 const allowanceItem = deductionItem.extend({ description: z.string().max(1000).optional() }).strict();
+const specialLeaveInfoSchema = z.object({
+  usedDays: money, usedDates: z.array(z.string().max(10)).max(366),
+  cashDays: money, cashAmount: money,
+  cashMonth: z.string().max(10).optional(), notes: z.string().max(1000).optional(),
+}).strict();
+// New settlements must not silently discard malformed deduction rows or accept
+// negative payroll inputs. Keep historical import/read contracts unchanged.
+const settlementAmount = money.max(Number.MAX_SAFE_INTEGER);
+const settlementAttendanceRow = z.object({
+  employeeId: z.number().int().positive(), date: z.string(),
+  clockIn: z.string(), clockOut: z.string().nullable().optional(),
+  isHoliday: z.boolean().nullable().optional(), holidayType: z.string().nullable().optional(),
+}).passthrough();
+const createSalarySchema = insertSalaryRecordSchema.extend({
+  salaryYear: z.number().int().min(1900).max(9999),
+  salaryMonth: z.number().int().min(1).max(12),
+  employeeId: z.number().int().positive().max(2147483647).nullable().optional(),
+  baseSalary: settlementAmount,
+  housingAllowance: settlementAmount.nullable().optional(),
+  welfareAllowance: settlementAmount.nullable().optional(),
+  totalOT1Hours: settlementAmount.nullable().optional(),
+  totalOT2Hours: settlementAmount.nullable().optional(),
+  totalHolidayPay: settlementAmount.nullable().optional(),
+  deductions: z.array(deductionItem).max(100).nullable().optional(),
+  allowances: z.array(allowanceItem).max(100).nullable().optional(),
+  specialLeaveInfo: specialLeaveInfoSchema.nullable().optional(),
+}).superRefine((input, context) => {
+  if (input.attendanceData == null) return;
+  const attendance = z.array(settlementAttendanceRow).safeParse(input.attendanceData);
+  if (!attendance.success) {
+    for (const issue of attendance.error.issues) context.addIssue({ ...issue, path: ['attendanceData', ...issue.path] });
+    return;
+  }
+  const dates = new Map<string, Array<{ row: z.infer<typeof settlementAttendanceRow>; index: number }>>();
+  attendance.data.forEach((row, index) => {
+    const parts = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(row.date);
+    const [year, month, day] = parts ? parts.slice(1).map(Number) : [0, 0, 0];
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (!parts || year !== input.salaryYear || month !== input.salaryMonth ||
+      date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+      context.addIssue({ code: 'custom', path: ['attendanceData', index, 'date'], message: '出勤快照必須是結算月份內的有效日期。' });
+    }
+    const dateKey = `${year}-${month}-${day}`;
+    const dayRows = dates.get(dateKey) ?? [];
+    dayRows.push({ row, index });
+    dates.set(dateKey, dayRows);
+    if (row.employeeId !== input.employeeId) {
+      context.addIssue({ code: 'custom', path: ['attendanceData', index, 'employeeId'], message: '出勤快照必須屬於結算員工。' });
+    }
+    for (const field of ['clockIn', 'clockOut'] as const) {
+      const clock = row[field];
+      if (clock != null && clock !== '' && clock !== '--:--' && parseClockTimeMinutes(clock) === null) {
+        context.addIssue({ code: 'custom', path: ['attendanceData', index, field], message: '出勤時間格式無效。' });
+      }
+    }
+  });
+  for (const dayRows of dates.values()) {
+    if (dayRows.length < 2) continue;
+    // A completed scan can be followed by another shift on the same date.
+    // Permit distinct normal work intervals, without merging them or changing
+    // the existing per-row overtime calculation. Leave/day-based adjustments
+    // remain ambiguous when more than one row describes the same date.
+    const intervals = dayRows.map(({ row }) => {
+      const start = parseClockTimeMinutes(row.clockIn);
+      const end = parseClockTimeMinutes(row.clockOut);
+      const normalType = row.holidayType == null || ['', 'none', 'normal'].includes(row.holidayType);
+      if (row.isHoliday === true || !normalType || start === null || end === null || start === end) return null;
+      return { start, end: end < start ? end + 24 * 60 : end };
+    });
+    const completed = intervals.filter(interval => interval !== null).sort((a, b) => a.start - b.start);
+    if (completed.length !== dayRows.length || completed.some((interval, index) => index > 0 && interval.start < completed[index - 1].end)) {
+      context.addIssue({ code: 'custom', path: ['attendanceData', dayRows[1].index, 'date'],
+        message: '同一天的出勤有重複、重疊、未完成班次或假別衝突，請先核對，避免重複計薪或扣款。' });
+    }
+  }
+});
 const manualEditSchema = insertSalaryRecordSchema.partial().extend({
   baseSalary: money.optional(), housingAllowance: money.nullable().optional(),
   deductions: z.array(deductionItem).max(100).nullable().optional(),
   allowances: z.array(allowanceItem).max(100).nullable().optional(),
-  specialLeaveInfo: z.object({
-    usedDays: money, usedDates: z.array(z.string().max(10)).max(366),
-    cashDays: money, cashAmount: money,
-    cashMonth: z.string().max(10).optional(), notes: z.string().max(1000).optional(),
-  }).strict().nullable().optional(),
+  specialLeaveInfo: specialLeaveInfoSchema.nullable().optional(),
   revision: z.number().int().nonnegative(), reason: z.string().trim().min(1).max(1000),
   paymentHandling: z.enum(['unpaid', 'paid_adjustment', 'unknown_adjustment']), idempotencyKey: z.string().uuid(),
 }).strict();
@@ -170,6 +243,9 @@ export async function buildCalculatedSalaryRecord(
   settings: Settings,
   options?: {
     attendanceRecords?: TemporaryAttendance[];
+    // Interactive previews already include worked-holiday pay in their total.
+    // Automation supplies a base of zero and retains the default additive mode.
+    holidayPayMode?: 'includes_worked';
     previousRecord?: {
       employeeId?: number | null;
       salaryYear?: number | null;
@@ -216,7 +292,9 @@ export async function buildCalculatedSalaryRecord(
     storedTotalHolidayPay: options?.previousRecord?.totalHolidayPay,
     previousWorkedHolidayPay,
   });
-  const totalHolidayPay = holidayPayBase + (holidayAdjustments.workedHolidayPay || 0);
+  const totalHolidayPay = options?.holidayPayMode === 'includes_worked' && draft.totalHolidayPay != null
+    ? holidayPayBase
+    : holidayPayBase + (holidayAdjustments.workedHolidayPay || 0);
   const specialLeaveCashAmount =
     typeof draft.specialLeaveInfo?.cashAmount === 'number' ? draft.specialLeaveInfo.cashAmount : 0;
 
@@ -328,13 +406,19 @@ export function registerSalaryRoutes(app: Express): void {
 
   app.post('/api/salary-records', requireAdmin(), async (req, res) => {
     try {
+      const validatedData = createSalarySchema.parse(req.body);
       const settings = await storage.getSettings();
       if (!settings) {
         return res.status(500).json({ message: 'Settings must be configured before creating salary records.' });
       }
 
-      const validatedData = insertSalaryRecordSchema.parse(req.body);
-      const finalData = await buildCalculatedSalaryRecord(validatedData, settings);
+      const finalData = await buildCalculatedSalaryRecord(validatedData, settings,
+        validatedData.attendanceData == null ? undefined : {
+          attendanceRecords: validatedData.attendanceData,
+          holidayPayMode: 'includes_worked',
+        });
+      // Valid individual inputs can still overflow when summed or multiplied.
+      insertSalaryRecordSchema.parse(finalData);
       const record = await salaryRepository.createSalaryRecord(finalData);
 
       return res.status(201).json(record);

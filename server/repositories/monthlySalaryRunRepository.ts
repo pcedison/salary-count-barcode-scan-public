@@ -55,20 +55,31 @@ export class DatabaseMonthlySalaryRunRepository {
       completedAt: null,
     };
 
-    const rows = await db
-      .insert(monthlySalaryRuns)
-      .values(insertValues)
-      .onConflictDoUpdate({
-        target: [monthlySalaryRuns.salaryYear, monthlySalaryRuns.salaryMonth],
-        set: updateSet,
-        setWhere: force
-          ? ne(monthlySalaryRuns.status, 'running')
-          : and(
-              ne(monthlySalaryRuns.status, 'running'),
-              ne(monthlySalaryRuns.status, 'succeeded')
-            )!,
-      })
-      .returning();
+    let rows: MonthlySalaryRun[] = [];
+    let runKeyConflict: unknown;
+    try {
+      rows = await db
+        .insert(monthlySalaryRuns)
+        .values(insertValues)
+        .onConflictDoUpdate({
+          target: [monthlySalaryRuns.salaryYear, monthlySalaryRuns.salaryMonth],
+          set: updateSet,
+          setWhere: force
+            ? ne(monthlySalaryRuns.status, 'running')
+            : and(
+                ne(monthlySalaryRuns.status, 'running'),
+                ne(monthlySalaryRuns.status, 'succeeded')
+              )!,
+        })
+        .returning();
+    } catch (error) {
+      // Concurrent first inserts can hit the separate run_key unique index
+      // before the (year, month) conflict target handles the competing row.
+      const cause = (error as { cause?: unknown })?.cause ?? error;
+      const databaseError = cause as { code?: string; constraint_name?: string };
+      if (databaseError?.code !== '23505' || databaseError.constraint_name !== 'monthly_salary_runs_run_key_unique') throw error;
+      runKeyConflict = error;
+    }
 
     const [run] = rows;
 
@@ -80,6 +91,11 @@ export class DatabaseMonthlySalaryRunRepository {
       .select()
       .from(monthlySalaryRuns)
       .where(and(eq(monthlySalaryRuns.salaryYear, year), eq(monthlySalaryRuns.salaryMonth, month)));
+
+    if (runKeyConflict && (!existingRun || existingRun.runKey !== runKey ||
+      existingRun.salaryYear !== year || existingRun.salaryMonth !== month)) {
+      throw runKeyConflict;
+    }
 
     return {
       run: existingRun,
