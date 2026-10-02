@@ -312,13 +312,9 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
           background: white;
         }
 
-        .salary-snapshot-note, .reconciliation-note {
+        .reconciliation-note {
           font-size: 11px;
           color: #555;
-        }
-
-        .salary-snapshot-note {
-          margin: 0 0 6px;
         }
 
         .reconciliation-note {
@@ -363,12 +359,6 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
           margin-top: 0;
           font-family: Arial, sans-serif;
           line-height: 1;
-        }
-
-        .calculation-label {
-          text-align: right;
-          font-size: 14px;
-          color: #666;
         }
 
         .summary-row {
@@ -434,7 +424,6 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
           .print-page { padding: 12px; }
           .header-section { display: block; }
           .month-title { font-size: 24px; line-height: 1.2; }
-          .calculation-label { display: inline-block; margin-top: 6px; text-align: left; }
           .date-cell { white-space: nowrap; overflow-wrap: normal; }
         }
         `}
@@ -458,16 +447,10 @@ const calculateDailyOT = (clockIn: string, clockOut: string): {ot1: number, ot2:
                     <h1 className="system-title">員工薪資計算系統</h1>
                     <h2 className="month-title">{result.salaryYear}年{result.salaryMonth}月薪資明細</h2>
                     {(result.archived || result.employeeName || result.employeeId) && <p style={{ fontSize: '13px', margin: '6px 0 0' }}>
-                      員工：{result.employeeName || (result.employeeId ? '員工代碼 #' + result.employeeId : '匿名薪資紀錄 #' + (result.recordId ?? '未指定'))}
-                      {result.employeeId !== undefined && ' · 員工 ID ' + result.employeeId}
-                      {result.archived && ' · 紀錄 ID ' + result.recordId + ' · 修訂 ' + (result.revision ?? 0)}
+                      員工：{result.employeeName || '未提供姓名'}
                     </p>}
                   </div>
-                  <div>
-                    <span className="calculation-label">{result.archived ? '已結算薪資快照' : '計算薪資'}</span>
-                  </div>
                 </div>
-                {result.archived && <p className="salary-snapshot-note">每日加班時數與金額未保存原始計算規則，以「—」呈現；加班及薪資合計採用此修訂的結算快照。</p>}
               </td>
             </tr>
             <tr>
