@@ -92,7 +92,6 @@
     "react-day-picker": "^10.0.2",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^3.7.0",
-    "tailwindcss-animate": "^1.0.7",
     "wouter": "^3.13.0",
     "zod": "^4.6.5",
     "zod-validation-error": "^5.0.0"
@@ -116,6 +115,7 @@
     "postcss": "^8.5.28",
     "rollup": "^4.63.6",
     "tailwindcss": "^3.4.17",
+    "tailwindcss-animate": "^1.0.7",
     "tsx": "^4.23.15",
     "typescript": "6.0.3",
     "vite": "^8.3.2",

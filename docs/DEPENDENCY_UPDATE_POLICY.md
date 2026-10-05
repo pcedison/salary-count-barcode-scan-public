@@ -143,6 +143,26 @@ The safe order is:
 9. confirm the Zeabur production deployment SHA and status
 10. run live smoke checks and monitor the canary
 
+## Build-only dependencies
+
+Keep `tailwindcss-animate` in `devDependencies`: it is loaded by the Tailwind
+configuration during the frontend build, and the production server serves the
+built assets. A production dependency on this plugin also installs its Tailwind
+peer and the transitive `braces` toolchain. CI checks the built runtime image to
+prevent these packages from returning to production installs.
+
+The Docker runtime copies only the package manifests before `npm ci --omit=dev
+--omit=optional`; it intentionally does not copy the builder's `.npmrc`, whose
+`include=dev` setting overrides omission. Reproduce production dependency checks
+in a clean directory with only the manifests, rather than running an omit-only
+install in the repository root.
+
+As of 2026-10-05, [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
+still has no patched `braces` release. Removing the toolchain from the runtime
+does not fix the advisory in development or builder installs. The current
+Tailwind content patterns are fixed in the repository; keep build configuration
+and glob inputs trusted, and reassess the advisory when upstream publishes a fix.
+
 ## Weekly Operator Checklist
 
 Run:

@@ -82,6 +82,19 @@ jobs:
       - name: Build Docker image
         run: docker build -t salary-scan-ci .
 
+      - name: Verify runtime excludes the Tailwind toolchain
+        run: |
+          docker run --rm --entrypoint sh salary-scan-ci -eu -c '
+            unexpected=$(find node_modules -type d \( \
+              -name tailwindcss-animate -o -name tailwindcss -o -name braces -o \
+              -name chokidar -o -name micromatch -o -name fast-glob \) -print)
+            if [ -n "$unexpected" ]; then
+              printf "%s\n" "$unexpected"
+              exit 1
+            fi
+            echo "Runtime image excludes the Tailwind toolchain and braces."
+          '
+
       - name: Start Docker smoke container
         run: |
           docker run -d --rm --name salary-scan-smoke -p 18080:8080 \
