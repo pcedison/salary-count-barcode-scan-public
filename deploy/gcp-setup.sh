@@ -9,14 +9,16 @@
 #        建置用 salary-standby-build：roles/run.builder
 #        部署用 salary-github-deployer：roles/run.sourceDeveloper、
 #          roles/serviceusage.serviceUsageConsumer，並可 actAs 上面兩個帳號
-#   3. 建立 GitHub OIDC 的 Workload Identity Pool／Provider，只接受
-#      本 repo 的 main 分支上的 deploy.yml，並把部署用帳號綁給它
+#   3. 建立 GitHub OIDC 的 Workload Identity Pool／Provider，只接受本 repo（以 GitHub
+#      不會重複使用的數字 ID 比對）main 分支上、使用 production environment 的 deploy.yml，
+#      並以 repository_id 把部署用帳號綁給它
 #   4. Artifact Registry repo cloud-run-source-deploy 只保留最近 2 版映像
 #   5. 預算警示（US$1，50%／90%／100% 寄信給帳單帳戶管理員）
 #   6. 印出要填到 GitHub repo variables 的值（都不是祕密）
 #
 # 選填環境變數：GCP_PROJECT_ID（預設 gcloud 目前專案）、CLOUD_RUN_REGION、CLOUD_RUN_SERVICE、
 #   GITHUB_REPOSITORY（預設 pcedison/salary-count-barcode-scan-public）、
+#   GITHUB_REPOSITORY_ID／GITHUB_REPOSITORY_OWNER_ID（預設用 GitHub API 查）、
 #   WIF_POOL_ID、WIF_PROVIDER_ID、BUDGET_AMOUNT（例如 30TWD；帳單幣別不是 USD 時使用）
 set -euo pipefail
 
@@ -27,6 +29,7 @@ source "${SCRIPT_DIR}/lib/cloudrun-common.sh"
 GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-pcedison/salary-count-barcode-scan-public}"
 readonly DEPLOY_WORKFLOW=".github/workflows/deploy.yml"
 readonly ALLOWED_REF="refs/heads/main"
+readonly ALLOWED_ENVIRONMENT="production"
 WIF_POOL_ID="${WIF_POOL_ID:-github-actions}"
 WIF_PROVIDER_ID="${WIF_PROVIDER_ID:-salary-deploy-main}"
 readonly SOURCE_DEPLOY_REPO="cloud-run-source-deploy"
@@ -77,7 +80,10 @@ quietly() { "$@" >/dev/null; }
 
 # ---------------------------------------------------------------------------
 check_project() {
-  command -v gcloud >/dev/null 2>&1 || fail "找不到 gcloud（請在 GCP Cloud Shell 執行）"
+  local tool
+  for tool in gcloud curl jq; do
+    command -v "$tool" >/dev/null 2>&1 || fail "找不到 ${tool}（請在 GCP Cloud Shell 執行）"
+  done
   GCP_PROJECT_ID="${GCP_PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || true)}"
   [[ -n "$GCP_PROJECT_ID" ]] || fail "請先 gcloud config set project <專案 ID> 或設定 GCP_PROJECT_ID"
   CLOUD_RUN_REGION="${CLOUD_RUN_REGION:-$DEFAULT_CLOUD_RUN_REGION}"
@@ -145,7 +151,38 @@ setup_service_accounts() {
   grant_sa_role "$BUILD_SA" "serviceAccount:${DEPLOY_SA}" roles/iam.serviceAccountUser
 }
 
+# 取得 repo 與擁有者的數字 ID。名稱可能在 repo 被刪除後被別人註冊，數字 ID 不會重複使用
+# （google-github-actions/auth docs/SECURITY_CONSIDERATIONS.md）。公開 repo 不需要 token。
+resolve_github_ids() {
+  if [[ -z "${GITHUB_REPOSITORY_ID:-}" || -z "${GITHUB_REPOSITORY_OWNER_ID:-}" ]]; then
+    local repo_json
+    repo_json="$(curl -fsSL -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}")" \
+      || fail "無法從 GitHub API 讀取 ${GITHUB_REPOSITORY}；可改設 GITHUB_REPOSITORY_ID 與 GITHUB_REPOSITORY_OWNER_ID"
+    local full_name
+    full_name="$(jq -r '.full_name // empty' <<<"$repo_json")"
+    [[ "${full_name,,}" == "${GITHUB_REPOSITORY,,}" ]] \
+      || fail "GitHub API 回傳的 repo 是 ${full_name:-（空）}，與 ${GITHUB_REPOSITORY} 不符（repo 可能已改名）"
+    GITHUB_REPOSITORY_ID="${GITHUB_REPOSITORY_ID:-$(jq -r '.id' <<<"$repo_json")}"
+    GITHUB_REPOSITORY_OWNER_ID="${GITHUB_REPOSITORY_OWNER_ID:-$(jq -r '.owner.id' <<<"$repo_json")}"
+  fi
+  [[ "$GITHUB_REPOSITORY_ID" =~ ^[0-9]+$ && "$GITHUB_REPOSITORY_OWNER_ID" =~ ^[0-9]+$ ]] \
+    || fail "GITHUB_REPOSITORY_ID／GITHUB_REPOSITORY_OWNER_ID 必須是數字"
+  log "GitHub repo ${GITHUB_REPOSITORY}：repository_id ${GITHUB_REPOSITORY_ID}，repository_owner_id ${GITHUB_REPOSITORY_OWNER_ID}"
+}
+
+warn_other_providers() {
+  local others
+  others="$(gcloud iam workload-identity-pools providers list --project "$GCP_PROJECT_ID" --location global \
+    --workload-identity-pool "$WIF_POOL_ID" --format='value(name.basename())' 2>/dev/null \
+    | grep -vFx "$WIF_PROVIDER_ID" || true)"
+  if [[ -n "$others" ]]; then
+    warn "Pool ${WIF_POOL_ID} 內還有其他 provider：$(tr '\n' ' ' <<<"$others")"
+    warn "部署帳號綁定的是整個 pool 中 attribute.repository_id=${GITHUB_REPOSITORY_ID} 的身分；請確認這些 provider 是預期的，否則改用專用的 WIF_POOL_ID。"
+  fi
+}
+
 setup_workload_identity() {
+  resolve_github_ids
   local state
   state="$(gcloud iam workload-identity-pools describe "$WIF_POOL_ID" --project "$GCP_PROJECT_ID" \
     --location global --format='value(state)' 2>/dev/null || true)"
@@ -161,11 +198,15 @@ setup_workload_identity() {
       ;;
     *) log "Workload Identity Pool 已存在：${WIF_POOL_ID}" ;;
   esac
+  warn_other_providers
 
-  # 只有「本 repo、main 分支、deploy.yml」發出的 GitHub OIDC token 能進入。
+  # 只有「本 repo（數字 ID）、main 分支、production environment、deploy.yml」發出的
+  # GitHub OIDC token 能進入。job 使用 environment 時 sub 會變成
+  # repo:<owner>/<repo>:environment:production，ref 與 environment claim 仍同時存在；
+  # *_id claim 是字串，所以比對值要加引號。
   local mapping condition
-  mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.workflow_ref=assertion.workflow_ref"
-  condition="assertion.repository == '${GITHUB_REPOSITORY}' && assertion.ref == '${ALLOWED_REF}' && assertion.workflow_ref == '${GITHUB_REPOSITORY}/${DEPLOY_WORKFLOW}@${ALLOWED_REF}'"
+  mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_id=assertion.repository_id,attribute.repository_owner_id=assertion.repository_owner_id,attribute.ref=assertion.ref,attribute.environment=assertion.environment,attribute.workflow_ref=assertion.workflow_ref"
+  condition="assertion.repository_id == '${GITHUB_REPOSITORY_ID}' && assertion.repository_owner_id == '${GITHUB_REPOSITORY_OWNER_ID}' && assertion.ref == '${ALLOWED_REF}' && assertion.environment == '${ALLOWED_ENVIRONMENT}' && assertion.workflow_ref == '${GITHUB_REPOSITORY}/${DEPLOY_WORKFLOW}@${ALLOWED_REF}'"
 
   state="$(gcloud iam workload-identity-pools providers describe "$WIF_PROVIDER_ID" --project "$GCP_PROJECT_ID" \
     --location global --workload-identity-pool "$WIF_POOL_ID" --format='value(state)' 2>/dev/null || true)"
@@ -193,9 +234,17 @@ setup_workload_identity() {
   fi
 
   WIF_PROVIDER_NAME="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WIF_POOL_ID}/providers/${WIF_PROVIDER_ID}"
-  grant_sa_role "$DEPLOY_SA" \
-    "principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WIF_POOL_ID}/attribute.repository/${GITHUB_REPOSITORY}" \
-    roles/iam.workloadIdentityUser
+  local pool_principal="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WIF_POOL_ID}"
+  grant_sa_role "$DEPLOY_SA" "${pool_principal}/attribute.repository_id/${GITHUB_REPOSITORY_ID}" roles/iam.workloadIdentityUser
+
+  # 舊版本腳本以 repo 名稱綁定；改用數字 ID 後移除它。
+  local legacy_member="${pool_principal}/attribute.repository/${GITHUB_REPOSITORY}"
+  if gcloud iam service-accounts get-iam-policy "$DEPLOY_SA" --project "$GCP_PROJECT_ID" --format=json \
+    | jq -e --arg m "$legacy_member" 'any(.bindings[]?; .role == "roles/iam.workloadIdentityUser" and any(.members[]?; . == $m))' >/dev/null; then
+    log "移除以 repo 名稱綁定的舊 workloadIdentityUser"
+    quietly gcloud iam service-accounts remove-iam-policy-binding "$DEPLOY_SA" --project "$GCP_PROJECT_ID" \
+      --member "$legacy_member" --role roles/iam.workloadIdentityUser --condition=None --quiet
+  fi
 }
 
 setup_artifact_cleanup() {
@@ -289,8 +338,10 @@ Variables（都不是祕密）：
   RAILWAY_SERVICE       = （Railway 服務名稱或 ID）
   PRIMARY_URL           = （主機網址，https://...）
   STANDBY_URL           = （bootstrap 完成後印出的 Cloud Run 網址）
-Secret：
-  RAILWAY_TOKEN         = （Railway project token，只放在 GitHub secret）
+Environment「production」（Settings → Environments）：
+  Deployment branches   = 只允許 main（Selected branches and tags → 加入 main）
+  Environment secret    = RAILWAY_TOKEN（Railway project token；不要設成 repo secret）
+  WIF 條件要求 environment == production，deploy.yml 的 job 已設定 environment: production。
 
 或用 gh CLI：
   gh variable set GCP_PROJECT_ID --body '${GCP_PROJECT_ID}'
@@ -300,7 +351,7 @@ Secret：
   gh variable set CLOUD_RUN_REGION --body '${CLOUD_RUN_REGION}'
   gh variable set CLOUD_RUN_RUNTIME_SA --body '${RUNTIME_SA}'
   gh variable set CLOUD_RUN_BUILD_SA --body '${BUILD_SA}'
-  gh secret set RAILWAY_TOKEN      # 互動輸入，不要放在命令列
+  gh secret set RAILWAY_TOKEN --env production   # 互動輸入，不要放在命令列
 ================================================================================================
 EOF
 }
