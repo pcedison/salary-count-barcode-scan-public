@@ -12,7 +12,7 @@ Node 24）仍以 [ZEABUR_BUILD_CONTRACT.md](ZEABUR_BUILD_CONTRACT.md) 為準。
 | --- | --- | --- |
 | 方案／區域 | Hobby | `asia-east1` |
 | 網址 | `https://hr.clmcolor.com`（自訂網域） | `https://salary-scan-standby-<專案編號>.asia-east1.run.app` |
-| 平常狀態 | 接所有流量（LINE webhook、LIFF、管理介面） | 不接流量；min-instances 0，沒有請求時不收費 |
+| 平常狀態 | 接所有流量（LINE webhook、LIFF、管理介面） | 不接流量；min-instances 0，沒有請求時不收費（被喚醒時仍會跑背景工作，見下方） |
 | 建置 | repo 根目錄 `Dockerfile`（`railway up` 上傳後偵測到即使用） | 同一個 `Dockerfile`（`gcloud run deploy --source`） |
 | 健康檢查 | 部署時打 `/ready`，最多 300 秒 | 啟動檢查打 `/ready`（每 3 秒、最多約 120 秒） |
 | 程式內備份與稽核 log | Railway volume `/data`（重新部署不會消失） | 容器內暫存（不掛 volume，重啟即消失） |
@@ -28,6 +28,14 @@ Node 24）仍以 [ZEABUR_BUILD_CONTRACT.md](ZEABUR_BUILD_CONTRACT.md) 為準。
     伺服器在路由註冊完成後才開始監聽，所以啟動完成前平台只會得到連線失敗。
   - `/api/health`：資料庫 `SELECT 1`＋記憶體用量低於 90%，並回報 `version`
     （`package.json`；若平台設了 `APP_VERSION` 則以它為準，**請不要設**）。
+- **備援不是完全不碰資料**：Cloud Run 每次被喚醒（每日健康檢查、部署時的啟動檢查與驗證、任何請求）
+  都會啟動完整的背景服務（`server/bootstrap/runtime-services.ts`），對共用資料庫：
+  - 立即執行一次員工資料保留期清理（`runEmployeeRetentionCycle`：清除已過保留期的已刪除員工、
+    匿名化／清除過期的薪資保留紀錄）。這依時間判斷、可重複執行（冪等），與主機每 12 小時跑的是同一件事；
+    `PAYROLL_WRITES_PAUSED=true` 時跳過。
+  - 讀取計算規則、每 60 秒資料庫監控查詢；有設 LINE 時定期刪除過期的 LINE OAuth state。
+  - 啟動 10 分鐘後的每日備份只讀資料庫、寫在容器內（CPU 節流時多半不會執行到）。
+  - 薪資自動化因 `SALARY_AUTOMATION_ENABLED=false` 不會執行。
 
 ```text
                  gh workflow run deploy.yml（或 Actions → Deploy → Run workflow）
@@ -109,10 +117,19 @@ bash deploy/gcp-setup.sh
 
    部署帳號**沒有** `run.services.setIamPolicy`，因此不能改「誰可以呼叫服務」。開放未驗證存取
    只在 bootstrap 時由專案擁有者做一次；`deploy-all.sh` 每次部署前會確認仍是公開狀態。
-3. 建立 Workload Identity Pool `github-actions` 與 OIDC Provider `salary-deploy-main`，條件為
-   `repository == pcedison/salary-count-barcode-scan-public`、`ref == refs/heads/main`、
-   `workflow_ref == …/.github/workflows/deploy.yml@refs/heads/main`，並把部署帳號的
-   `roles/iam.workloadIdentityUser` 綁給這個 repo。GitHub 不需要任何 GCP 金鑰。
+3. 建立 Workload Identity Pool `github-actions` 與 OIDC Provider `salary-deploy-main`。條件全部以
+   GitHub OIDC token 的 claim 比對：
+   - `repository_id`、`repository_owner_id`：數字 ID（腳本用公開的 GitHub API 查，也可用
+     `GITHUB_REPOSITORY_ID`／`GITHUB_REPOSITORY_OWNER_ID` 指定）。repo 名稱在刪除後可能被別人註冊，
+     數字 ID 不會重複使用（google-github-actions/auth 的 `docs/SECURITY_CONSIDERATIONS.md`）。
+   - `ref == refs/heads/main`、`environment == production`、
+     `workflow_ref == pcedison/salary-count-barcode-scan-public/.github/workflows/deploy.yml@refs/heads/main`。
+     job 使用 environment 時 token 的 `sub` 會變成 `repo:<owner>/<repo>:environment:production`，
+     `ref` 與 `environment` claim 仍同時存在，所以條件不使用 `sub`。
+
+   部署帳號的 `roles/iam.workloadIdentityUser` 綁給 `attribute.repository_id/<repository_id>`；
+   舊版腳本以 repo 名稱建立的綁定會被移除。Pool 內若還有其他 provider，腳本會印出警告。
+   GitHub 不需要任何 GCP 金鑰。
 4. Artifact Registry repo `cloud-run-source-deploy` 設定清理規則：每個映像只保留最近 2 版
    （約一天內生效）。這個 repo 在第一次 `--source` 部署時才建立，所以 bootstrap 之後要**再跑一次**
    `bash deploy/gcp-setup.sh`。
@@ -159,13 +176,26 @@ bash deploy/gcp-setup.sh
 
 ### 3.4 GitHub
 
-Settings → Secrets and variables → Actions：
+先建立 Environment（在 GitHub 設定頁手動操作，**第一次執行 Deploy 之前**完成；否則 GitHub
+會在第一次執行時自動建立一個沒有任何限制的 `production`）：
+
+1. Settings → Environments → New environment，名稱 `production`。
+2. Deployment branches and tags → 選 **Selected branches and tags** → Add deployment branch or tag rule
+   → Ref type 選 Branch，名稱填 `main`。之後只有 `main` 上的 job 能使用這個 environment。
+3. （選用）Required reviewers 加上自己，部署前多一道手動核准。
+4. Environment secrets → Add environment secret：`RAILWAY_TOKEN` = Railway project token。
+   這是唯一的祕密，**不要**同時設成 repo secret（已設過的話請刪除 repo 層級的那份）。
+
+`deploy.yml` 的 job 設了 `environment: production`；GCP 的 WIF 條件也要求 `environment == production`，
+所以沒有 environment 的 workflow 即使在 main 上也拿不到 GCP 權限。
+
+再到 Settings → Secrets and variables → Actions → Variables 設定：
 
 | 種類 | 名稱 | 值 |
 | --- | --- | --- |
-| Secret | `RAILWAY_TOKEN` | Railway project token（唯一的祕密） |
+| Environment secret（`production`） | `RAILWAY_TOKEN` | Railway project token（唯一的祕密） |
 | Variable | `GCP_PROJECT_ID`、`GCP_WIF_PROVIDER`、`GCP_DEPLOY_SA` | `gcp-setup.sh` 印出的值 |
-| Variable | `CLOUD_RUN_SERVICE`、`CLOUD_RUN_REGION`、`CLOUD_RUN_RUNTIME_SA`、`CLOUD_RUN_BUILD_SA` | `gcp-setup.sh` 印出的值（服務與區域可省略，預設 `salary-scan-standby`、`asia-east1`） |
+| Variable | `CLOUD_RUN_SERVICE`、`CLOUD_RUN_REGION`、`CLOUD_RUN_RUNTIME_SA`、`CLOUD_RUN_BUILD_SA` | `gcp-setup.sh` 印出的值（都可省略：預設 `salary-scan-standby`、`asia-east1`，以及 `gcp-setup.sh` 建立的 `salary-standby-runtime@…`、`salary-standby-build@…`） |
 | Variable | `RAILWAY_SERVICE` | Railway 服務名稱或 ID |
 | Variable | `PRIMARY_URL` | `https://hr.clmcolor.com` |
 | Variable | `STANDBY_URL` | bootstrap 印出的 Cloud Run 網址（每日健康檢查用） |
@@ -250,6 +280,14 @@ root 擁有的 volume 實際啟動一次，檢查程式以 `node` 執行且兩�
 4. 對兩邊打 `/live` 與 `/api/health`，重試到 120 秒（涵蓋 Cloud Run 冷啟動），兩邊 version
    都要等於 `package.json`，否則 workflow 失敗。
 
+部署後驗證的限制，**每次部署完請到 Railway 主控台的 Deployments 確認最新一筆是本次 commit**
+（部署訊息 `deploy-all <SHA 前 12 碼> v<version>`）：
+
+- `/api/health` 只回報 `package.json` 的 version，無法區分同一版本的不同 commit。沒有升版的部署，
+  HTTP 驗證就算主機還是舊 commit 也會通過。Cloud Run 這邊另有 `commit-sha` label 比對，Railway 沒有。
+- `railway up --ci` 若在收到最終狀態前與 Railway 的狀態連線中斷，可能直接回 0
+  （Railway CLI 5.63.4 `src/commands/up.rs`：狀態串流結束時跳出迴圈並回傳成功）。
+
 | 失敗在哪一步 | 結果 | 怎麼處理 |
 | --- | --- | --- |
 | 前置檢查／Cloud Run 建置或啟動 | 兩邊都沒變 | 修正後重新執行 |
@@ -274,7 +312,10 @@ Cloud Run 先部署的另一個好處：主機故障、Railway 無法部署時�
 `.github/workflows/standby-health.yml` 每天台灣時間約 09:13 執行（也可手動 Run workflow）：
 
 - 兩邊 `/ready` 必須 200（能連資料庫）、`/api/health` 必須 200 且 `healthy`，且兩邊 version 相同。
-- 任何一項失敗 job 就失敗，GitHub 寄信通知（排程 workflow 的失敗通知寄給最後修改 cron 的人）。
+- 任何一項失敗 job 就失敗，接著 `notify-failure` job 會開一個標題固定為「Standby health 檢查失敗」的
+  issue 並 @ repo 擁有者；已有未關閉的同名 issue 時改成在上面留言。這樣不依賴 GitHub
+  「排程失敗通知只寄給最後修改 cron 的人」的規則。只有這個 job 有 `issues: write` 權限。
+  恢復正常後請手動關閉 issue。
 - 沒設 `PRIMARY_URL` 或 `STANDBY_URL` 時略過，不算失敗。
 - 不檢查兩邊環境變數是否一致；換金鑰時要自己兩邊都更新（見第 7 節）。
 - 公開 repo 連續 60 天沒有活動時，GitHub 會自動停用排程 workflow，需到 Actions 頁面重新啟用。
@@ -376,12 +417,15 @@ Cloud Run 先部署的另一個好處：主機故障、Railway 無法部署時�
 | Cloud Run 部署卡在啟動檢查 | `gcloud run services logs read salary-scan-standby --region asia-east1 --limit 100`；多半是資料庫連不上或 `envValidator` 拒絕啟動 |
 | Cloud Run 回 403 | 未開放未驗證存取。在 Cloud Shell：`gcloud run services add-iam-policy-binding salary-scan-standby --region asia-east1 --member=allUsers --role=roles/run.invoker` |
 | version 不一致 | 檢查兩邊是否設了 `APP_VERSION`；重新執行 Deploy |
-| GitHub Actions 驗證 GCP 失敗 | WIF 只接受 `main` 分支上的 `deploy.yml`；確認 `GCP_WIF_PROVIDER`、`GCP_DEPLOY_SA` 與 `gcp-setup.sh` 印出的一致 |
+| GitHub Actions 驗證 GCP 失敗 | WIF 只接受本 repo（數字 ID）`main` 分支上、使用 `production` environment 的 `deploy.yml`；確認 `GCP_WIF_PROVIDER`、`GCP_DEPLOY_SA` 與 `gcp-setup.sh` 印出的一致。repo 改名或搬移後要重跑 `gcp-setup.sh` |
+| Deploy 找不到 `RAILWAY_TOKEN` | 必須放在 `production` environment 的 secret，不是 repo secret |
 | `railway up` 未授權 | `RAILWAY_TOKEN` 必須是 project token（不是 account token），且綁定正式環境 |
 
 ## 11. 已知限制
 
-- `/api/health` 只回報 `package.json` 的 version，同一版本的不同 commit 無法從 HTTP 區分；
+- `/api/health` 只回報 `package.json` 的 version，部署後驗證無法區分同一版本的不同 commit；
   commit 記錄在 Cloud Run 的 `commit-sha` label 與 Railway 部署訊息（`deploy-all <SHA> v<version>`）。
+- `railway up --ci` 在狀態連線中斷時可能回 0；請以 Railway 主控台的部署紀錄確認 commit（第 4 節）。
+- 備援被喚醒時會對共用資料庫執行保留期清理等背景工作（冪等，見第 1 節）。
 - 每日健康檢查不比對兩邊環境變數。
 - 本文件的切換方式是修改 LINE 設定，不切換 `hr.clmcolor.com` 的 DNS。

@@ -9,8 +9,9 @@
 # 詳細流程見 docs/RAILWAY_CLOUDRUN_DEPLOYMENT.md。
 #
 # 必要環境變數：RAILWAY_TOKEN（Railway project token）、RAILWAY_SERVICE、GCP_PROJECT_ID
-# 選填：CLOUD_RUN_SERVICE、CLOUD_RUN_REGION、CLOUD_RUN_RUNTIME_SA、CLOUD_RUN_BUILD_SA、
-#       PRIMARY_URL、VERIFY_TIMEOUT_SECONDS、RAILWAY_DEPLOY_TIMEOUT_SECONDS
+# 選填：CLOUD_RUN_SERVICE、CLOUD_RUN_REGION、CLOUD_RUN_RUNTIME_SA、CLOUD_RUN_BUILD_SA
+#       （兩個 SA 預設為 gcp-setup.sh 建立的帳號）、PRIMARY_URL、VERIFY_TIMEOUT_SECONDS、
+#       RAILWAY_DEPLOY_TIMEOUT_SECONDS
 #
 # 本腳本自己的訊息只印變數名稱，不印任何環境變數的值；gcloud／railway CLI 本身會顯示
 # 服務名稱、專案 ID、Cloud Run 網址與建置日誌等非機密資訊。
@@ -186,15 +187,12 @@ deploy_cloud_run() {
     access_args=(--allow-unauthenticated)
   fi
 
-  local identity_args=()
-  if [[ -n "${CLOUD_RUN_RUNTIME_SA:-}" ]]; then
-    identity_args+=(--service-account "$CLOUD_RUN_RUNTIME_SA")
-  fi
-  if [[ -n "${CLOUD_RUN_BUILD_SA:-}" ]]; then
-    identity_args+=(--build-service-account "$(cloudrun_build_sa_resource "$GCP_PROJECT_ID" "$CLOUD_RUN_BUILD_SA")")
-  else
-    warn "未設定 CLOUD_RUN_BUILD_SA，建置會使用 Cloud Build 預設服務帳號（可能權限過大或不存在）"
-  fi
+  # 與 cloudrun-env.sh 相同的預設值（deploy/gcp-setup.sh 建立的帳號），每次部署都明確指定，
+  # 不依賴服務上前一次部署留下的設定。
+  local identity_args=(
+    --service-account "$CLOUD_RUN_RUNTIME_SA"
+    --build-service-account "$(cloudrun_build_sa_resource "$GCP_PROJECT_ID" "$CLOUD_RUN_BUILD_SA")"
+  )
 
   # 不帶 --set-env-vars／--env-vars-file：保留服務上既有的環境變數，只換映像。
   gcloud run deploy "$CLOUD_RUN_SERVICE" \
@@ -204,7 +202,7 @@ deploy_cloud_run() {
     "${CLOUD_RUN_REVISION_ARGS[@]}" \
     "${scaling_args[@]}" \
     ${access_args[@]+"${access_args[@]}"} \
-    ${identity_args[@]+"${identity_args[@]}"} \
+    "${identity_args[@]}" \
     --update-labels "commit-sha=${COMMIT_SHA}" \
     --quiet \
     || fail "Cloud Run 部署失敗（見上方 gcloud 訊息），Railway 尚未變動。若卡在啟動檢查（/ready），多半是資料庫連不上或環境變數驗證失敗。"
@@ -258,6 +256,8 @@ main() {
 
   CLOUD_RUN_SERVICE="${CLOUD_RUN_SERVICE:-$DEFAULT_CLOUD_RUN_SERVICE}"
   CLOUD_RUN_REGION="${CLOUD_RUN_REGION:-$DEFAULT_CLOUD_RUN_REGION}"
+  CLOUD_RUN_RUNTIME_SA="${CLOUD_RUN_RUNTIME_SA:-${RUNTIME_SA_ID}@${GCP_PROJECT_ID}.iam.gserviceaccount.com}"
+  CLOUD_RUN_BUILD_SA="${CLOUD_RUN_BUILD_SA:-${BUILD_SA_ID}@${GCP_PROJECT_ID}.iam.gserviceaccount.com}"
   local verify_timeout="${VERIFY_TIMEOUT_SECONDS:-120}"
 
   deploy_cloud_run

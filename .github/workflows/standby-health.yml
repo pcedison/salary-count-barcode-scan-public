@@ -9,7 +9,8 @@ name: Standby health
 #                回報 version（package.json，若平台設了 APP_VERSION 則以它為準）。
 #   兩邊 /api/health 的 version 必須相同（代表兩邊部署的是同一個版本）。
 # Cloud Run 平常 min-instances 0，第一個請求要冷啟動，因此每個網址最多等 120 秒。
-# 任何一項失敗 job 就失敗，GitHub 會寄信通知（排程失敗通知寄給最後修改 cron 的人）。
+# 任何一項失敗 job 就失敗，並由 notify-failure job 開啟（或在既有的上留言）固定標題的 issue
+# 並 @ repo 擁有者，不依賴「排程失敗通知只寄給最後修改 cron 的人」。
 # 網址讀 repo variables PRIMARY_URL、STANDBY_URL；沒設就略過，不算失敗。
 on:
   schedule:
@@ -89,3 +90,33 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
 
           exit "$failed"
+
+  notify-failure:
+    name: Open or update the failure issue
+    needs: check
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # 只有這個 job 能寫 issue；檢查本身維持 contents: read。
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_TITLE: "Standby health 檢查失敗"
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      REPO_OWNER: ${{ github.repository_owner }}
+
+    steps:
+      - name: Open or comment on the standby health issue
+        run: |
+          set -euo pipefail
+          body="$(printf '@%s 每日主備健康檢查失敗（%s UTC）。\n\n執行紀錄：%s\n\n處理方式見 docs/RAILWAY_CLOUDRUN_DEPLOYMENT.md 第 5、10 節；恢復後請手動關閉這個 issue。' \
+            "$REPO_OWNER" "$(date -u '+%Y-%m-%d %H:%M')" "$RUN_URL")"
+          number="$(gh api "repos/${GITHUB_REPOSITORY}/issues?state=open&per_page=100" \
+            --jq '[.[] | select(.pull_request == null and .title == env.ISSUE_TITLE)][0].number // empty')"
+          if [ -n "$number" ]; then
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${number}/comments" -f body="$body" >/dev/null
+            echo "Commented on issue #${number}"
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues" -f title="$ISSUE_TITLE" -f body="$body" --jq '"Opened issue #\(.number)"'
+          fi

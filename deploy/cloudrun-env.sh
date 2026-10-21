@@ -150,7 +150,7 @@ cmd_bootstrap() {
   standby_url="${standby_url%/}"
   local current_args=()
   if service_exists; then
-    log "服務已存在。bootstrap 會用 .env 的內容「整批取代」所有環境變數。"
+    log "服務已存在。bootstrap 會用 .env 的內容「整批取代」所有環境變數，並把服務改回冷備援：min-instances 0、CPU 節流、SALARY_AUTOMATION_ENABLED=false、label ${STANDBY_MODE_LABEL}=standby。接手期間請改用 update。"
     if [[ "${BOOTSTRAP_ASSUME_YES:-}" != "1" ]]; then
       local answer=""
       read -r -p "確定要繼續嗎？輸入 yes 繼續：" answer
