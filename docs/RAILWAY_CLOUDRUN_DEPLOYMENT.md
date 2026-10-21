@@ -87,6 +87,10 @@ Node 24）仍以 [ZEABUR_BUILD_CONTRACT.md](ZEABUR_BUILD_CONTRACT.md) 為準。
      `SALARY_AUTOMATION_PUBLIC_BASE_URL` 指向主機網址；`TRUST_PROXY=true`、`SESSION_SECURE=true`。
    - 不要設 `APP_VERSION`；`APP_RUNTIME_DIR`／`APP_BACKUP_DIR`／`APP_LOG_DIR` 不可指向 `/app` 底下
      （Railway 主機改用 3.5 節的 volume 路徑）。
+   - 寄信：Railway Free／Trial／Hobby 方案停用對外 SMTP，月結信必須改走 Resend。設定
+     `RESEND_API_KEY`（Sending access、限定已驗證網域）與 `RESEND_FROM`（該網域下的地址），
+     設了 `RESEND_API_KEY` 後 `SMTP_*` 會被忽略（見 `docs/CONFIGURATION.md`）。Cloud Run 備援
+     用同一組值，換金鑰時兩邊一起更新（第 7 節）。
 4. 自訂網域 `hr.clmcolor.com`：Settings → Networking 加入網域，依指示設定 DNS。
 5. Project token：Project Settings → Tokens，綁定正式環境建立 token，只放進 GitHub secret
    `RAILWAY_TOKEN`。project token 已綁定專案與環境，`railway up` 只需指定 `--service`。
