@@ -36,7 +36,7 @@ export interface SendSalaryAutomationTestEmailOptions {
   now?: Date;
 }
 
-interface SalaryEmailMessage {
+export interface SalaryEmailMessage {
   from: string;
   to: string[];
   subject: string;
@@ -46,24 +46,30 @@ interface SalaryEmailMessage {
 
 interface SalaryEmailDeliveryOptions {
   /**
-   * 只給月結報表使用。帶上後 Resend 會以 Idempotency-Key 去重，
-   * 並允許在暫時性失敗時以「完全相同的請求」自動重試一次。
+   * 只給月結報表使用（見 buildMonthlyReportIdempotencyKey）。帶上後 Resend 會以
+   * Idempotency-Key 去重，並允許在暫時性失敗時以完全相同的請求自動重試一次。
    */
-  idempotencyScope?: string;
+  idempotencyKey?: string;
 }
 
-/** Resend 寄信失敗。訊息只含狀態碼與 Resend 錯誤說明，不含 API key 或信件內容。 */
+/**
+ * Resend 寄信失敗。message 只含 HTTP 狀態碼與 Resend 錯誤名稱/說明（已遮蔽 API key、
+ * 不含信件內容），可直接寫入 log 或回給管理員診斷；code 為 Resend 的錯誤名稱，
+ * 沒有時為 resend_request_failed / resend_request_timeout / resend_network_error。
+ */
 export class SalaryEmailDeliveryError extends Error {
+  readonly code: string;
   readonly providerStatus?: number;
   readonly providerErrorName?: string;
   readonly retryable: boolean;
 
   constructor(
     message: string,
-    details: { providerStatus?: number; providerErrorName?: string; retryable: boolean }
+    details: { code: string; providerStatus?: number; providerErrorName?: string; retryable: boolean }
   ) {
     super(message);
     this.name = 'SalaryEmailDeliveryError';
+    this.code = details.code;
     this.providerStatus = details.providerStatus;
     this.providerErrorName = details.providerErrorName;
     this.retryable = details.retryable;
@@ -117,7 +123,7 @@ function resolveSender(config: SalaryAutomationConfig): string {
   if (!sender || !isSalaryEmailTransportConfigured(config)) {
     throw new Error(
       getSalaryEmailTransport(config) === 'resend'
-        ? 'Salary email is not configured. Set RESEND_FROM (or SMTP_FROM) for Resend.'
+        ? 'Salary email is not configured. Set RESEND_FROM for Resend.'
         : 'Salary email is not configured. Set SMTP_HOST and SMTP_FROM.'
     );
   }
@@ -176,7 +182,7 @@ async function toResendError(response: Response, apiKey: string): Promise<Salary
   return new SalaryEmailDeliveryError(
     `Resend API request failed with HTTP ${response.status}${name ? ` (${name})` : ''}` +
       `${safeDetail ? `: ${safeDetail}` : ''}`,
-    { providerStatus: response.status, providerErrorName: name, retryable }
+    { code: name ?? 'resend_request_failed', providerStatus: response.status, providerErrorName: name, retryable }
   );
 }
 
@@ -191,12 +197,18 @@ async function postToResend(apiKey: string, headers: Record<string, string>, bod
     });
   } catch (error) {
     const errorName = error instanceof Error ? error.name : '';
+    if (errorName === 'TimeoutError' || errorName === 'AbortError') {
+      throw new SalaryEmailDeliveryError(`Resend API request timed out after ${RESEND_REQUEST_TIMEOUT_MS}ms.`, {
+        code: 'resend_request_timeout',
+        retryable: true,
+      });
+    }
+
     const causeCode = (error as { cause?: { code?: unknown } } | null)?.cause?.code;
+    const safeCauseCode = typeof causeCode === 'string' && /^[A-Z0-9_]{1,40}$/.test(causeCode) ? causeCode : undefined;
     throw new SalaryEmailDeliveryError(
-      errorName === 'TimeoutError' || errorName === 'AbortError'
-        ? `Resend API request timed out after ${RESEND_REQUEST_TIMEOUT_MS}ms.`
-        : `Resend API request failed before a response was received${typeof causeCode === 'string' ? ` (${causeCode})` : ''}.`,
-      { retryable: true }
+      `Resend API request failed before a response was received${safeCauseCode ? ` (${safeCauseCode})` : ''}.`,
+      { code: 'resend_network_error', retryable: true }
     );
   }
 
@@ -238,16 +250,13 @@ async function sendWithResend(
     'User-Agent': RESEND_USER_AGENT,
   };
 
-  if (options.idempotencyScope) {
-    // 金鑰 = 月份 + 完整請求內容雜湊（Resend 保留 24 小時、上限 256 字元）。
-    // 同一請求重送時 Resend 回傳原結果、不會再寄一次；管理員更正後重新寄送
-    // 內容不同，會得到新金鑰而正常寄出，不會被 409 invalid_idempotent_request 擋下。
-    const contentHash = createHash('sha256').update(body).digest('hex');
-    headers['Idempotency-Key'] = `${options.idempotencyScope}/${contentHash}`;
+  if (options.idempotencyKey) {
+    headers['Idempotency-Key'] = options.idempotencyKey;
   }
 
-  // 沒有 Idempotency-Key 時不自動重試，避免逾時但其實已寄出時重複寄信。
-  const maxAttempts = options.idempotencyScope ? 2 : 1;
+  // 只有帶 Idempotency-Key 時才自動重試一次（同一 body、同一金鑰，Resend 會回傳第一次的結果）；
+  // 沒有金鑰時不重試，避免逾時但其實已寄出時重複寄信。
+  const maxAttempts = options.idempotencyKey ? 2 : 1;
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await postToResend(apiKey, headers, body);
@@ -259,6 +268,35 @@ async function sendWithResend(
       await wait(RESEND_RETRY_DELAY_MS);
     }
   }
+}
+
+/**
+ * 月結報表的 Idempotency-Key（Resend 保留 24 小時、上限 256 字元）。
+ *
+ * 刻意不含 PDF 位元組：Chromium 每次產生的 PDF 都帶不同的建立時間，若納入雜湊，
+ * 排程跨次重跑就永遠是新金鑰而重寄。改以「月份 + 薪資紀錄 id/revision + 寄件人 +
+ * 收件人 + 主旨 + 內文 + 附件檔名」雜湊：
+ * - 同一次呼叫內的重試：body 完全相同；若第一次其實已被接受，Resend 回傳原結果，不會重寄。
+ * - 排程重跑失敗的月結（沿用既有紀錄、revision 不變）：金鑰相同但 PDF 位元組不同，
+ *   Resend 在 24 小時內回 409 invalid_idempotent_request 擋下，不會重寄；此錯誤不重試。
+ * - 管理員 force 重新結算：紀錄 revision 遞增（或金額、收件人改變），金鑰不同，正常寄出。
+ */
+export function buildMonthlyReportIdempotencyKey(
+  target: SalaryReportTarget,
+  records: SalaryRecord[],
+  message: Pick<SalaryEmailMessage, 'from' | 'to' | 'subject' | 'text' | 'attachments'>
+): string {
+  const monthKey = `${target.year}-${String(target.month).padStart(2, '0')}`;
+  const fingerprint = JSON.stringify({
+    records: records.map((record) => [record.id ?? null, record.revision ?? null]),
+    from: message.from,
+    to: message.to,
+    subject: message.subject,
+    text: message.text,
+    attachments: (message.attachments ?? []).map((attachment) => attachment.filename),
+  });
+
+  return `monthly-salary-report/${monthKey}/${createHash('sha256').update(fingerprint).digest('hex')}`;
 }
 
 async function deliverSalaryEmail(
@@ -286,24 +324,22 @@ export async function sendMonthlySalaryEmail({
     );
   }
 
-  const monthKey = `${target.year}-${String(target.month).padStart(2, '0')}`;
-  const messageId = await deliverSalaryEmail(
-    config,
-    {
-      from: resolveSender(config),
-      to: config.emailRecipients,
-      subject: `${formatMonthLabel(target)}薪資結算報告`,
-      text: buildEmailText(target, records),
-      attachments: [
-        {
-          filename: path.basename(pdfPath),
-          path: pdfPath,
-          contentType: 'application/pdf',
-        },
-      ],
-    },
-    { idempotencyScope: `monthly-salary-report/${monthKey}` }
-  );
+  const message: SalaryEmailMessage = {
+    from: resolveSender(config),
+    to: config.emailRecipients,
+    subject: `${formatMonthLabel(target)}薪資結算報告`,
+    text: buildEmailText(target, records),
+    attachments: [
+      {
+        filename: path.basename(pdfPath),
+        path: pdfPath,
+        contentType: 'application/pdf',
+      },
+    ],
+  };
+  const messageId = await deliverSalaryEmail(config, message, {
+    idempotencyKey: buildMonthlyReportIdempotencyKey(target, records, message),
+  });
 
   return {
     recipients: config.emailRecipients,

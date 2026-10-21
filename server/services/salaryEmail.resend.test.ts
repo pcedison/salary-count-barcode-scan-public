@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,6 +14,7 @@ const { createTransport, sendMail } = vi.hoisted(() => {
 vi.mock('nodemailer', () => ({ default: { createTransport }, createTransport }));
 
 import {
+  buildMonthlyReportIdempotencyKey,
   RESEND_RETRY_DELAY_MS,
   RESEND_SEND_EMAIL_URL,
   SalaryEmailDeliveryError,
@@ -42,11 +42,11 @@ function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-async function syntheticPdf() {
+async function syntheticPdf(marker = 'synthetic attachment only') {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'synthetic-resend-mail-'));
   directories.push(directory);
   const pdfPath = path.join(directory, 'salary-2026-09.pdf');
-  const pdf = Buffer.from('%PDF-1.4\n% synthetic attachment only\n%%EOF\n');
+  const pdf = Buffer.from(`%PDF-1.4\n% ${marker}\n%%EOF\n`);
   await writeFile(pdfPath, pdf);
   return { pdfPath, pdf };
 }
@@ -62,12 +62,21 @@ async function advancePastRetryDelay() {
   await vi.advanceTimersByTimeAsync(RESEND_RETRY_DELAY_MS);
 }
 
-const monthly = (pdfPath: string, config = resendConfig()) => sendMonthlySalaryEmail({
+const RECORDS = [
+  { id: 101, revision: 0, netSalary: 29300 },
+  { id: 102, revision: 0, netSalary: 30700 },
+] as SalaryRecord[];
+
+const monthly = (pdfPath: string, config = resendConfig(), records = RECORDS) => sendMonthlySalaryEmail({
   target: { year: 2026, month: 9 },
-  records: [{ netSalary: 29300 }, { netSalary: 30700 }] as SalaryRecord[],
+  records,
   pdfPath,
   config,
 });
+
+function resendError(status: number, name: string, message = `Synthetic ${name}.`) {
+  return jsonResponse(status, { statusCode: status, name, message });
+}
 
 beforeEach(() => {
   fetchMock.mockReset();
@@ -85,7 +94,7 @@ afterEach(async () => {
 });
 
 describe('salary email through Resend HTTPS API', () => {
-  it('posts the monthly report with Bearer auth, base64 PDF and a content-bound idempotency key', async () => {
+  it('posts the monthly report with Bearer auth, base64 PDF and a stable idempotency key', async () => {
     const { pdfPath, pdf } = await syntheticPdf();
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { id: 'synthetic-resend-id' }));
 
@@ -114,24 +123,23 @@ describe('salary email through Resend HTTPS API', () => {
       content_type: 'application/pdf',
     });
     expect(Buffer.from(body.attachments[0].content, 'base64')).toEqual(pdf);
-    const expectedHash = createHash('sha256').update(String(init.body)).digest('hex');
-    expect(headers['Idempotency-Key']).toBe(`monthly-salary-report/2026-09/${expectedHash}`);
+    expect(headers['Idempotency-Key']).toMatch(/^monthly-salary-report\/2026-09\/[0-9a-f]{64}$/);
     expect(headers['Idempotency-Key'].length).toBeLessThanOrEqual(256);
     expect(createTransport).not.toHaveBeenCalled();
   });
 
-  it('falls back to SMTP_FROM as the Resend sender when RESEND_FROM is not set', async () => {
+  it('sends the test email without attachments, idempotency key or retries', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { id: 'synthetic-test-id' }));
 
     const result = await sendSalaryAutomationTestEmail({
       to: 'synthetic-test@example.test',
-      config: resendConfig({ resendFrom: undefined, smtpFrom: 'Payroll <payroll@mail.example.test>' }),
+      config: resendConfig(),
       now: new Date('2026-10-02T00:15:00Z'),
     });
 
     expect(result).toEqual({ recipients: ['synthetic-test@example.test'], messageId: 'synthetic-test-id' });
     const { headers, body } = sentRequest();
-    expect(body.from).toBe('Payroll <payroll@mail.example.test>');
+    expect(body.from).toBe('合成薪資系統 <payroll@mail.example.test>');
     expect(body.subject).toBe('薪資自動化 Resend 測試');
     expect(body.text).toMatch(/2026\/10\/02\s+08:15:00/);
     expect(body).not.toHaveProperty('attachments');
@@ -149,6 +157,7 @@ describe('salary email through Resend HTTPS API', () => {
     expect(error).toBeInstanceOf(SalaryEmailDeliveryError);
     expect(error).toMatchObject({
       message: 'Resend API request failed with HTTP 403 (validation_error): The mail.example.test domain is not verified.',
+      code: 'validation_error',
       providerStatus: 403,
       providerErrorName: 'validation_error',
       retryable: false,
@@ -159,8 +168,9 @@ describe('salary email through Resend HTTPS API', () => {
   it('keeps only the status code when the error body is not Resend JSON', async () => {
     fetchMock.mockResolvedValueOnce(new Response('<html>synthetic proxy error</html>', { status: 502 }));
 
-    await expect(sendSalaryAutomationTestEmail({ config: resendConfig() }))
-      .rejects.toThrow(/^Resend API request failed with HTTP 502$/);
+    const error = await sendSalaryAutomationTestEmail({ config: resendConfig() }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ message: 'Resend API request failed with HTTP 502', code: 'resend_request_failed' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -197,9 +207,108 @@ describe('salary email through Resend HTTPS API', () => {
   it('reports timeouts and does not retry sends that carry no idempotency key', async () => {
     fetchMock.mockRejectedValue(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
 
-    await expect(sendSalaryAutomationTestEmail({ config: resendConfig() }))
-      .rejects.toThrow('Resend API request timed out after 30000ms.');
+    await expect(sendSalaryAutomationTestEmail({ config: resendConfig() })).rejects.toMatchObject({
+      message: 'Resend API request timed out after 30000ms.',
+      code: 'resend_request_timeout',
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a timed-out monthly send once with the same body and key', async () => {
+    const { pdfPath } = await syntheticPdf();
+    fetchMock
+      .mockRejectedValueOnce(new DOMException('The operation was aborted due to timeout', 'TimeoutError'))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'synthetic-replayed-id' }));
+
+    const pending = monthly(pdfPath);
+    await advancePastRetryDelay();
+
+    expect((await pending).messageId).toBe('synthetic-replayed-id');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sentRequest(1).init.body).toBe(sentRequest(0).init.body);
+    expect(sentRequest(1).headers['Idempotency-Key']).toBe(sentRequest(0).headers['Idempotency-Key']);
+  });
+
+  it('reports network errors with a safe cause code after one monthly retry', async () => {
+    const { pdfPath } = await syntheticPdf();
+    fetchMock.mockImplementation(async () => {
+      throw new TypeError('fetch failed', { cause: Object.assign(new Error('synthetic reset'), { code: 'ECONNRESET' }) });
+    });
+
+    const pending = monthly(pdfPath).catch((caught: unknown) => caught);
+    await advancePastRetryDelay();
+
+    expect(await pending).toMatchObject({
+      message: 'Resend API request failed before a response was received (ECONNRESET).',
+      code: 'resend_network_error',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries 409 concurrent_idempotent_requests once', async () => {
+    const { pdfPath } = await syntheticPdf();
+    fetchMock
+      .mockResolvedValueOnce(resendError(409, 'concurrent_idempotent_requests'))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'synthetic-after-concurrent' }));
+
+    const pending = monthly(pdfPath);
+    await advancePastRetryDelay();
+
+    expect((await pending).messageId).toBe('synthetic-after-concurrent');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    [429, 'daily_quota_exceeded'],
+    [409, 'invalid_idempotent_request'],
+  ])('does not retry HTTP %i %s', async (status, name) => {
+    const { pdfPath } = await syntheticPdf();
+    fetchMock.mockImplementation(async () => resendError(status, name));
+
+    await expect(monthly(pdfPath)).rejects.toMatchObject({
+      code: name, providerStatus: status, providerErrorName: name, retryable: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a 2xx response without a JSON body as sent without a message id', async () => {
+    const { pdfPath } = await syntheticPdf();
+    fetchMock.mockResolvedValueOnce(new Response('synthetic accepted', { status: 200 }));
+
+    await expect(monthly(pdfPath)).resolves.toEqual({
+      recipients: ['synthetic-a@example.test', 'synthetic-b@example.test'],
+      messageId: undefined,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the idempotency key stable when only the regenerated PDF bytes differ', async () => {
+    const first = await syntheticPdf('rendered at 01:15');
+    const second = await syntheticPdf('rendered at 02:15');
+    fetchMock.mockImplementation(async () => jsonResponse(200, { id: 'synthetic-id' }));
+
+    await monthly(first.pdfPath);
+    await monthly(second.pdfPath);
+
+    expect(sentRequest(1).init.body).not.toBe(sentRequest(0).init.body);
+    expect(sentRequest(1).headers['Idempotency-Key']).toBe(sentRequest(0).headers['Idempotency-Key']);
+  });
+
+  it('changes the idempotency key when a forced rerun or settings change the report', () => {
+    const target = { year: 2026, month: 9 };
+    const message = {
+      from: 'payroll@mail.example.test', to: ['synthetic-a@example.test'],
+      subject: '2026年9月薪資結算報告', text: '實領總額：60,000 元',
+      attachments: [{ filename: 'salary-2026-09.pdf', path: '/not-read.pdf', contentType: 'application/pdf' }],
+    };
+    const base = buildMonthlyReportIdempotencyKey(target, RECORDS, message);
+
+    expect(buildMonthlyReportIdempotencyKey(target, RECORDS, { ...message, attachments: [{ ...message.attachments[0], path: '/other.pdf' }] }))
+      .toBe(base);
+    expect(buildMonthlyReportIdempotencyKey(target, [{ ...RECORDS[0], revision: 1 }, RECORDS[1]], message)).not.toBe(base);
+    expect(buildMonthlyReportIdempotencyKey(target, RECORDS, { ...message, to: ['synthetic-b@example.test'] })).not.toBe(base);
+    expect(buildMonthlyReportIdempotencyKey(target, RECORDS, { ...message, text: '實領總額：61,000 元' })).not.toBe(base);
+    expect(buildMonthlyReportIdempotencyKey({ year: 2026, month: 10 }, RECORDS, message)).not.toBe(base);
   });
 
   it('never exposes the API key or message content in errors or logs', async () => {
@@ -231,13 +340,15 @@ describe('salary email through Resend HTTPS API', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('rejects a Resend configuration without any sender before calling the API', async () => {
+  it('requires RESEND_FROM in Resend mode and never falls back to SMTP_FROM', async () => {
     const { pdfPath } = await syntheticPdf();
-    const config = resendConfig({ resendFrom: undefined, smtpFrom: undefined });
+    const config = resendConfig({ resendFrom: undefined, smtpFrom: 'Payroll <payroll@gmail.example.test>' });
 
     await expect(monthly(pdfPath, config)).rejects.toThrow('not configured');
-    await expect(sendSalaryAutomationTestEmail({ config })).rejects.toThrow('RESEND_FROM (or SMTP_FROM)');
+    await expect(sendSalaryAutomationTestEmail({ config }))
+      .rejects.toThrow('Salary email is not configured. Set RESEND_FROM for Resend.');
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(createTransport).not.toHaveBeenCalled();
   });
 
   it('keeps using SMTP when RESEND_API_KEY is not set', async () => {

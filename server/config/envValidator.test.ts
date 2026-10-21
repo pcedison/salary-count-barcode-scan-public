@@ -303,19 +303,15 @@ describe('validateEnv', () => {
       expect(validateEnv().RESEND_FROM).toBe('Payroll <payroll@mail.example.test>');
     });
 
-    it('accepts SMTP_FROM as the Resend sender fallback', () => {
-      process.env = buildEnv({ ...enabled, RESEND_API_KEY: 'synthetic-resend-key', SMTP_FROM: 'payroll@mail.example.test' });
-      vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-      expect(validateEnv().NODE_ENV).toBe('test');
-    });
-
-    it('rejects Resend without any sender address', () => {
-      process.env = buildEnv({ ...enabled, RESEND_API_KEY: 'synthetic-resend-key' });
+    it.each([
+      ['no sender at all', {}],
+      ['only SMTP_FROM (no fallback)', { SMTP_FROM: 'payroll@gmail.example.test', SMTP_HOST: 'smtp.example.test' }],
+    ])('rejects Resend with %s', (_caseName, extra) => {
+      process.env = buildEnv({ ...enabled, RESEND_API_KEY: 'synthetic-resend-key', ...extra });
       vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       expect(() => validateEnv()).toThrow(
-        'RESEND_FROM or SMTP_FROM is required when salary automation is enabled with RESEND_API_KEY'
+        'RESEND_FROM is required when salary automation is enabled with RESEND_API_KEY'
       );
     });
 

@@ -13,7 +13,7 @@ export interface SalaryAutomationConfig {
   smtpFrom?: string;
   /** 設定後改走 Resend HTTPS API 寄信（Railway Hobby 等封鎖 SMTP 的平台需要）。 */
   resendApiKey?: string;
-  /** Resend 寄件人；未設定時沿用 SMTP_FROM。必須屬於 Resend 已驗證的網域。 */
+  /** Resend 寄件人，Resend 模式必填（不回退 SMTP_FROM）。必須屬於 Resend 已驗證的網域。 */
   resendFrom?: string;
   publicBaseUrl?: string;
   chromiumExecutablePath?: string;
@@ -82,9 +82,8 @@ export function getSalaryEmailTransport(config: SalaryAutomationConfig): SalaryE
 }
 
 export function getSalaryEmailSender(config: SalaryAutomationConfig): string | undefined {
-  return getSalaryEmailTransport(config) === 'resend'
-    ? config.resendFrom ?? config.smtpFrom
-    : config.smtpFrom;
+  // Resend 必須明確設定 RESEND_FROM：SMTP_FROM 常是 Gmail 等未在 Resend 驗證的網域。
+  return getSalaryEmailTransport(config) === 'resend' ? config.resendFrom : config.smtpFrom;
 }
 
 /** 寄件通道本身是否可用（不含收件人）；Resend 模式不需要 SMTP_HOST。 */
@@ -109,7 +108,7 @@ export function getSalaryAutomationConfigWarnings(config = getSalaryAutomationCo
 
   if (getSalaryEmailTransport(config) === 'resend') {
     if (!getSalaryEmailSender(config)) {
-      warnings.push('RESEND_FROM (or SMTP_FROM) is not configured.');
+      warnings.push('RESEND_FROM is not configured.');
     }
 
     return warnings;

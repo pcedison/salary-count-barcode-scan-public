@@ -13,8 +13,11 @@ import {
   getPreviousSalaryMonthTarget,
   runMonthlySalaryAutomation,
 } from '../services/monthlySalaryAutomation';
-import { sendSalaryAutomationTestEmail } from '../services/salaryEmail';
+import { SalaryEmailDeliveryError, sendSalaryAutomationTestEmail } from '../services/salaryEmail';
+import { createLogger } from '../utils/logger';
 import { handleRouteError } from './route-helpers';
+
+const log = createLogger('salary-automation');
 
 const runRequestSchema = z.object({
   year: z.number().int().min(2000).max(2100).optional(),
@@ -100,6 +103,16 @@ export function registerSalaryAutomationRoutes(app: Express): void {
         messageId: result.messageId,
       });
     } catch (err) {
+      if (err instanceof SalaryEmailDeliveryError) {
+        // 上游寄信服務失敗：訊息只含狀態碼與 Resend 錯誤說明（已遮蔽 key、不含內文），
+        // production 也回給管理員以便診斷；用 502 表示是外部服務錯誤而非請求有誤。
+        log.warn('Salary automation test email delivery failed', {
+          code: err.code,
+          providerStatus: err.providerStatus,
+          message: err.message,
+        });
+        return res.status(502).json({ message: err.message, code: err.code });
+      }
       return handleRouteError(err, res);
     }
   });

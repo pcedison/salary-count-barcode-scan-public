@@ -112,24 +112,25 @@ and shared by startup validation, the scheduler, and the admin config API:
 | --- | --- | --- |
 | `SALARY_AUTOMATION_EMAIL_TO` | Both | Comma-separated recipients; required when `SALARY_AUTOMATION_ENABLED=true` |
 | `RESEND_API_KEY` | Resend | Secret. Use a *Sending access* key restricted to the sending domain |
-| `RESEND_FROM` | Resend | Sender such as `Salary System <payroll@mail.example.com>`; must be on a domain verified in Resend. Falls back to `SMTP_FROM` when unset |
+| `RESEND_FROM` | Resend | Required. Sender such as `Salary System <payroll@mail.example.com>`; must be on a domain verified in Resend. `SMTP_FROM` is never used as a fallback |
 | `SMTP_HOST`, `SMTP_FROM` | SMTP | Both required for SMTP |
 | `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` | SMTP | Optional; port defaults to `587` |
 
 When `SALARY_AUTOMATION_ENABLED=true`, startup is refused (in every environment,
 as before) unless recipients are set and the active transport is complete:
-Resend needs `RESEND_FROM` or `SMTP_FROM`; SMTP needs `SMTP_HOST` and `SMTP_FROM`.
+Resend needs `RESEND_FROM`; SMTP needs `SMTP_HOST` and `SMTP_FROM`.
 
 ### 為什麼需要 Resend
 
-Railway Free/Trial/Hobby 方案封鎖對外 SMTP（官方除錯步驟測試的 25、465、587、2525 都不通），
-官方建議改用 HTTPS 寄信服務並以 Resend 為首選
+Railway 文件說明 Free、Trial、Hobby 方案停用 SMTP，僅 Pro 以上方案可用；
+官方建議所有方案都改用 HTTPS 寄信服務，並以 Resend 為首選
 （[Railway Outbound Networking](https://docs.railway.com/reference/outbound-networking)）。
 Zeabur 或本機若沒有設定 `RESEND_API_KEY`，行為與先前完全相同。
 
 ### Resend 端準備
 
-1. 在 Resend 新增並驗證寄件網域（依指示加上 DNS 紀錄），`RESEND_FROM` 必須使用此網域的地址。
+1. 在 Resend 新增並驗證寄件網域（依指示加上 DNS 紀錄），`RESEND_FROM` 必須使用此網域的地址；
+   Resend 模式不會沿用 `SMTP_FROM`（通常是 Gmail 等未驗證網域）。
    未驗證網域時 Resend 回傳 403 `validation_error`，且測試模式只能寄給帳號本人。
 2. 建立 API key，權限選 **Sending access** 並限定上述網域；不要使用 Full access。
 3. 將 `RESEND_API_KEY`、`RESEND_FROM` 設為平台 secret（不要寫進 repo 或 `.env.example`）。
@@ -138,13 +139,20 @@ Zeabur 或本機若沒有設定 `RESEND_API_KEY`，行為與先前完全相同�
 
 ### 寄送行為
 
-- 單次請求逾時 30 秒；非 2xx 會丟出含 HTTP 狀態碼與 Resend 錯誤名稱/訊息的錯誤，
-  訊息會截斷並遮蔽 API key，不含信件內容與附件。
-- 月結報表帶 `Idempotency-Key: monthly-salary-report/<YYYY-MM>/<請求內容 SHA-256>`。
-  逾時、網路錯誤、429 `rate_limit_exceeded`、409 `concurrent_idempotent_requests` 或 5xx
-  會以完全相同的內容自動重試一次，Resend 在 24 小時內會對同一金鑰回傳原結果而不重寄。
-  管理員更正後重新寄送時內容不同、金鑰也不同，因此可正常寄出。
-  PDF 每次重新產生時位元組不同，所以排程在下一個小時重跑失敗的月結時視為新的一封信。
+- 單次請求逾時 30 秒；失敗時丟出 `SalaryEmailDeliveryError`，`code` 為 Resend 錯誤名稱
+  （無則 `resend_request_failed` / `resend_request_timeout` / `resend_network_error`），
+  訊息含 HTTP 狀態碼與 Resend 說明，會截斷並遮蔽 API key，不含信件內容與附件。
+  `POST /api/salary-automation/test-email` 遇到此錯誤回 502 `{ message, code }`（production 亦同），
+  月結失敗原因寫入 log 與月結紀錄的 `errorMessage`。
+- 月結報表帶 `Idempotency-Key: monthly-salary-report/<YYYY-MM>/<SHA-256>`，雜湊範圍是
+  薪資紀錄 id 與 revision、寄件人、收件人、主旨、內文與附件檔名，**不含 PDF 位元組**
+  （每次重產 PDF 位元組都不同）。Resend 對同一金鑰保留 24 小時：
+  - 同一次寄送遇到逾時、網路錯誤、429 `rate_limit_exceeded`、409 `concurrent_idempotent_requests`
+    或 5xx，會以完全相同的請求重試一次；若第一次其實已寄出，Resend 回傳原結果而不重寄。
+  - 排程重跑失敗的月結會沿用既有薪資紀錄，金鑰相同但 PDF 不同，Resend 回 409
+    `invalid_idempotent_request` 而不重寄；此錯誤與 `daily_quota_exceeded` 等不重試，
+    月結會標記失敗並保留原因，24 小時後金鑰到期才會再寄。
+  - 管理員「重新結算並寄送」（force）會使薪資紀錄 revision 遞增，金鑰不同，因此一定寄出。
 - 測試信不帶 Idempotency-Key，也不自動重試。
 - Resend 限制單封信（含 Base64 後附件）不超過 40MB、收件人最多 50 位
   （[Send Email API](https://resend.com/docs/api-reference/emails/send-email)）。

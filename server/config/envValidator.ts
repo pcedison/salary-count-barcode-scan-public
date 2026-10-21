@@ -188,7 +188,7 @@ export function validateEnv(): ValidatedEnv {
     if (!isSalaryEmailTransportConfigured(salaryEmailConfig)) {
       throw new Error(
         getSalaryEmailTransport(salaryEmailConfig) === 'resend'
-          ? 'RESEND_FROM or SMTP_FROM is required when salary automation is enabled with RESEND_API_KEY'
+          ? 'RESEND_FROM is required when salary automation is enabled with RESEND_API_KEY'
           : 'SMTP_HOST and SMTP_FROM are required when salary automation is enabled ' +
             '(or set RESEND_API_KEY and RESEND_FROM to send through Resend)'
       );
