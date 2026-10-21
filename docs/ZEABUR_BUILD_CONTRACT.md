@@ -1,5 +1,7 @@
 # Zeabur Build Contract
 
+> Railway（主機）＋ Cloud Run（冷備援）的部署流程見 [RAILWAY_CLOUDRUN_DEPLOYMENT.md](RAILWAY_CLOUDRUN_DEPLOYMENT.md)；兩者沿用本文件的 Dockerfile 建置約定。
+
 ## Why Earlier Deployments Failed
 
 Earlier Zeabur failures were caused by the build phase not receiving `devDependencies`.
