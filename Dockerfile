@@ -49,12 +49,17 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --omit=optional
 
 COPY --from=builder /app/dist ./dist
+COPY scripts/container-entrypoint.sh /usr/local/bin/app-entrypoint
 
 RUN mkdir -p backups logs \
-    && chown -R node:node /app
+    && chown -R node:node /app \
+    && chmod 0755 /usr/local/bin/app-entrypoint \
+    && command -v setpriv >/dev/null
 
 USER node
 
 EXPOSE 8080
 
+# 以 node 啟動時直接執行；以 root 啟動（Railway volume）時先整理 volume 權限再降權成 node。
+ENTRYPOINT ["/usr/local/bin/app-entrypoint"]
 CMD ["node", "dist/index.js"]

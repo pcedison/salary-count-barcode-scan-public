@@ -322,4 +322,22 @@ describe('validateEnv', () => {
       expect(validateEnv().SALARY_AUTOMATION_ENABLED).toBeUndefined();
     });
   });
+
+  it('accepts a Railway volume mounted at /data while the container workspace is /app', () => {
+    process.env = buildEnv({
+      NODE_ENV: 'production',
+      SESSION_SECRET: 'production-session-secret-123456789012',
+      SESSION_SECURE: 'true',
+      BACKUP_ENCRYPTION_KEY: 'backup-encryption-secret-1234567890',
+      APP_BACKUP_DIR: '/data/backups',
+      APP_LOG_DIR: '/data/logs'
+    });
+    vi.spyOn(process, 'cwd').mockReturnValue('/app');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const validated = validateEnv();
+
+    expect(validated.APP_BACKUP_DIR).toBe('/data/backups');
+    expect(validated.APP_LOG_DIR).toBe('/data/logs');
+  });
 });

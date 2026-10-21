@@ -107,6 +107,48 @@ jobs:
           docker logs salary-scan-smoke
           exit 1
 
+      # Railway volumes mount as root and need RAILWAY_RUN_UID=0; the entrypoint must
+      # hand the volume directories to node and drop privileges before starting the app.
+      - name: Start root-started smoke container with a root-owned volume
+        run: |
+          docker volume create salary-scan-smoke-data
+          docker run -d --rm --name salary-scan-smoke-root --user 0 -p 18081:8080 \
+            --mount type=volume,src=salary-scan-smoke-data,dst=/data \
+            -e NODE_ENV=production \
+            -e PAYROLL_WRITES_PAUSED=true \
+            -e DATABASE_URL=postgresql://smoke:smoke@db.internal.test:5432/smoke \
+            -e SESSION_SECRET=0123456789abcdef0123456789abcdef \
+            -e SESSION_SECURE=true \
+            -e BACKUP_ENCRYPTION_KEY=abcdef0123456789abcdef0123456789 \
+            -e RAILWAY_VOLUME_MOUNT_PATH=/data \
+            -e APP_BACKUP_DIR=/data/backups \
+            -e APP_LOG_DIR=/data/logs \
+            salary-scan-ci
+
+      - name: Verify the app runs as node with writable volume directories
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:18081/live; then
+              break
+            fi
+            if [ "$i" -eq 20 ]; then
+              docker logs salary-scan-smoke-root
+              exit 1
+            fi
+            sleep 1
+          done
+          docker exec salary-scan-smoke-root sh -c '
+            set -e
+            test "$(stat -c %U /proc/1)" = node
+            grep -Eq "^NoNewPrivs:[[:space:]]+1$" /proc/1/status
+            tr "\0" "\n" < /proc/1/environ | grep -qx HOME=/home/node
+            test "$(stat -c %U /data)" = root
+            test "$(stat -c %U /data/backups)" = node
+            test "$(stat -c %U /data/logs)" = node
+          '
+
       - name: Stop Docker smoke container
         if: always()
-        run: docker rm -f salary-scan-smoke || true
+        run: |
+          docker rm -f salary-scan-smoke salary-scan-smoke-root || true
+          docker volume rm salary-scan-smoke-data || true
