@@ -1,0 +1,101 @@
+name: Deploy
+
+# 把 main 的同一個 commit 部署到 Railway（主機）與 Cloud Run（冷備援）。
+# 只能手動觸發：Actions → Deploy → Run workflow，或 `gh workflow run deploy.yml --ref main`。
+# 設定與流程見 docs/RAILWAY_CLOUDRUN_DEPLOYMENT.md。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy Railway primary and Cloud Run standby
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # RAILWAY_TOKEN 是這個 environment 的 secret；environment 的 Deployment branches 只允許 main，
+    # GCP 的 WIF 條件也要求 environment == production（見 docs/RAILWAY_CLOUDRUN_DEPLOYMENT.md 3.4 節）。
+    environment: production
+    env:
+      RAILWAY_CLI_VERSION: 5.63.4
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
+      CLOUD_RUN_RUNTIME_SA: ${{ vars.CLOUD_RUN_RUNTIME_SA }}
+      CLOUD_RUN_BUILD_SA: ${{ vars.CLOUD_RUN_BUILD_SA }}
+      RAILWAY_SERVICE: ${{ vars.RAILWAY_SERVICE }}
+      PRIMARY_URL: ${{ vars.PRIMARY_URL }}
+
+    steps:
+      - name: Require main branch and configuration
+        env:
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          GCP_DEPLOY_SA: ${{ vars.GCP_DEPLOY_SA }}
+          HAS_RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN != '' }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Deploy only runs on main (got ${GITHUB_REF})."
+            exit 1
+          fi
+          missing=""
+          for name in GCP_WIF_PROVIDER GCP_DEPLOY_SA GCP_PROJECT_ID RAILWAY_SERVICE; do
+            if [ -z "${!name}" ]; then
+              missing="${missing} ${name}"
+            fi
+          done
+          if [ "$HAS_RAILWAY_TOKEN" != "true" ]; then
+            missing="${missing} RAILWAY_TOKEN(production environment secret)"
+          fi
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository variables or secrets:${missing}. See docs/RAILWAY_CLOUDRUN_DEPLOYMENT.md."
+            exit 1
+          fi
+
+      # 程式碼放在 src/：google-github-actions/auth 會在 $GITHUB_WORKSPACE 寫入
+      # gha-creds-*.json，放在外層可確保它不會被 railway up／gcloud --source 上傳。
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: src
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Install Railway CLI
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/railway-cli" "@railway/cli@${RAILWAY_CLI_VERSION}"
+          echo "$RUNNER_TEMP/railway-cli/bin" >> "$GITHUB_PATH"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      # 固定 gcloud 版本：deploy-all.sh 用到的 --build-service-account、--startup-probe、
+      # --[no-]cpu-throttling 等旗標是對照這個版本確認的。升級時請重新確認。
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        with:
+          version: '570.0.0'
+
+      - name: Show tool versions
+        run: |
+          railway --version
+          gcloud --version | head -n 1
+
+      - name: Deploy the same commit to both platforms
+        working-directory: src
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: bash deploy/deploy-all.sh

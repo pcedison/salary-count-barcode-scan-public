@@ -1,5 +1,7 @@
 # Zeabur Build Contract
 
+> Railway（主機）＋ Cloud Run（冷備援）的部署流程見 [RAILWAY_CLOUDRUN_DEPLOYMENT.md](RAILWAY_CLOUDRUN_DEPLOYMENT.md)；兩者沿用本文件的 Dockerfile 建置約定。
+
 ## Why Earlier Deployments Failed
 
 Earlier Zeabur failures were caused by the build phase not receiving `devDependencies`.
@@ -24,6 +26,7 @@ The repository now uses the following contract:
 5. Runtime install: `npm ci --omit=dev`
 6. Rollup native fallback: `node scripts/ensure-rollup-native.mjs`
 7. Production runtime bundle guard: `node scripts/verify-runtime-bundle.mjs`
+8. Runtime entrypoint: `scripts/container-entrypoint.sh` execs the app directly as `node`; when a platform starts the container as root for a volume (Railway `RAILWAY_RUN_UID=0`), it prepares the volume directories and drops to `node` with `setpriv` first
 
 This means:
 

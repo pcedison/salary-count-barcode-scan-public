@@ -1,0 +1,30 @@
+# `gcloud run deploy --source` 上傳時排除的檔案（語法同 .gitignore，見 `gcloud topic gcloudignore`）。
+# 這個檔存在時 gcloud 不會自動套用 .gitignore，所以第一行明確引入它，
+# 讓上傳內容與 git／`railway up` 的忽略規則一致，再補上只跟上傳有關的項目。
+# 上傳後 Cloud Build 以 Dockerfile 建置，仍會再套用 .dockerignore。
+#!include:.gitignore
+
+.gcloudignore
+.git
+.github
+.claude
+node_modules
+dist
+backups
+logs
+tmp
+coverage
+playwright-report
+test-results
+
+# 部署腳本與其可能產生的祕密檔都不需要上傳（建置只用 Dockerfile 與原始碼）。
+/deploy/
+*.dotenv
+gha-creds-*.json
+.env
+.env.*.local
+.env.generated.local
+.env.supabase_primary
+
+# 前端打包需要 client/.env.production（VITE_LIFF_ID，非機密），一定要上傳。
+!client/.env.production

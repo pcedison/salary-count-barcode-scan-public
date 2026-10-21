@@ -1,0 +1,122 @@
+name: Standby health
+
+# 每天台灣時間約 09:13（UTC 01:13）檢查 Railway 主機與 Cloud Run 冷備援。
+#
+# 檢查內容（見 server/routes/health.routes.ts）：
+#   /ready       伺服器已啟動並在監聽，且能對 PostgreSQL 執行 SELECT 1 → 200 且 ready=true。
+#                不檢查記憶體、LINE、SMTP、排程或環境變數是否與主機一致。
+#   /api/health  資料庫 SELECT 1 ＋ 記憶體用量低於 90% → 200 且 status=healthy；
+#                回報 version（package.json，若平台設了 APP_VERSION 則以它為準）。
+#   兩邊 /api/health 的 version 必須相同（代表兩邊部署的是同一個版本）。
+# Cloud Run 平常 min-instances 0，第一個請求要冷啟動，因此每個網址最多等 120 秒。
+# 任何一項失敗 job 就失敗，並由 notify-failure job 開啟（或在既有的上留言）固定標題的 issue
+# 並 @ repo 擁有者，不依賴「排程失敗通知只寄給最後修改 cron 的人」。
+# 網址讀 repo variables PRIMARY_URL、STANDBY_URL；沒設就略過，不算失敗。
+on:
+  schedule:
+    - cron: "13 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: standby-health
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check primary and standby health
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PRIMARY_URL: ${{ vars.PRIMARY_URL }}
+      STANDBY_URL: ${{ vars.STANDBY_URL }}
+
+    steps:
+      - name: Skip notice
+        if: env.PRIMARY_URL == '' || env.STANDBY_URL == ''
+        run: echo "::notice::PRIMARY_URL or STANDBY_URL repository variable is not set; standby health check was skipped. See docs/RAILWAY_CLOUDRUN_DEPLOYMENT.md."
+
+      - name: Probe /ready and /api/health on both hosts
+        if: env.PRIMARY_URL != '' && env.STANDBY_URL != ''
+        run: |
+          set -euo pipefail
+
+          # probe <label> <base_url> <result variable name>
+          probe() {
+            local label="$1" base="${2%/}" result_var="$3"
+            local deadline=$((SECONDS + 120))
+            local ready_code health_body health_code status version
+            while :; do
+              ready_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "${base}/ready" 2>/dev/null || true)"
+              health_body="$(curl -sS --max-time 30 -w '\n%{http_code}' "${base}/api/health" 2>/dev/null || true)"
+              health_code="${health_body##*$'\n'}"
+              health_body="${health_body%$'\n'*}"
+              status="$(jq -r '.status // empty' <<<"$health_body" 2>/dev/null || true)"
+              version="$(jq -r '.version // empty' <<<"$health_body" 2>/dev/null || true)"
+
+              if [ "$ready_code" = "200" ] && [ "$health_code" = "200" ] && [ "$status" = "healthy" ] && [ -n "$version" ]; then
+                echo "${label}: /ready 200, /api/health 200 healthy, version ${version}"
+                printf -v "$result_var" '%s' "$version"
+                return 0
+              fi
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "::error::${label} is unhealthy: /ready=${ready_code:-none} /api/health=${health_code:-none} status=${status:-unknown}"
+                return 1
+              fi
+              echo "${label}: not ready yet (/ready=${ready_code:-none} /api/health=${health_code:-none}), retrying in 10s"
+              sleep 10
+            done
+          }
+
+          failed=0
+          primary_version=""
+          standby_version=""
+          probe "Primary (Railway)" "$PRIMARY_URL" primary_version || failed=1
+          probe "Standby (Cloud Run)" "$STANDBY_URL" standby_version || failed=1
+
+          if [ -n "$primary_version" ] && [ -n "$standby_version" ] && [ "$primary_version" != "$standby_version" ]; then
+            echo "::error::Version mismatch: primary ${primary_version}, standby ${standby_version}. Run the Deploy workflow so both hosts serve the same commit."
+            failed=1
+          fi
+
+          {
+            echo "### Standby health"
+            echo ""
+            echo "- Primary version: \`${primary_version:-unavailable}\`"
+            echo "- Standby version: \`${standby_version:-unavailable}\`"
+            if [ "$failed" -eq 0 ]; then echo "- Result: pass"; else echo "- Result: **fail**"; fi
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          exit "$failed"
+
+  notify-failure:
+    name: Open or update the failure issue
+    needs: check
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # 只有這個 job 能寫 issue；檢查本身維持 contents: read。
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_TITLE: "Standby health 檢查失敗"
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      REPO_OWNER: ${{ github.repository_owner }}
+
+    steps:
+      - name: Open or comment on the standby health issue
+        run: |
+          set -euo pipefail
+          body="$(printf '@%s 每日主備健康檢查失敗（%s UTC）。\n\n執行紀錄：%s\n\n處理方式見 docs/RAILWAY_CLOUDRUN_DEPLOYMENT.md 第 5、10 節；恢復後請手動關閉這個 issue。' \
+            "$REPO_OWNER" "$(date -u '+%Y-%m-%d %H:%M')" "$RUN_URL")"
+          number="$(gh api "repos/${GITHUB_REPOSITORY}/issues?state=open&per_page=100" \
+            --jq '[.[] | select(.pull_request == null and .title == env.ISSUE_TITLE)][0].number // empty')"
+          if [ -n "$number" ]; then
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${number}/comments" -f body="$body" >/dev/null
+            echo "Commented on issue #${number}"
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues" -f title="$ISSUE_TITLE" -f body="$body" --jq '"Opened issue #\(.number)"'
+          fi

@@ -32,6 +32,15 @@ neon-backup-*.json
 # Sensitive configuration
 supabase_config.json
 
+# Deployment secrets (deploy/*.sh 讀寫的環境變數檔，絕不可提交)
+deploy/*.env
+deploy/*.env.yaml
+deploy/cloudrun.env.yaml
+*.dotenv
+
+# Generated credentials from google-github-actions/auth
+gha-creds-*.json
+
 # Temporary files
 /tmp
 .jev-workflow/
