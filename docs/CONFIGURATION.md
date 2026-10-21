@@ -99,6 +99,66 @@ LINE features require the full set below. Partial configuration is rejected at s
 - `LINE_MESSAGING_CHANNEL_ACCESS_TOKEN`
 - `LINE_MESSAGING_CHANNEL_SECRET`
 
+## Salary automation email
+
+The monthly salary automation emails the PDF report through exactly one transport.
+The choice is made in `getSalaryEmailTransport()` (`server/config/salaryAutomation.ts`)
+and shared by startup validation, the scheduler, and the admin config API:
+
+- `RESEND_API_KEY` set (non-blank) → Resend HTTPS API (`POST https://api.resend.com/emails`, port 443). `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, and `SMTP_PASS` are ignored.
+- `RESEND_API_KEY` empty → SMTP through Nodemailer, unchanged from earlier releases.
+
+| Variable | Transport | Notes |
+| --- | --- | --- |
+| `SALARY_AUTOMATION_EMAIL_TO` | Both | Comma-separated recipients; required when `SALARY_AUTOMATION_ENABLED=true` |
+| `RESEND_API_KEY` | Resend | Secret. Use a *Sending access* key restricted to the sending domain |
+| `RESEND_FROM` | Resend | Required. Sender such as `Salary System <payroll@mail.example.com>`; must be on a domain verified in Resend. `SMTP_FROM` is never used as a fallback |
+| `SMTP_HOST`, `SMTP_FROM` | SMTP | Both required for SMTP |
+| `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` | SMTP | Optional; port defaults to `587` |
+
+When `SALARY_AUTOMATION_ENABLED=true`, startup is refused (in every environment,
+as before) unless recipients are set and the active transport is complete:
+Resend needs `RESEND_FROM`; SMTP needs `SMTP_HOST` and `SMTP_FROM`.
+
+### 為什麼需要 Resend
+
+Railway 文件說明 Free、Trial、Hobby 方案停用 SMTP，僅 Pro 以上方案可用；
+官方建議所有方案都改用 HTTPS 寄信服務，並以 Resend 為首選
+（[Railway Outbound Networking](https://docs.railway.com/reference/outbound-networking)）。
+Zeabur 或本機若沒有設定 `RESEND_API_KEY`，行為與先前完全相同。
+
+### Resend 端準備
+
+1. 在 Resend 新增並驗證寄件網域（依指示加上 DNS 紀錄），`RESEND_FROM` 必須使用此網域的地址；
+   Resend 模式不會沿用 `SMTP_FROM`（通常是 Gmail 等未驗證網域）。
+   未驗證網域時 Resend 回傳 403 `validation_error`，且測試模式只能寄給帳號本人。
+2. 建立 API key，權限選 **Sending access** 並限定上述網域；不要使用 Full access。
+3. 將 `RESEND_API_KEY`、`RESEND_FROM` 設為平台 secret（不要寫進 repo 或 `.env.example`）。
+4. 部署後以管理員呼叫 `POST /api/salary-automation/test-email` 寄測試信，
+   `GET /api/salary-automation/config` 應顯示 `emailTransport: "resend"` 與 `smtpConfigured: true`。
+
+### 寄送行為
+
+- 單次請求逾時 30 秒；失敗時丟出 `SalaryEmailDeliveryError`，`code` 為 Resend 錯誤名稱
+  （無則 `resend_request_failed` / `resend_request_timeout` / `resend_network_error`），
+  訊息含 HTTP 狀態碼與 Resend 說明，會截斷並遮蔽 API key，不含信件內容與附件。
+  `POST /api/salary-automation/test-email` 遇到此錯誤回 502 `{ message, code }`（production 亦同），
+  月結失敗原因寫入 log 與月結紀錄的 `errorMessage`。
+- 月結報表帶 `Idempotency-Key: monthly-salary-report/<YYYY-MM>/<SHA-256>`，雜湊範圍是
+  薪資紀錄 id 與 revision、寄件人、收件人、主旨、內文與附件檔名，**不含 PDF 位元組**
+  （每次重產 PDF 位元組都不同）。Resend 對同一金鑰保留 24 小時：
+  - 同一次寄送遇到逾時、網路錯誤、429 `rate_limit_exceeded`、409 `concurrent_idempotent_requests`
+    或 5xx，會以完全相同的請求重試一次；若第一次其實已寄出，Resend 回傳原結果而不重寄。
+  - 排程重跑失敗的月結會沿用既有薪資紀錄，金鑰相同但 PDF 不同，Resend 回 409
+    `invalid_idempotent_request`。因金鑰只由邏輯內容算出，這代表同內容已在 24 小時內寄出：
+    不重試、不重寄，月結標記 `succeeded`，但 `emailSentAt` 留空、`errorMessage` 以
+    `resend_duplicate_suppressed:` 開頭註記，並寫一筆 warn log（code `resend_duplicate_suppressed`）。
+    測試信不受影響，仍回報錯誤。`daily_quota_exceeded` 等其他 4xx 不重試，月結標記失敗。
+  - 管理員「重新結算並寄送」（force）會使薪資紀錄 revision 遞增，金鑰不同，因此一定寄出。
+- 測試信不帶 Idempotency-Key，也不自動重試。
+- Resend 限制單封信（含 Base64 後附件）不超過 40MB、收件人最多 50 位
+  （[Send Email API](https://resend.com/docs/api-reference/emails/send-email)）。
+
 ## Production example
 
 ```env

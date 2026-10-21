@@ -1,15 +1,23 @@
 import type { Express } from 'express';
 import { z } from 'zod';
 
-import { getSalaryAutomationConfig, getSalaryAutomationConfigWarnings } from '../config/salaryAutomation';
+import {
+  getSalaryAutomationConfig,
+  getSalaryAutomationConfigWarnings,
+  getSalaryEmailTransport,
+  isSalaryEmailTransportConfigured,
+} from '../config/salaryAutomation';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { monthlySalaryRunRepository } from '../repositories/monthlySalaryRunRepository';
 import {
   getPreviousSalaryMonthTarget,
   runMonthlySalaryAutomation,
 } from '../services/monthlySalaryAutomation';
-import { sendSalaryAutomationTestEmail } from '../services/salaryEmail';
+import { SalaryEmailDeliveryError, sendSalaryAutomationTestEmail } from '../services/salaryEmail';
+import { createLogger } from '../utils/logger';
 import { handleRouteError } from './route-helpers';
+
+const log = createLogger('salary-automation');
 
 const runRequestSchema = z.object({
   year: z.number().int().min(2000).max(2100).optional(),
@@ -35,7 +43,9 @@ export function registerSalaryAutomationRoutes(app: Express): void {
       runMinute: config.runMinute,
       intervalMs: config.intervalMs,
       emailRecipients: config.emailRecipients,
-      smtpConfigured: Boolean(config.smtpHost && config.smtpFrom),
+      emailTransport: getSalaryEmailTransport(config),
+      // 欄位名稱沿用 smtpConfigured 以相容既有前端；語意是「目前的寄信通道（SMTP 或 Resend）已可用」。
+      smtpConfigured: isSalaryEmailTransportConfigured(config),
       publicBaseUrl: config.publicBaseUrl,
       chromiumConfigured: Boolean(config.chromiumExecutablePath),
       warnings: getSalaryAutomationConfigWarnings(config),
@@ -93,6 +103,16 @@ export function registerSalaryAutomationRoutes(app: Express): void {
         messageId: result.messageId,
       });
     } catch (err) {
+      if (err instanceof SalaryEmailDeliveryError) {
+        // 上游寄信服務失敗：訊息只含狀態碼與 Resend 錯誤說明（已遮蔽 key、不含內文），
+        // production 也回給管理員以便診斷；用 502 表示是外部服務錯誤而非請求有誤。
+        log.warn('Salary automation test email delivery failed', {
+          code: err.code,
+          providerStatus: err.providerStatus,
+          message: err.message,
+        });
+        return res.status(502).json({ message: err.message, code: err.code });
+      }
       return handleRouteError(err, res);
     }
   });
