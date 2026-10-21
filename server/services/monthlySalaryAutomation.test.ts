@@ -174,7 +174,10 @@ vi.mock('../repositories/salaryRepository', () => ({
 }));
 vi.mock('../routes/salary.routes', () => ({ buildCalculatedSalaryRecord }));
 vi.mock('./salaryPdf', () => ({ generateMonthlySalaryPdf }));
-vi.mock('./salaryEmail', () => ({ sendMonthlySalaryEmail }));
+vi.mock('./salaryEmail', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./salaryEmail')>()),
+  sendMonthlySalaryEmail,
+}));
 
 let moduleUnderTest: typeof import('./monthlySalaryAutomation');
 
@@ -343,6 +346,44 @@ describe('monthly salary automation', () => {
         recordCount: 1,
         pdfPath: '/tmp/salary.pdf',
         emailTo: ['payroll@example.com'],
+        emailSentAt: expect.any(Date),
+        errorMessage: null,
+      })
+    );
+  });
+
+  it('marks a Resend duplicate-suppressed email as succeeded without pretending it was sent now', async () => {
+    sendMonthlySalaryEmail.mockResolvedValueOnce({
+      recipients: ['payroll@example.com'],
+      duplicateSuppressed: true,
+    } as Awaited<ReturnType<typeof sendMonthlySalaryEmail>>);
+
+    const result = await moduleUnderTest.runMonthlySalaryAutomation({
+      target: { year: 2026, month: 4 },
+      config: {
+        enabled: true,
+        timeZone: 'UTC',
+        runHour: 1,
+        runMinute: 15,
+        intervalMs: 3600000,
+        emailRecipients: ['payroll@example.com'],
+        smtpPort: 587,
+        smtpSecure: false,
+        resendApiKey: 'synthetic-resend-key',
+        resendFrom: 'Payroll <payroll@mail.example.com>',
+      },
+    });
+
+    expect(result.status).toBe('succeeded');
+    expect(result.reason).toBe('resend_duplicate_suppressed');
+    expect(result.emailRecipients).toEqual(['payroll@example.com']);
+    expect(monthlySalaryRunRepositoryMock.updateMonthlySalaryRun).toHaveBeenLastCalledWith(
+      1,
+      expect.objectContaining({
+        status: 'succeeded',
+        emailTo: ['payroll@example.com'],
+        emailSentAt: null,
+        errorMessage: expect.stringMatching(/^resend_duplicate_suppressed: .*not resent/),
       })
     );
   });

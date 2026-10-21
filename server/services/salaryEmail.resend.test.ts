@@ -15,6 +15,7 @@ vi.mock('nodemailer', () => ({ default: { createTransport }, createTransport }))
 
 import {
   buildMonthlyReportIdempotencyKey,
+  RESEND_DUPLICATE_SUPPRESSED_CODE,
   RESEND_RETRY_DELAY_MS,
   RESEND_SEND_EMAIL_URL,
   SalaryEmailDeliveryError,
@@ -258,16 +259,38 @@ describe('salary email through Resend HTTPS API', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it.each([
-    [429, 'daily_quota_exceeded'],
-    [409, 'invalid_idempotent_request'],
-  ])('does not retry HTTP %i %s', async (status, name) => {
+  it('does not retry HTTP 429 daily_quota_exceeded', async () => {
     const { pdfPath } = await syntheticPdf();
-    fetchMock.mockImplementation(async () => resendError(status, name));
+    fetchMock.mockImplementation(async () => resendError(429, 'daily_quota_exceeded'));
 
     await expect(monthly(pdfPath)).rejects.toMatchObject({
-      code: name, providerStatus: status, providerErrorName: name, retryable: false,
+      code: 'daily_quota_exceeded', providerStatus: 429, providerErrorName: 'daily_quota_exceeded', retryable: false,
     });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a monthly 409 invalid_idempotent_request as already sent without retrying', async () => {
+    const { pdfPath } = await syntheticPdf();
+    fetchMock.mockImplementation(async () => resendError(409, 'invalid_idempotent_request'));
+    const warnings: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warnings.push(args.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' '));
+    });
+
+    await expect(monthly(pdfPath)).resolves.toEqual({
+      recipients: ['synthetic-a@example.test', 'synthetic-b@example.test'],
+      duplicateSuppressed: true,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(warnings.join('\n')).toContain(RESEND_DUPLICATE_SUPPRESSED_CODE);
+    expect(warnings.join('\n')).not.toContain(SYNTHETIC_API_KEY);
+  });
+
+  it('keeps 409 invalid_idempotent_request as an error for the test email', async () => {
+    fetchMock.mockImplementation(async () => resendError(409, 'invalid_idempotent_request'));
+
+    await expect(sendSalaryAutomationTestEmail({ config: resendConfig() }))
+      .rejects.toMatchObject({ code: 'invalid_idempotent_request', providerStatus: 409 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -318,7 +341,9 @@ describe('salary email through Resend HTTPS API', () => {
     }));
     const output: string[] = [];
     for (const method of ['log', 'info', 'warn', 'error'] as const) {
-      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => { output.push(args.map(String).join(' ')); });
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        output.push(args.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' '));
+      });
     }
 
     const error = await monthly(pdfPath).catch((caught: unknown) => caught);

@@ -13,7 +13,10 @@ import {
   isSalaryEmailTransportConfigured,
   type SalaryAutomationConfig,
 } from '../config/salaryAutomation';
+import { createLogger } from '../utils/logger';
 import type { SalaryReportTarget } from './salaryPdf';
+
+const log = createLogger('salary-email');
 
 // Resend 寄信 API 規格：https://resend.com/docs/api-reference/emails/send-email
 export const RESEND_SEND_EMAIL_URL = 'https://api.resend.com/emails';
@@ -22,12 +25,21 @@ export const RESEND_RETRY_DELAY_MS = 2_000;
 // Resend 拒絕沒有 User-Agent 的請求（官方 API introduction）。
 const RESEND_USER_AGENT = 'barcode-scan-v3-salary-email';
 const RESEND_ERROR_DETAIL_MAX_LENGTH = 300;
+/** 月結信經冪等比對判定 24 小時內已寄出同內容、本次未重寄時的代碼（log 與月結紀錄共用）。 */
+export const RESEND_DUPLICATE_SUPPRESSED_CODE = 'resend_duplicate_suppressed';
 
 export interface SendMonthlySalaryEmailOptions {
   target: SalaryReportTarget;
   records: SalaryRecord[];
   pdfPath: string;
   config?: SalaryAutomationConfig;
+}
+
+export interface SalaryEmailSendResult {
+  recipients: string[];
+  messageId?: string;
+  /** true：Resend 冪等比對判定同內容已寄出，本次沒有寄信（messageId 為空）。 */
+  duplicateSuppressed?: boolean;
 }
 
 export interface SendSalaryAutomationTestEmailOptions {
@@ -278,7 +290,8 @@ async function sendWithResend(
  * 收件人 + 主旨 + 內文 + 附件檔名」雜湊：
  * - 同一次呼叫內的重試：body 完全相同；若第一次其實已被接受，Resend 回傳原結果，不會重寄。
  * - 排程重跑失敗的月結（沿用既有紀錄、revision 不變）：金鑰相同但 PDF 位元組不同，
- *   Resend 在 24 小時內回 409 invalid_idempotent_request 擋下，不會重寄；此錯誤不重試。
+ *   Resend 在 24 小時內回 409 invalid_idempotent_request。因金鑰由邏輯內容算出，這代表同內容
+ *   已寄出：sendMonthlySalaryEmail 視為已寄出（duplicateSuppressed），不重試也不重寄。
  * - 管理員 force 重新結算：紀錄 revision 遞增（或金額、收件人改變），金鑰不同，正常寄出。
  */
 export function buildMonthlyReportIdempotencyKey(
@@ -316,7 +329,7 @@ export async function sendMonthlySalaryEmail({
   records,
   pdfPath,
   config = getSalaryAutomationConfig(),
-}: SendMonthlySalaryEmailOptions): Promise<{ recipients: string[]; messageId?: string }> {
+}: SendMonthlySalaryEmailOptions): Promise<SalaryEmailSendResult> {
   if (!isSalaryEmailConfigured(config)) {
     throw new Error(
       'Salary email is not configured. Set SALARY_AUTOMATION_EMAIL_TO and either ' +
@@ -337,14 +350,29 @@ export async function sendMonthlySalaryEmail({
       },
     ],
   };
-  const messageId = await deliverSalaryEmail(config, message, {
-    idempotencyKey: buildMonthlyReportIdempotencyKey(target, records, message),
-  });
+  try {
+    const messageId = await deliverSalaryEmail(config, message, {
+      idempotencyKey: buildMonthlyReportIdempotencyKey(target, records, message),
+    });
 
-  return {
-    recipients: config.emailRecipients,
-    messageId,
-  };
+    return {
+      recipients: config.emailRecipients,
+      messageId,
+    };
+  } catch (error) {
+    // Resend 回 invalid_idempotent_request = 24 小時內已用同一把金鑰成功寄出；金鑰只由邏輯內容
+    // 算出，所以同內容的月結已寄出（只差重新產生的 PDF 位元組），不再重寄也不再重試。
+    if (error instanceof SalaryEmailDeliveryError && error.providerErrorName === 'invalid_idempotent_request') {
+      log.warn('Monthly salary email not resent; identical report already sent within 24 hours', {
+        code: RESEND_DUPLICATE_SUPPRESSED_CODE,
+        target,
+        providerStatus: error.providerStatus,
+      });
+      return { recipients: config.emailRecipients, duplicateSuppressed: true };
+    }
+
+    throw error;
+  }
 }
 
 export async function sendSalaryAutomationTestEmail({

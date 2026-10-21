@@ -150,8 +150,10 @@ Zeabur 或本機若沒有設定 `RESEND_API_KEY`，行為與先前完全相同�
   - 同一次寄送遇到逾時、網路錯誤、429 `rate_limit_exceeded`、409 `concurrent_idempotent_requests`
     或 5xx，會以完全相同的請求重試一次；若第一次其實已寄出，Resend 回傳原結果而不重寄。
   - 排程重跑失敗的月結會沿用既有薪資紀錄，金鑰相同但 PDF 不同，Resend 回 409
-    `invalid_idempotent_request` 而不重寄；此錯誤與 `daily_quota_exceeded` 等不重試，
-    月結會標記失敗並保留原因，24 小時後金鑰到期才會再寄。
+    `invalid_idempotent_request`。因金鑰只由邏輯內容算出，這代表同內容已在 24 小時內寄出：
+    不重試、不重寄，月結標記 `succeeded`，但 `emailSentAt` 留空、`errorMessage` 以
+    `resend_duplicate_suppressed:` 開頭註記，並寫一筆 warn log（code `resend_duplicate_suppressed`）。
+    測試信不受影響，仍回報錯誤。`daily_quota_exceeded` 等其他 4xx 不重試，月結標記失敗。
   - 管理員「重新結算並寄送」（force）會使薪資紀錄 revision 遞增，金鑰不同，因此一定寄出。
 - 測試信不帶 Idempotency-Key，也不自動重試。
 - Resend 限制單封信（含 Base64 後附件）不超過 40MB、收件人最多 50 位

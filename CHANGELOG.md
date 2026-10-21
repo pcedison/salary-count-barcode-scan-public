@@ -12,7 +12,7 @@ This repository follows Keep a Changelog style and uses the clean-room public hi
 - 歷史薪資金額更正支援既有扣款的說明欄位，移除誤植扣款時可保存，並保留版本與更正歷程檢查。
 - 薪資列印移除重複的福利津貼合計列，保留津貼明細、舊資料差異提示與原結算金額。
 - 驗證錯誤改以繁體中文提示。
-- 薪資月結 Email 新增 Resend HTTPS API 寄送：設定 `RESEND_API_KEY` 與必填寄件人 `RESEND_FROM`（不沿用 `SMTP_FROM`）即改走 Resend，供 Railway Hobby 等封鎖 SMTP 的平台使用；未設定時維持原 SMTP 行為。啟動驗證、排程與管理介面的寄信就緒判斷一致，Resend 模式不需 `SMTP_HOST`；月結報表帶不含 PDF 位元組的穩定 Idempotency-Key，並在暫時性失敗時以相同請求重試一次；寄信錯誤帶 `code`，測試信失敗回 502 可診斷訊息，且不含 API key 與信件內容。
+- 薪資月結 Email 新增 Resend HTTPS API 寄送：設定 `RESEND_API_KEY` 與必填寄件人 `RESEND_FROM`（不沿用 `SMTP_FROM`）即改走 Resend，供 Railway Hobby 等封鎖 SMTP 的平台使用；未設定時維持原 SMTP 行為。啟動驗證、排程與管理介面的寄信就緒判斷一致，Resend 模式不需 `SMTP_HOST`；月結報表帶不含 PDF 位元組的穩定 Idempotency-Key，並在暫時性失敗時以相同請求重試一次，Resend 判定同內容已寄出時月結標記成功並註記 `resend_duplicate_suppressed`、不重寄；寄信錯誤帶 `code`，測試信失敗回 502 可診斷訊息，且不含 API key 與信件內容。
 
 ## [2.2.1] - 2026-08-01
 

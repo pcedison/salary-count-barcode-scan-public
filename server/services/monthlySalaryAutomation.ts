@@ -20,7 +20,7 @@ import { monthlySalaryRunRepository } from '../repositories/monthlySalaryRunRepo
 import { salaryRepository, type SalaryRecordWrite } from '../repositories/salaryRepository';
 import { createLogger } from '../utils/logger';
 import { buildCalculatedSalaryRecord } from '../routes/salary.routes';
-import { sendMonthlySalaryEmail } from './salaryEmail';
+import { RESEND_DUPLICATE_SUPPRESSED_CODE, sendMonthlySalaryEmail } from './salaryEmail';
 import { generateMonthlySalaryPdf, type SalaryReportTarget } from './salaryPdf';
 
 const log = createLogger('salary-automation');
@@ -371,6 +371,8 @@ export async function runMonthlySalaryAutomation(
 
     const pdfPath = await generateMonthlySalaryPdf(target, persistedRecords, config);
     let emailRecipients: string[] = [];
+    let emailSentAt: Date | null = null;
+    let emailNote: string | null = null;
 
     if (sendEmail) {
       if (!isSalaryEmailConfigured(config)) {
@@ -384,6 +386,14 @@ export async function runMonthlySalaryAutomation(
         config,
       });
       emailRecipients = emailResult.recipients;
+      if (emailResult.duplicateSuppressed) {
+        // 不偽裝成一般寄出：emailSentAt 留空，並在 errorMessage 註記是冪等比對判定已寄出。
+        emailNote =
+          `${RESEND_DUPLICATE_SUPPRESSED_CODE}: Resend idempotency check matched an identical report ` +
+          'sent within the last 24 hours; email was not resent.';
+      } else {
+        emailSentAt = new Date();
+      }
     }
 
     const updatedRun = run
@@ -393,8 +403,8 @@ export async function runMonthlySalaryAutomation(
           skippedCount: skippedEmployees.length,
           pdfPath,
           emailTo: emailRecipients,
-          emailSentAt: sendEmail ? new Date() : null,
-          errorMessage: null,
+          emailSentAt,
+          errorMessage: emailNote,
           completedAt: new Date(),
         })
       : undefined;
@@ -405,11 +415,13 @@ export async function runMonthlySalaryAutomation(
       skippedCount: skippedEmployees.length,
       pdfPath,
       emailRecipients,
+      emailDuplicateSuppressed: emailNote !== null,
     });
 
     return {
       target,
       status: 'succeeded',
+      ...(emailNote ? { reason: RESEND_DUPLICATE_SUPPRESSED_CODE } : {}),
       run: updatedRun ?? run,
       calculatedRecords,
       persistedRecords,
