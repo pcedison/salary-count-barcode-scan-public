@@ -13,8 +13,9 @@ Node 24）仍以 [ZEABUR_BUILD_CONTRACT.md](ZEABUR_BUILD_CONTRACT.md) 為準。
 | 方案／區域 | Hobby | `asia-east1` |
 | 網址 | `https://hr.clmcolor.com`（自訂網域） | `https://salary-scan-standby-<專案編號>.asia-east1.run.app` |
 | 平常狀態 | 接所有流量（LINE webhook、LIFF、管理介面） | 不接流量；min-instances 0，沒有請求時不收費 |
-| 建置 | repo 根目錄 `Dockerfile`（`railway.json` 指定） | 同一個 `Dockerfile`（`gcloud run deploy --source`） |
+| 建置 | repo 根目錄 `Dockerfile`（`railway up` 上傳後偵測到即使用） | 同一個 `Dockerfile`（`gcloud run deploy --source`） |
 | 健康檢查 | 部署時打 `/ready`，最多 300 秒 | 啟動檢查打 `/ready`（每 3 秒、最多約 120 秒） |
+| 程式內備份與稽核 log | Railway volume `/data`（重新部署不會消失） | 容器內暫存（不掛 volume，重啟即消失） |
 | 薪資自動化 | `SALARY_AUTOMATION_ENABLED=true` | 一律 `false`，只有接手時才視情況打開 |
 | 部署方式 | `deploy/deploy-all.sh`（關閉 GitHub 自動部署） | `deploy/deploy-all.sh` |
 
@@ -52,7 +53,6 @@ Node 24）仍以 [ZEABUR_BUILD_CONTRACT.md](ZEABUR_BUILD_CONTRACT.md) 為準。
 | `deploy/lib/envtool.py` | 解析 `.env`、合併變數、產生 `--env-vars-file` YAML | 由 `cloudrun-env.sh` 呼叫 |
 | `.github/workflows/deploy.yml` | 手動觸發的部署 workflow | GitHub Actions |
 | `.github/workflows/standby-health.yml` | 每天檢查主備健康與版本一致 | GitHub Actions |
-| `railway.json` | Railway config as code | Railway |
 | `.gcloudignore` | `--source` 上傳時排除的檔案 | gcloud |
 | `client/.env.production` | `VITE_LIFF_ID`（打包時寫進前端，非機密） | 建置 |
 
@@ -60,9 +60,15 @@ Node 24）仍以 [ZEABUR_BUILD_CONTRACT.md](ZEABUR_BUILD_CONTRACT.md) 為準。
 
 ### 3.1 Railway
 
-1. 建立 project 與 service（Hobby）。repo 根目錄的 `railway.json` 會指定：
-   Dockerfile 建置、健康檢查 `/ready`（300 秒）、失敗時重啟最多 10 次、
-   舊部署收到 SIGTERM 後保留 15 秒（程式本身 10 秒內會優雅關閉）。
+1. 建立 project 與 service（Hobby）。repo 根目錄有 `Dockerfile`，Railway 會用它建置。
+   Railway 的 Config as Code（`railway.json`／`railway.toml`）已棄用，**新服務不會讀取**，
+   且 2026-12-01 起完全停止讀取（[Infrastructure as Code](https://docs.railway.com/infrastructure-as-code)），
+   所以下列設定一律在主控台或服務變數設定：
+   - Settings → Deploy → Healthcheck Path：`/ready`
+   - 變數 `RAILWAY_HEALTHCHECK_TIMEOUT_SEC=300`（健康檢查最多等 300 秒）
+   - Settings → Deploy → Restart Policy：On Failure（最多重試 10 次）
+   - 變數 `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=15`（舊部署收到 SIGTERM 後保留 15 秒；程式本身 10 秒內會優雅關閉）
+   - Volume 與 `RAILWAY_RUN_UID=0`：見 3.5 節
 2. **關閉 GitHub 自動部署**：Service → Settings → Source，不連結 GitHub repo
    （已連結就 Disconnect）。所有部署都走 `railway up`，確保與 Cloud Run 是同一個 commit。
 3. Variables：從 Zeabur 複製，並注意：
@@ -71,7 +77,8 @@ Node 24）仍以 [ZEABUR_BUILD_CONTRACT.md](ZEABUR_BUILD_CONTRACT.md) 為準。
    - 移除 `NPM_CONFIG_PRODUCTION`、`npm_config_production`、`NPM_CONFIG_OMIT`、`npm_config_omit`。
    - `ALLOWED_ORIGINS`、`LINE_LOGIN_CALLBACK_URL`（`https://hr.clmcolor.com/api/line/callback`）、
      `SALARY_AUTOMATION_PUBLIC_BASE_URL` 指向主機網址；`TRUST_PROXY=true`、`SESSION_SECURE=true`。
-   - 不要設 `APP_VERSION`；`APP_RUNTIME_DIR`／`APP_BACKUP_DIR`／`APP_LOG_DIR` 不可指向 `/app` 底下。
+   - 不要設 `APP_VERSION`；`APP_RUNTIME_DIR`／`APP_BACKUP_DIR`／`APP_LOG_DIR` 不可指向 `/app` 底下
+     （Railway 主機改用 3.5 節的 volume 路徑）。
 4. 自訂網域 `hr.clmcolor.com`：Settings → Networking 加入網域，依指示設定 DNS。
 5. Project token：Project Settings → Tokens，綁定正式環境建立 token，只放進 GitHub secret
    `RAILWAY_TOKEN`。project token 已綁定專案與環境，`railway up` 只需指定 `--service`。
@@ -163,6 +170,63 @@ Settings → Secrets and variables → Actions：
 | Variable | `PRIMARY_URL` | `https://hr.clmcolor.com` |
 | Variable | `STANDBY_URL` | bootstrap 印出的 Cloud Run 網址（每日健康檢查用） |
 
+### 3.5 Railway volume（程式內備份與稽核 log）
+
+Supabase 免費方案不提供資料庫備份，目前唯一的備份是程式每天寫進 `APP_BACKUP_DIR` 的 JSON 檔
+（加密，每類最多保留 7 份）。預設路徑在容器內（`/home/node/.local/state/barcode_scan_V3/`），
+重新部署就消失，所以 Railway 主機要掛一個 volume 專放備份與稽核 log。
+
+設定步驟（第一次用 `deploy-all.sh` 部署 Railway 之前完成）：
+
+1. Railway 服務 → 新增 Volume，掛載路徑 `/data`。
+2. 服務變數：
+
+   | 變數 | 值 | 原因 |
+   | --- | --- | --- |
+   | `APP_BACKUP_DIR` | `/data/backups` | 備份寫進 volume |
+   | `APP_LOG_DIR` | `/data/logs` | 稽核 log 寫進 volume |
+   | `RAILWAY_RUN_UID` | `0` | Railway 的 volume 以 root 擁有，非 root 映像需要這個設定（[Volumes](https://docs.railway.com/guides/volumes)） |
+
+3. 部署後確認（見下方）。
+
+`RAILWAY_RUN_UID=0` 只讓容器以 root「啟動」，應用程式仍以 `node` 執行：映像的進入點
+`scripts/container-entrypoint.sh` 在以 root 啟動時，只會在 volume 掛載路徑
+（Railway 提供的 `RAILWAY_VOLUME_MOUNT_PATH`）底下建立 `APP_RUNTIME_DIR`／`APP_BACKUP_DIR`／
+`APP_LOG_DIR` 並交給 `node`（權限 700），把 `HOME` 設回 `/home/node`，再用 `setpriv` 降權
+（含 `no_new_privs`）後啟動程式。路徑不在 volume 底下時只記錄警告、不改權限。
+以 `node` 啟動時（Cloud Run、CI）直接執行，行為與先前相同。CI 的 docker-smoke 會以 root 加上
+root 擁有的 volume 實際啟動一次，檢查程式以 `node` 執行且兩個目錄可寫。
+
+`/data/backups`、`/data/logs` 在工作目錄 `/app` 之外，符合 `envValidator` 的
+「正式環境備份與 log 路徑不得在 workspace 內」檢查（有單元測試涵蓋）。
+
+確認備份有寫進 volume：
+
+- 部署日誌：啟動時會出現 `Delaying startup daily backup by 600000 ms`，約 10 分鐘後出現
+  `daily backup created at /data/backups/daily/backup-<時間>.json` 與 `Created daily backup backup-<時間>`。
+  之後每 24 小時一次。
+- 檔案：`railway ssh --service <服務> ls -la /data/backups/daily /data/logs`。
+- API：以 SUPER 管理員登入後開 `https://hr.clmcolor.com/api/dashboard/backups`，回傳的清單應包含上述檔案。
+- 重新部署一次後再檢查：舊的備份檔仍在；24 小時內重新部署時，啟動 10 分鐘後的日誌會是
+  `Skipping daily backup because a fresh daily backup already exists`（程式從備份目錄讀到既有檔案，
+  證明 volume 有保留）。
+
+注意與限制：
+
+- **掛 volume 的服務每次部署都會有短暫停機**：Railway 不允許兩個部署同時掛同一個 volume，
+  即使設了健康檢查也一樣（[Healthchecks and Restarts](https://docs.railway.com/guides/healthchecks-and-restarts)）。
+  `deploy-all.sh` 的部署後驗證會重試，涵蓋這段時間；也請避開上班打卡時段部署。
+- 掛 volume 的服務不能使用多個 replica（[Volumes reference](https://docs.railway.com/reference/volumes)）。
+- Hobby 方案 volume 預設 5 GB，可線上擴充、不能縮小；依實際使用量計費，每 GB 每秒 US$0.00000006
+  （約每 GB 每月 US$0.16），從每月 US$5 的使用額度扣（[Pricing](https://railway.com/pricing)）。
+  備份檔很小，正常用量遠低於 1 GB。
+- 這**只防止重新部署造成的遺失**，不防 Railway 帳號、專案被刪或區域層級的災難，也不能取代資料庫本身的備份。
+  Railway 對 volume 另有手動／排程備份（每日保留 6 天、每週 27 天、每月 89 天；
+  [Backups](https://docs.railway.com/reference/backups)），同樣存放在 Railway 內，有相同限制；
+  文件未說明 Hobby 是否提供。要防帳號或區域災難，需定期把備份複製到 Railway 以外的地方（另案）。
+- Cloud Run 備援**不掛 volume**：容器檔案系統在記憶體中且不持久，接手期間產生的程式內備份會占用
+  記憶體並在 instance 重啟後消失。接手期間若需要備份，請在 Railway 恢復後手動建立一次。
+
 ## 4. 平常怎麼部署
 
 合併到 `main` 之後：
@@ -182,7 +246,7 @@ Settings → Secrets and variables → Actions：
    新 revision 通過 `/ready` 才接流量，失敗時舊 revision 繼續服務，Railway 也不會被動到。
    部署後確認最新 revision 已就緒、100% 流量指向它、`commit-sha` label 等於本次 commit。
 3. **再部署 Railway**（`railway up --ci --service …`）。`--ci` 會等到部署狀態 SUCCESS
-   （健康檢查通過並切換流量）才回 0，FAILED／CRASHED 回 1。
+   （健康檢查通過並切換流量）才回 0，FAILED／CRASHED 回 1。因為掛了 volume，切換時主機會短暫停機（3.5 節）。
 4. 對兩邊打 `/live` 與 `/api/health`，重試到 120 秒（涵蓋 Cloud Run 冷啟動），兩邊 version
    都要等於 `package.json`，否則 workflow 失敗。
 
@@ -244,8 +308,8 @@ Cloud Run 先部署的另一個好處：主機故障、Railway 無法部署時�
      --update-env-vars SALARY_AUTOMATION_ENABLED=true
    ```
 
-6. Cloud Run 的檔案系統在記憶體中、不持久：程式內的 JSON 備份會占用記憶體，instance 重啟就消失。
-   接手期間以資料庫平台的備份為準。
+6. Cloud Run 不掛 volume，檔案系統在記憶體中、不持久：程式內的 JSON 備份會占用記憶體，
+   instance 重啟就消失（3.5 節）。Railway 恢復後先手動建立一次備份。
 
 ### 6.2 切回主機
 
@@ -301,6 +365,7 @@ Cloud Run 先部署的另一個好處：主機故障、Railway 無法部署時�
 - `--source` 每次部署會用 Cloud Build 建置，並在 Artifact Registry 留下映像。映像含 Chromium，
   每版數百 MB，平常主要的費用就是這裡的儲存空間，所以清理規則只保留 2 版。
   原始碼壓縮檔會留在 `run-sources-<專案>-asia-east1` bucket，需要時可在 Cloud Storage 設生命週期規則刪除舊檔。
+- Railway volume 依用量計費（3.5 節）。
 - 預算警示見 3.2 第 5 點。
 
 ## 10. 疑難排解
