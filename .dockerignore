@@ -34,7 +34,10 @@ docs
 *.tar.gz
 
 barcode-scanner.service
+deploy
 deploy.sh
+*.dotenv
+gha-creds-*.json
 disable-supabase.sh
 enable-supabase.sh
 package-for-deployment.sh
