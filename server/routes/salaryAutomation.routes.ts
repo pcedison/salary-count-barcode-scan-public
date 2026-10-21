@@ -1,7 +1,12 @@
 import type { Express } from 'express';
 import { z } from 'zod';
 
-import { getSalaryAutomationConfig, getSalaryAutomationConfigWarnings } from '../config/salaryAutomation';
+import {
+  getSalaryAutomationConfig,
+  getSalaryAutomationConfigWarnings,
+  getSalaryEmailTransport,
+  isSalaryEmailTransportConfigured,
+} from '../config/salaryAutomation';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { monthlySalaryRunRepository } from '../repositories/monthlySalaryRunRepository';
 import {
@@ -35,7 +40,9 @@ export function registerSalaryAutomationRoutes(app: Express): void {
       runMinute: config.runMinute,
       intervalMs: config.intervalMs,
       emailRecipients: config.emailRecipients,
-      smtpConfigured: Boolean(config.smtpHost && config.smtpFrom),
+      emailTransport: getSalaryEmailTransport(config),
+      // 欄位名稱沿用 smtpConfigured 以相容既有前端；語意是「目前的寄信通道（SMTP 或 Resend）已可用」。
+      smtpConfigured: isSalaryEmailTransportConfigured(config),
       publicBaseUrl: config.publicBaseUrl,
       chromiumConfigured: Boolean(config.chromiumExecutablePath),
       warnings: getSalaryAutomationConfigWarnings(config),

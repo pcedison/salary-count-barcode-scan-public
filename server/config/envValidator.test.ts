@@ -41,6 +41,12 @@ function buildEnv(overrides: Record<string, string | undefined> = {}): NodeJS.Pr
     LINE_LOGIN_CALLBACK_URL: undefined,
     LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: undefined,
     LINE_MESSAGING_CHANNEL_SECRET: undefined,
+    SALARY_AUTOMATION_ENABLED: undefined,
+    SALARY_AUTOMATION_EMAIL_TO: undefined,
+    SMTP_HOST: undefined,
+    SMTP_FROM: undefined,
+    RESEND_API_KEY: undefined,
+    RESEND_FROM: undefined,
     ...overrides
   };
 }
@@ -267,5 +273,57 @@ describe('validateEnv', () => {
 
     expect(validated.NODE_ENV).toBe('production');
     expect(validated.APP_RUNTIME_DIR).toContain('barcode-scan-runtime');
+  });
+
+  describe('salary automation email transport', () => {
+    const enabled = { SALARY_AUTOMATION_ENABLED: 'true', SALARY_AUTOMATION_EMAIL_TO: 'payroll@example.test' };
+
+    it('keeps rejecting enabled automation when neither SMTP nor Resend is configured', () => {
+      process.env = buildEnv(enabled);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(() => validateEnv()).toThrow('SMTP_HOST and SMTP_FROM are required when salary automation is enabled');
+    });
+
+    it('accepts SMTP configuration exactly as before', () => {
+      process.env = buildEnv({ ...enabled, SMTP_HOST: 'smtp.example.test', SMTP_FROM: 'payroll@example.test' });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(validateEnv().SMTP_HOST).toBe('smtp.example.test');
+    });
+
+    it('accepts Resend without SMTP_HOST', () => {
+      process.env = buildEnv({
+        ...enabled,
+        RESEND_API_KEY: 'synthetic-resend-key',
+        RESEND_FROM: 'Payroll <payroll@mail.example.test>',
+      });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(validateEnv().RESEND_FROM).toBe('Payroll <payroll@mail.example.test>');
+    });
+
+    it('accepts SMTP_FROM as the Resend sender fallback', () => {
+      process.env = buildEnv({ ...enabled, RESEND_API_KEY: 'synthetic-resend-key', SMTP_FROM: 'payroll@mail.example.test' });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(validateEnv().NODE_ENV).toBe('test');
+    });
+
+    it('rejects Resend without any sender address', () => {
+      process.env = buildEnv({ ...enabled, RESEND_API_KEY: 'synthetic-resend-key' });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(() => validateEnv()).toThrow(
+        'RESEND_FROM or SMTP_FROM is required when salary automation is enabled with RESEND_API_KEY'
+      );
+    });
+
+    it('does not require any email transport while automation is disabled', () => {
+      process.env = buildEnv({ RESEND_API_KEY: 'synthetic-resend-key' });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(validateEnv().SALARY_AUTOMATION_ENABLED).toBeUndefined();
+    });
   });
 });

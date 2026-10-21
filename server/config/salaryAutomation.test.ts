@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
   getSalaryAutomationConfig,
   getSalaryAutomationConfigWarnings,
+  getSalaryEmailSender,
+  getSalaryEmailTransport,
   isSalaryEmailConfigured,
+  isSalaryEmailTransportConfigured,
   parseEmailRecipients,
 } from './salaryAutomation';
 
@@ -40,5 +43,65 @@ describe('salary automation config', () => {
       'SMTP_HOST is not configured.',
       'SMTP_FROM is not configured.',
     ]);
+  });
+
+  it('keeps SMTP as the transport when RESEND_API_KEY is absent or blank', () => {
+    for (const RESEND_API_KEY of [undefined, '', '   ']) {
+      const config = getSalaryAutomationConfig({
+        RESEND_API_KEY,
+        RESEND_FROM: 'Payroll <payroll@mail.example.com>',
+        SALARY_AUTOMATION_EMAIL_TO: 'payroll@example.com',
+      });
+
+      expect(getSalaryEmailTransport(config)).toBe('smtp');
+      expect(isSalaryEmailConfigured(config)).toBe(false);
+    }
+  });
+
+  it('treats Resend as configured without SMTP_HOST', () => {
+    const config = getSalaryAutomationConfig({
+      SALARY_AUTOMATION_ENABLED: 'true',
+      SALARY_AUTOMATION_EMAIL_TO: 'payroll@example.com',
+      RESEND_API_KEY: ' synthetic-resend-key ',
+      RESEND_FROM: 'Payroll <payroll@mail.example.com>',
+    });
+
+    expect(config.resendApiKey).toBe('synthetic-resend-key');
+    expect(getSalaryEmailTransport(config)).toBe('resend');
+    expect(getSalaryEmailSender(config)).toBe('Payroll <payroll@mail.example.com>');
+    expect(isSalaryEmailTransportConfigured(config)).toBe(true);
+    expect(isSalaryEmailConfigured(config)).toBe(true);
+    expect(getSalaryAutomationConfigWarnings(config)).toEqual([]);
+  });
+
+  it('falls back to SMTP_FROM as the Resend sender and warns when no sender exists', () => {
+    const withSmtpFrom = getSalaryAutomationConfig({
+      SALARY_AUTOMATION_EMAIL_TO: 'payroll@example.com',
+      RESEND_API_KEY: 'synthetic-resend-key',
+      SMTP_FROM: 'Payroll <payroll@mail.example.com>',
+    });
+    expect(getSalaryEmailSender(withSmtpFrom)).toBe('Payroll <payroll@mail.example.com>');
+    expect(isSalaryEmailConfigured(withSmtpFrom)).toBe(true);
+
+    const withoutSender = getSalaryAutomationConfig({
+      SALARY_AUTOMATION_ENABLED: 'true',
+      RESEND_API_KEY: 'synthetic-resend-key',
+    });
+    expect(isSalaryEmailTransportConfigured(withoutSender)).toBe(false);
+    expect(isSalaryEmailConfigured(withoutSender)).toBe(false);
+    expect(getSalaryAutomationConfigWarnings(withoutSender)).toEqual([
+      'SALARY_AUTOMATION_EMAIL_TO is not configured.',
+      'RESEND_FROM (or SMTP_FROM) is not configured.',
+    ]);
+  });
+
+  it('still requires recipients in Resend mode', () => {
+    const config = getSalaryAutomationConfig({
+      RESEND_API_KEY: 'synthetic-resend-key',
+      RESEND_FROM: 'Payroll <payroll@mail.example.com>',
+    });
+
+    expect(isSalaryEmailTransportConfigured(config)).toBe(true);
+    expect(isSalaryEmailConfigured(config)).toBe(false);
   });
 });

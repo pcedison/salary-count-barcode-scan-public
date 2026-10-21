@@ -11,6 +11,10 @@ export interface SalaryAutomationConfig {
   smtpUser?: string;
   smtpPass?: string;
   smtpFrom?: string;
+  /** 設定後改走 Resend HTTPS API 寄信（Railway Hobby 等封鎖 SMTP 的平台需要）。 */
+  resendApiKey?: string;
+  /** Resend 寄件人；未設定時沿用 SMTP_FROM。必須屬於 Resend 已驗證的網域。 */
+  resendFrom?: string;
   publicBaseUrl?: string;
   chromiumExecutablePath?: string;
 }
@@ -60,9 +64,36 @@ export function getSalaryAutomationConfig(env: NodeJS.ProcessEnv = process.env):
     smtpUser: env.SMTP_USER?.trim() || undefined,
     smtpPass: env.SMTP_PASS?.trim() || undefined,
     smtpFrom: env.SMTP_FROM?.trim() || undefined,
+    resendApiKey: env.RESEND_API_KEY?.trim() || undefined,
+    resendFrom: env.RESEND_FROM?.trim() || undefined,
     publicBaseUrl: env.SALARY_AUTOMATION_PUBLIC_BASE_URL?.trim() || undefined,
     chromiumExecutablePath: env.CHROMIUM_EXECUTABLE_PATH?.trim() || undefined,
   };
+}
+
+export type SalaryEmailTransport = 'resend' | 'smtp';
+
+/**
+ * 寄信方式的唯一判斷點：有 RESEND_API_KEY 就走 Resend HTTPS API，否則維持 SMTP。
+ * 啟動驗證、自動化流程與管理介面都必須透過這裡判斷，避免各處規則不一致。
+ */
+export function getSalaryEmailTransport(config: SalaryAutomationConfig): SalaryEmailTransport {
+  return config.resendApiKey ? 'resend' : 'smtp';
+}
+
+export function getSalaryEmailSender(config: SalaryAutomationConfig): string | undefined {
+  return getSalaryEmailTransport(config) === 'resend'
+    ? config.resendFrom ?? config.smtpFrom
+    : config.smtpFrom;
+}
+
+/** 寄件通道本身是否可用（不含收件人）；Resend 模式不需要 SMTP_HOST。 */
+export function isSalaryEmailTransportConfigured(config = getSalaryAutomationConfig()): boolean {
+  if (getSalaryEmailTransport(config) === 'resend') {
+    return Boolean(getSalaryEmailSender(config));
+  }
+
+  return Boolean(config.smtpHost && config.smtpFrom);
 }
 
 export function getSalaryAutomationConfigWarnings(config = getSalaryAutomationConfig()): string[] {
@@ -74,6 +105,14 @@ export function getSalaryAutomationConfigWarnings(config = getSalaryAutomationCo
 
   if (config.emailRecipients.length === 0) {
     warnings.push('SALARY_AUTOMATION_EMAIL_TO is not configured.');
+  }
+
+  if (getSalaryEmailTransport(config) === 'resend') {
+    if (!getSalaryEmailSender(config)) {
+      warnings.push('RESEND_FROM (or SMTP_FROM) is not configured.');
+    }
+
+    return warnings;
   }
 
   if (!config.smtpHost) {
@@ -88,5 +127,5 @@ export function getSalaryAutomationConfigWarnings(config = getSalaryAutomationCo
 }
 
 export function isSalaryEmailConfigured(config = getSalaryAutomationConfig()): boolean {
-  return Boolean(config.smtpHost && config.smtpFrom && config.emailRecipients.length > 0);
+  return isSalaryEmailTransportConfigured(config) && config.emailRecipients.length > 0;
 }

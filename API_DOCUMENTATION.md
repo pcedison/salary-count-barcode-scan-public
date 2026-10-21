@@ -75,7 +75,7 @@ The System Management page exposes a guarded admin action for rerunning the prev
 
 | Method | Path | Access | Notes |
 | --- | --- | --- | --- |
-| `GET` | `/api/salary-automation/config` | Admin session | Returns non-secret scheduler readiness, timezone, server-calculated `previousTarget`, SMTP readiness, recipient list, and configuration warnings. |
+| `GET` | `/api/salary-automation/config` | Admin session | Returns non-secret scheduler readiness, timezone, server-calculated `previousTarget`, the active email transport (`emailTransport`: `smtp` or `resend`), its readiness (`smtpConfigured`, name kept for compatibility; true when the active transport is ready), recipient list, and configuration warnings. API keys and passwords are never returned. |
 | `GET` | `/api/salary-automation/runs` | Admin session | Returns recent monthly automation runs. Optional `limit` is bounded to 1–50. |
 | `POST` | `/api/salary-automation/run` | Admin session | Runs salary automation. The manual UI sends an explicit `year`, `month`, `force: true`, and `sendEmail: true`. |
 | `POST` | `/api/salary-automation/test-email` | Admin session | Sends a configuration test email without running salary calculation. |

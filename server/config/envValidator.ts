@@ -2,6 +2,11 @@ import { z } from 'zod';
 
 import { getRuntimePathSummary } from './runtimePaths';
 import { isKnownSelfSignedPoolerHost } from './databaseUrl';
+import {
+  getSalaryAutomationConfig,
+  getSalaryEmailTransport,
+  isSalaryEmailTransportConfigured,
+} from './salaryAutomation';
 import { isHashedPin } from '../utils/adminPinAuth';
 import { createLogger } from '../utils/logger';
 
@@ -65,7 +70,9 @@ const envSchema = z.object({
   SMTP_SECURE: z.enum(['true', 'false']).optional(),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
-  SMTP_FROM: z.string().optional()
+  SMTP_FROM: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  RESEND_FROM: z.string().optional()
 });
 
 export type ValidatedEnv = z.infer<typeof envSchema>;
@@ -176,8 +183,15 @@ export function validateEnv(): ValidatedEnv {
       throw new Error('SALARY_AUTOMATION_EMAIL_TO is required when salary automation is enabled');
     }
 
-    if (!validated.SMTP_HOST || !validated.SMTP_FROM) {
-      throw new Error('SMTP_HOST and SMTP_FROM are required when salary automation is enabled');
+    // 與執行期共用同一個判斷：有 RESEND_API_KEY 走 Resend（不需 SMTP_HOST），否則走 SMTP。
+    const salaryEmailConfig = getSalaryAutomationConfig(process.env);
+    if (!isSalaryEmailTransportConfigured(salaryEmailConfig)) {
+      throw new Error(
+        getSalaryEmailTransport(salaryEmailConfig) === 'resend'
+          ? 'RESEND_FROM or SMTP_FROM is required when salary automation is enabled with RESEND_API_KEY'
+          : 'SMTP_HOST and SMTP_FROM are required when salary automation is enabled ' +
+            '(or set RESEND_API_KEY and RESEND_FROM to send through Resend)'
+      );
     }
   }
 
