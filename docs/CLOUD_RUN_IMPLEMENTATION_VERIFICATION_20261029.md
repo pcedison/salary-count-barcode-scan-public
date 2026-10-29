@@ -103,6 +103,12 @@ Jev 在設計／調查階段排序剩餘語意風險，選擇「重開／重掃�
 - 外部資料庫 Acceptance job 改為手動明確選用，預設關閉。YAML parse 與條件核對通過：PR 即使帶 true 也不執行，手動 false 不執行，只有手動 true 才執行；建立 PR 不使用既有外部測試庫 secret。
 - CI 銜接驗證資料保留在 ignored `tmp/publish-20261029/verifier/report.json` 與 `line-pg-tests.log`。第一次因驗證器 Windows 路徑跳脫而未進入產品測試，修正後重跑通過；兩次建立的容器與 volume 均核對 ID／owner label 後清除。此次未改應用程式來源，先前完整測試、build 與瀏覽器證據仍對應提交版本。
 
+PR 首次執行的主要測試、手機 UI 與 Docker smoke 通過；CodeQL 指出隔離瀏覽器 fixture 的 binding-status 讀檔入口缺少限流。於 JSON、session、control 讀檔、路由及靜態資源前加入每分鐘 300 次的全域限流，沒有略過或關閉掃描。
+
+以 `node tmp/publish-20261029/verify-fixture-rate-limit.mjs` 啟動修改後真 fixture 與全新 loopback／tmpfs PostgreSQL：正常 binding-status 200；300 次請求允許，後續 binding-status、無效 JSON POST、正常 JSON POST 及 settings 均回 429。拒絕前後的 JSON／session／control 讀取計數不變，沒有 Set-Cookie 或出勤／回執寫入。測試程序與容器均核對身分後清理；證據為 `tmp/publish-20261029/rate-limit-dc39d2f2e8/report.json`。
+
+修補後再次執行 `node scripts/verify-attendance-isolated.mjs all`，1028 通過／12 PG 略過、check／build exit0；本輪沒有重複計算先前已實跑的 PG 案例。來源在測試期間不變，534 個正式 build 產物 SHA 與先前驗收映像一致。完整證據位於 `tmp/implementation-20261029/verifier/all-2026-10-29T06-46-45-386Z/`；新 head 的 CodeQL 與其餘 CI 結果以 PR checks 為準。
+
 本輪 Git 範圍、來源 hash、憑證掃描及固定 CI 條件屬確定性核對，沒有新增 Jev API 呼叫；既有實際語意協作收據列於上一節。
 
 ## 正式切換尚缺的條件

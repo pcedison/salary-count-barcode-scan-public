@@ -1,4 +1,5 @@
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { registerLineClockInRoutes } from '../../server/routes/line/clockin.routes';
@@ -53,6 +54,8 @@ async function snapshot() {
 }
 const app = express();
 app.disable('x-powered-by');
+// Bound all fixture I/O before session, control-file, route and static handlers.
+app.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: true, legacyHeaders: false }));
 app.use(express.json());
 setupAdminSession(app);
 app.use((req, res, next) => {
