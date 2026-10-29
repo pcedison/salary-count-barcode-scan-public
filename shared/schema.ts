@@ -67,6 +67,18 @@ export const insertTemporaryAttendanceSchema = createInsertSchema(temporaryAtten
 
 export type InsertTemporaryAttendance = z.infer<typeof insertTemporaryAttendanceSchema>;
 export type TemporaryAttendance = typeof temporaryAttendance.$inferSelect;
+// Durable LINE request receipts. Applied explicitly before the matching runtime.
+export const lineClockRequests = pgTable("line_clock_requests", {
+  eventId: uuid("event_id").primaryKey(),
+  employeeId: integer("employee_id").notNull().references(() => employees.id, { onDelete: 'cascade' }),
+  lineUserHash: text("line_user_hash").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  dateKey: text("date_key").notNull(),
+  stateVersion: text("state_version").notNull(),
+  receipt: json("receipt").$type<unknown>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, table => ({ employeeDateIdx: index('line_clock_requests_employee_date_idx').on(table.employeeId, table.dateKey) }));
+
 export type SalaryAttendanceSnapshot = TemporaryAttendance & {
   overtimeHours?: { ot1: number; ot2: number };
 };

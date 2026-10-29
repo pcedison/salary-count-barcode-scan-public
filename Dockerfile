@@ -1,4 +1,4 @@
-FROM node:24.16.0-bookworm-slim AS builder
+FROM node:24.16.0-bookworm-slim@sha256:2c87ef9bd3c6a3bd4b472b4bec2ce9d16354b0c574f736c476489d09f560a203 AS builder
 
 WORKDIR /app
 ENV NODE_ENV=development \
@@ -23,9 +23,11 @@ RUN npm ci --include=dev --include=optional \
     && node -e "require.resolve('@rollup/rollup-linux-x64-gnu/package.json')"
 
 COPY . .
-RUN npm run build
+ARG VITE_LIFF_ID
+ENV VITE_LIFF_ID=${VITE_LIFF_ID}
+RUN NODE_ENV=production npm run build
 
-FROM node:24.16.0-bookworm-slim AS runtime
+FROM node:24.16.0-bookworm-slim@sha256:2c87ef9bd3c6a3bd4b472b4bec2ce9d16354b0c574f736c476489d09f560a203 AS runtime
 
 WORKDIR /app
 ENV NODE_ENV=production \
@@ -51,7 +53,7 @@ RUN npm ci --omit=dev --omit=optional
 COPY --from=builder /app/dist ./dist
 COPY scripts/container-entrypoint.sh /usr/local/bin/app-entrypoint
 
-RUN mkdir -p backups logs \
+RUN sed -i 's/\r$//' /usr/local/bin/app-entrypoint \
     && chown -R node:node /app \
     && chmod 0755 /usr/local/bin/app-entrypoint \
     && command -v setpriv >/dev/null
@@ -59,7 +61,9 @@ RUN mkdir -p backups logs \
 USER node
 
 EXPOSE 8080
+STOPSIGNAL SIGTERM
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 CMD ["node", "--input-type=module", "-e", "const r=await fetch('http://127.0.0.1:'+process.env.PORT+'/live');process.exit(r.ok?0:1)"]
 
-# 以 node 啟動時直接執行；以 root 啟動（Railway volume）時先整理 volume 權限再降權成 node。
+# Defaults to node; optional root volume preparation requires explicit APP_VOLUME_ROOT.
 ENTRYPOINT ["/usr/local/bin/app-entrypoint"]
 CMD ["node", "dist/index.js"]

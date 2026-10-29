@@ -6,6 +6,7 @@ import { startRuntimeServices } from './bootstrap/runtime-services';
 import { registerRoutes } from './routes';
 import { serveStatic } from './static';
 import { createLogger } from './utils/logger';
+import { areBackgroundServicesEnabled } from './config/runtimeMode';
 
 const app = createConfiguredApp();
 const appLog = createLogger('server');
@@ -50,7 +51,9 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 
       logOperation(
         OperationType.SYSTEM_CONFIG,
-        '系統已啟動，資料庫監控、備份與保留排程已開始執行',
+        areBackgroundServicesEnabled()
+          ? '系統已啟動，資料庫監控、備份與保留排程已開始執行'
+          : '系統已啟動，背景監控、備份、保留清理及薪資排程保持停用',
         { success: true }
       );
     }

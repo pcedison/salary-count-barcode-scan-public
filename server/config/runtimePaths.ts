@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { isCloudRunMode, usesStdoutAudit } from './runtimeMode';
 
 const APP_RUNTIME_NAMESPACE = 'barcode_scan_V3';
 const DIRECTORY_MODE = 0o700;
@@ -89,6 +90,53 @@ export function getAuditLogDir(): string {
   return getRuntimePathSummary().auditLogDir;
 }
 
+type CloudMountEvidence = {
+  mountInfo: string;
+  metadata: unknown;
+  realPath: (value: string) => string;
+};
+
+// Evidence is injected only by unit tests. Production always reads kernel mount
+// information and the operator-provisioned bucket marker; an env flag is not proof.
+export function assertCloudRuntimeStorage(evidence?: CloudMountEvidence): void {
+  if (!isCloudRunMode()) return;
+  const root = process.env.APP_STORAGE_MOUNT?.trim();
+  const bucket = process.env.APP_STORAGE_BUCKET?.trim();
+  const runtime = process.env.APP_RUNTIME_DIR?.trim();
+  const backup = process.env.APP_BACKUP_DIR?.trim();
+  if (!root || !bucket || !runtime || !backup || ![root, runtime, backup].every(path.isAbsolute)) {
+    throw new Error('Cloud Run requires explicit absolute storage mount, runtime and backup paths plus bucket identity');
+  }
+  if (root === path.parse(root).root || !usesStdoutAudit()) {
+    throw new Error('Cloud Run requires a dedicated storage mount and APP_AUDIT_SINK=stdout');
+  }
+  let actual: CloudMountEvidence;
+  try {
+    actual = evidence ?? {
+      mountInfo: fs.readFileSync('/proc/self/mountinfo', 'utf8'),
+      metadata: JSON.parse(fs.readFileSync(path.join(root, '.attendance-volume.json'), 'utf8')),
+      realPath: value => fs.realpathSync(value),
+    };
+    const resolvedRoot = actual.realPath(root);
+    for (const target of [runtime, backup]) {
+      if (!isSameOrNestedPath(resolvedRoot, actual.realPath(target))) throw new Error('path escaped mount');
+    }
+    if (isSameOrNestedPath(process.cwd(), resolvedRoot)) throw new Error('mount inside workspace');
+    const decode = (value: string) => value.replace(/\\([0-7]{3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)));
+    const mount = actual.mountInfo.split('\n').find(line => {
+      const [fields, filesystem] = line.split(' - ');
+      const parts = fields?.split(' ');
+      return parts?.[4] && decode(parts[4]) === resolvedRoot
+        && parts[5].split(',').includes('rw')
+        && filesystem?.split(' ')[0] === 'fuse.gcsfuse';
+    });
+    const metadata = actual.metadata as Record<string, unknown> | null;
+    if (!mount || metadata?.format !== 'attendance-runtime-v1' || metadata.bucket !== bucket) throw new Error('unverified mount');
+  } catch {
+    throw new Error('Cloud Run persistent storage could not be verified; require a writable GCS FUSE mount, matching bucket marker and existing runtime directories');
+  }
+}
+
 async function ensureDirectory(dirPath: string): Promise<void> {
   if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') {
     return;
@@ -110,6 +158,6 @@ export async function ensureRuntimeDirectoriesExist(): Promise<void> {
   await Promise.all([
     ensureDirectory(summary.runtimeRootDir),
     ensureDirectory(summary.backupRootDir),
-    ensureDirectory(summary.auditLogDir)
+    ...(usesStdoutAudit() ? [] : [ensureDirectory(summary.auditLogDir)])
   ]);
 }

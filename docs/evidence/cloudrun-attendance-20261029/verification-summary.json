@@ -1,0 +1,94 @@
+{
+  "date": "2026-10-29",
+  "repository": "pcedison/salary-count-barcode-scan-public",
+  "branch": "codex/attendance-cloudrun-20261029",
+  "baseHead": "91cfc847b5e4c26504f05690106b5d6311463008",
+  "node": "v24.16.0",
+  "npm": "11.13.0",
+  "tests": {
+    "numTotalTestSuites": 248,
+    "numPassedTestSuites": 248,
+    "numFailedTestSuites": 0,
+    "numPendingTestSuites": 0,
+    "numTotalTests": 1040,
+    "numPassedTests": 1028,
+    "numFailedTests": 0,
+    "numPendingTests": 12,
+    "success": true
+  },
+  "testFilesPassed": 112,
+  "testFilesSkipped": 1,
+  "realPostgresLinePassed": 12,
+  "realPostgresBackupPassed": 51,
+  "commands": [
+    {
+      "step": "npm test --",
+      "exitCode": 0,
+      "startedAt": "2026-10-29T05:03:33.408Z",
+      "finishedAt": "2026-10-29T05:03:48.445Z"
+    },
+    {
+      "step": "npm run check",
+      "exitCode": 0,
+      "startedAt": "2026-10-29T05:03:48.452Z",
+      "finishedAt": "2026-10-29T05:03:56.29Z"
+    },
+    {
+      "step": "npm run build",
+      "exitCode": 0,
+      "startedAt": "2026-10-29T05:03:56.291Z",
+      "finishedAt": "2026-10-29T05:03:59.57Z"
+    }
+  ],
+  "changedDuringTests": [],
+  "incompleteGuardFiles": [],
+  "guardTotals": {
+    "dotenvReadsBlocked": 0,
+    "forbiddenConnections": 0,
+    "loopbackConnections": 5
+  },
+  "browser": {
+    "attendance": 4,
+    "receipts": 8,
+    "uniqueReceipts": 8,
+    "requestsSinceRestart": 4,
+    "uniqueEventsSinceRestart": 3,
+    "notificationsSinceRestart": 3,
+    "delayedResponseActuallyDelivered": true,
+    "droppedResponse": true
+  },
+  "browserAssets": [
+    {
+      "path": "index.html",
+      "sha256": "64790be139aa36edabcddbb03d299c7eff52c587ef2bc1c600dc747b9b9d0ebc",
+      "bytes": 1575,
+      "cacheControl": "no-store"
+    },
+    {
+      "path": "assets/ClockInPage-BRa2m3NG.js",
+      "sha256": "db99673de972930626d784da0f87e4ddbd5392b2592944f84c9bdd9bb2b96cd9",
+      "bytes": 13398,
+      "cacheControl": "no-store"
+    },
+    {
+      "path": "assets/index-FVhuvXGn.css",
+      "sha256": "4411a1a22715049340c73b53311c8650d2177363ac9557b09ece927ab25ea51d",
+      "bytes": 328458,
+      "cacheControl": "no-store"
+    },
+    {
+      "path": "assets/index-vIvbMdIu.js",
+      "sha256": "abd8d5ab2d9a0e70d2708693bf3719a1f40e3fd283392c718b845bb9af4523a1",
+      "bytes": 31299,
+      "cacheControl": "no-store"
+    }
+  ],
+  "dockerImage": "sha256:cf8303739bd8fb38c136c3d9e1f8c98cf8b6a986d4d225747fedc8b3f664439a",
+  "dockerChecksPassed": 6,
+  "dockerArtifactFilesCompared": 534,
+  "dockerArtifactDifferences": 0,
+  "productionDataTouched": false,
+  "committed": false,
+  "pushed": false,
+  "deployed": false
+}

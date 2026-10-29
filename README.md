@@ -1,5 +1,7 @@
 # barcode_scan_V3
 
+2026-10-29 LINE 考勤 Cloud Run 常駐適配：此功能分支供 PR 審查，尚未合併或部署。先看 [目前狀態](PROJECT_STATUS.md)、[隔離驗證紀錄](docs/CLOUD_RUN_IMPLEMENTATION_VERIFICATION_20261029.md) 與 [主機操作手冊](docs/CLOUD_RUN_PRIMARY_RUNBOOK.md)；下方歷史 release 說明不代表此搬遷已正式切換。
+
 `barcode_scan_V3` is a PostgreSQL-first employee attendance and salary management system with barcode scan flows, session-based admin access, backup and restore tooling, and optional LINE integration.
 
 This public repository was recreated as a clean-room snapshot on 2026-04-12 from a sanitized private codebase. Internal history, handoff notes, and archived operational materials were intentionally excluded.

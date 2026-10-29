@@ -36,9 +36,17 @@ beforeEach(async () => {
 
 afterEach(() => {
   stopEmployeeRetentionScheduler();
+  vi.unstubAllEnvs();
 });
 
 describe('employee retention scheduler', () => {
+  it('disabled background role prevents both startup and direct retention writes', async () => {
+    vi.stubEnv('APP_BACKGROUND_SERVICES', 'disabled');
+    expect(startEmployeeRetentionScheduler()).toBeNull();
+    expect(await runEmployeeRetentionCycle()).toEqual({ purgedEmployeeIds: [], anonymizedSalaryRecords: 0, purgedSalaryRecords: 0 });
+    expect(storageMock.purgeExpiredDeletedEmployees).not.toHaveBeenCalled();
+    expect(salaryRepositoryMock.purgeExpiredRetainedSalaryRecords).not.toHaveBeenCalled();
+  });
   it('runs employee and salary retention cleanup in a single cycle', async () => {
     const result = await runEmployeeRetentionCycle();
 

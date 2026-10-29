@@ -100,6 +100,21 @@ beforeEach(() => {
 });
 
 describe('dashboard routes integration', () => {
+  it('reports external audit storage to authorized users without weakening authentication', async () => {
+    const audit = await import('./admin-auth');
+    const error = Object.assign(new Error('external audit'), { status: 501, code: 'AUDIT_LOGS_EXTERNAL' });
+    vi.mocked(audit.getOperationLogs).mockRejectedValueOnce(error);
+    vi.mocked(audit.getAvailableLogDates).mockRejectedValueOnce(error);
+    const server = await createJsonTestServer(registerDashboardRoutes, { setupApp: setupTestAdminSession });
+    try {
+      for (const path of ['/api/dashboard/logs', '/api/dashboard/logs/dates']) {
+        expect((await jsonRequest(server.baseUrl, path)).response.status).toBe(401);
+        const response = await jsonRequest<Record<string, any>>(server.baseUrl, path, { headers: { [TEST_ADMIN_HEADER]: 'true' } });
+        expect(response.response.status).toBe(501); expect(response.body?.code).toBe('AUDIT_LOGS_EXTERNAL');
+        expect(response.body?.message).toContain('Cloud Logging');
+      }
+    } finally { await server.close(); }
+  });
   it('previews payroll impact without creating a backup or restoring data', async () => {
     const server = await createJsonTestServer(registerDashboardRoutes, { setupApp: setupTestAdminSession });
     try {

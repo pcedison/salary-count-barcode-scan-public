@@ -4,6 +4,7 @@ import {
   shouldRunMonthlySalaryAutomation,
 } from '../services/monthlySalaryAutomation';
 import { createLogger } from '../utils/logger';
+import { areBackgroundServicesEnabled } from '../config/runtimeMode';
 
 export interface RuntimeStoppable {
   stop(): void;
@@ -15,6 +16,7 @@ let schedulerHandle: NodeJS.Timeout | null = null;
 let running = false;
 
 export async function runScheduledMonthlySalaryAutomation(now = new Date()): Promise<void> {
+  if (!areBackgroundServicesEnabled()) return;
   const config = getSalaryAutomationConfig();
   if (!shouldRunMonthlySalaryAutomation(now, config)) {
     return;
@@ -45,6 +47,7 @@ export async function runScheduledMonthlySalaryAutomation(now = new Date()): Pro
 }
 
 export function startMonthlySalaryScheduler(): RuntimeStoppable {
+  if (!areBackgroundServicesEnabled()) return { stop() {} };
   const config = getSalaryAutomationConfig();
   if (!config.enabled) {
     log.info('Monthly salary scheduler is disabled');

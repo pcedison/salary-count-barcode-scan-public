@@ -2,11 +2,12 @@
 # 容器進入點（Dockerfile ENTRYPOINT）。應用程式一律以 node 使用者執行。
 #
 # - 以 node 啟動（Dockerfile 預設 USER node；Cloud Run、Zeabur、CI 都是這樣）：直接 exec。
-# - 以 root 啟動（Railway 掛 volume 時設 RAILWAY_RUN_UID=0；Railway 的 volume 以 root 擁有）：
-#   只在 volume 掛載路徑（RAILWAY_VOLUME_MOUNT_PATH，未設時 /data）底下，建立
+# - Optional local Docker root bootstrap requires an explicit APP_VOLUME_ROOT.
+#   Only paths beneath that resolved volume are prepared; Cloud Run remains node.
+#   Within that volume, create
 #   APP_RUNTIME_DIR／APP_BACKUP_DIR／APP_LOG_DIR 並交給 node，
 #   再用 setpriv 降權成 node（含 no_new_privs）後 exec。不會以 root 執行應用程式。
-# 說明見 docs/RAILWAY_CLOUDRUN_DEPLOYMENT.md「Railway volume」。
+# See docs/CLOUD_RUN_PRIMARY_RUNBOOK.md.
 set -eu
 
 APP_USER="node"
@@ -28,7 +29,16 @@ app_home="$(getent passwd "$APP_USER" | cut -d: -f6)"
   exit 1
 }
 
-volume_root="$(realpath -m -- "${RAILWAY_VOLUME_MOUNT_PATH:-/data}")"
+if [ "${APP_DEPLOYMENT_MODE:-local}" = "cloudrun" ] || [ -n "${K_SERVICE:-}" ]; then
+  log "Cloud Run must start as the non-root node user; mount ownership belongs in the service manifest"
+  exit 1
+fi
+[ -n "${APP_VOLUME_ROOT:-}" ] || {
+  log "Root volume bootstrap requires explicit APP_VOLUME_ROOT"
+  exit 1
+}
+volume_root="$(realpath -e -- "$APP_VOLUME_ROOT")"
+[ "$volume_root" != "/" ] || { log "Root directory is not a valid application volume"; exit 1; }
 
 # prepare_dir <變數名稱> <路徑>：只處理 volume 底下的路徑（解析 .. 與 symlink 後判斷）。
 prepare_dir() {
@@ -48,7 +58,7 @@ prepare_dir() {
       ;;
   esac
   mkdir -p "$resolved"
-  chown -R "${APP_USER}:${APP_USER}" "$resolved"
+  chown "${APP_USER}:${APP_USER}" "$resolved"
   chmod 700 "$resolved"
   log "${name} 已交給 ${APP_USER}"
 }

@@ -67,6 +67,7 @@ load_config() {
   CLOUD_RUN_RUNTIME_SA="${CLOUD_RUN_RUNTIME_SA:-${RUNTIME_SA_ID}@${GCP_PROJECT_ID}.iam.gserviceaccount.com}"
   CLOUD_RUN_BUILD_SA="${CLOUD_RUN_BUILD_SA:-${BUILD_SA_ID}@${GCP_PROJECT_ID}.iam.gserviceaccount.com}"
   GCLOUD_TARGET=(--project "$GCP_PROJECT_ID" --region "$CLOUD_RUN_REGION")
+  assert_legacy_cloud_run_target || fail "無法確認安全的歷史備援目標；請使用主機專用流程"
   log "專案 ${GCP_PROJECT_ID}，服務 ${CLOUD_RUN_SERVICE}（${CLOUD_RUN_REGION}）"
 }
 

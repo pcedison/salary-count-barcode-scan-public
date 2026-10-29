@@ -10,7 +10,8 @@ import * as schema from '@shared/schema';
 import type { SalaryRecord, TemporaryAttendance } from '@shared/schema';
 import type { PayrollCorrectionRequest } from '@shared/payrollCorrection';
 import { payrollTestDatabaseUrl } from '../scripts/test-payroll-real-db.mjs';
-import { AUTHORITATIVE_BACKUP_TABLES, AUTHORITATIVE_RESTORE_DELETE_ORDER } from './backup-authority';
+import { verifyPayrollBackupDockerTarget } from '../scripts/test-payroll-backup-real-db.mjs';
+import { AUTHORITATIVE_BACKUP_TABLES, AUTHORITATIVE_RESTORE_DELETE_ORDER, BACKUP_AUTHORITY_VERSION } from './backup-authority';
 import { buildPayrollHolidayCorrection } from './services/payrollCorrection';
 import { calculateHolidayPayAdjustments } from './utils/salaryCalculator';
 import type { SalaryCorrectionCommit } from './repositories/salaryRepository';
@@ -35,10 +36,13 @@ beforeAll(async () => {
   backups = await import('./db-monitoring');
   freshSql = postgres(freshUrl, { ssl: false, onnotice: () => {} });
   freshDb = drizzle(freshSql, { schema });
+  const dockerManifest = process.env.PAYROLL_BACKUP_TEST_DOCKER_MANIFEST;
+  const dockerAddress = dockerManifest ? verifyPayrollBackupDockerTarget(process.env.DATABASE_URL,
+    JSON.parse(await readFile(dockerManifest, 'utf8'))) : [];
   for (const connection of [sql, freshSql]) {
     const [target] = await connection`select current_database() as name, host(inet_server_addr()) as address`;
     expect(target.name).toMatch(/^payroll_test_[a-z0-9_]+$/);
-    expect(['127.0.0.1', '::1']).toContain(target.address);
+    expect(['127.0.0.1', '::1', ...dockerAddress]).toContain(target.address);
     for (const table of AUTHORITATIVE_BACKUP_TABLES) {
       const [{ count }] = await connection.unsafe(`select count(*)::int as count from ${table.tableName}`);
       expect(count).toBe(0);
@@ -111,7 +115,7 @@ async function backup() {
 async function snapshot(connection = sql) {
   const output: Record<string, unknown> = {};
   for (const table of AUTHORITATIVE_BACKUP_TABLES) {
-    const rows = await connection.unsafe(`select * from ${table.tableName} order by id`);
+    const rows = await connection.unsafe(`select * from ${table.tableName} order by ${table.payloadKey === 'lineClockRequests' ? 'event_id' : 'id'}`);
     // Existing Drizzle Date columns and JSON backups have millisecond precision.
     // Compare the app's supported precision while retaining all stored fields.
     output[table.payloadKey] = rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) =>
@@ -147,6 +151,76 @@ async function restoreEpoch() {
 }
 
 describe('actual PostgreSQL authoritative payroll backup and restore', () => {
+  it('roundtrips authority v4 LINE receipts into a fresh DB with ownership and replay unchanged', async () => {
+    const { DatabaseLineClockInRepository } = await import('./repositories/lineClockInRepository');
+    const { employee } = await fixture();
+    await db.update(schema.employees).set({ lineUserId: 'synthetic-line-owner' }).where(eq(schema.employees.id, employee.id));
+    const now = () => new Date('2026-10-29T00:00:00.000Z');
+    const sourceRepo = new DatabaseLineClockInRepository(db, now);
+    const state = await sourceRepo.getState(employee.id, 'synthetic-line-owner');
+    const command = { eventId: randomUUID(), stateVersion: state.stateVersion, clientTimestamp: now().toISOString() };
+    const committed = await sourceRepo.submit(employee.id, 'synthetic-line-owner', command);
+    const { id, payload, inspection } = await backup();
+    expect(payload.metadata.authorityVersion).toBe(4);
+    expect(inspection.counts.lineClockRequests).toBe(1);
+    expect(payload.lineClockRequests[0].receipt).toEqual(committed.receipt);
+    const expected = await snapshot();
+    const redirect = vi.spyOn(db, 'transaction').mockImplementation(freshDb.transaction.bind(freshDb));
+    try { await backups.restoreFromBackup(id, backups.BackupType.MANUAL, { skipPreRestoreBackup: true }); }
+    finally { redirect.mockRestore(); }
+    expect(await snapshot(freshSql)).toEqual(expected);
+    const freshRepo = new DatabaseLineClockInRepository(freshDb, () => new Date('2026-10-30T00:00:00Z'));
+    expect(await freshRepo.submit(employee.id, 'synthetic-line-owner', command)).toEqual({ receipt: committed.receipt, replayed: true });
+    expect(await freshRepo.getReceipt(employee.id, 'synthetic-line-owner', command.eventId)).toEqual(committed.receipt);
+    expect(await snapshot(freshSql)).toEqual(expected);
+    await expect(freshDb.insert(schema.lineClockRequests).values({ ...payload.lineClockRequests[0],
+      eventId: randomUUID(), employeeId: 2147483647, createdAt: new Date() })).rejects.toThrow();
+    expect(await snapshot(freshSql)).toEqual(expected);
+  });
+
+  it('refuses old and legacy backups over live LINE receipts atomically, including an explicit payroll override', async () => {
+    const { DatabaseLineClockInRepository } = await import('./repositories/lineClockInRepository');
+    const { employee } = await fixture();
+    await db.update(schema.employees).set({ lineUserId: 'synthetic-line-owner' }).where(eq(schema.employees.id, employee.id));
+    const old = await backup();
+    const repo = new DatabaseLineClockInRepository(db, () => new Date('2026-10-29T00:00:00Z'));
+    const state = await repo.getState(employee.id, 'synthetic-line-owner');
+    await repo.submit(employee.id, 'synthetic-line-owner', { eventId: randomUUID(), stateVersion: state.stateVersion });
+    const before = await snapshot();
+    const legacy = structuredClone(old.payload);
+    delete legacy.lineClockRequests;
+    legacy.metadata.authorityVersion = 3;
+    legacy.metadata.authoritativeTables = legacy.metadata.authoritativeTables.filter((name: string) => name !== 'line_clock_requests');
+    const legacyId = await writeArtifact(legacy);
+    expect(backups.inspectBackupFile(legacyId, backups.BackupType.MANUAL).errors).toEqual([]);
+    for (const id of [old.id, legacyId]) {
+      await expect(backups.restoreFromBackup(id, backups.BackupType.MANUAL, { skipPreRestoreBackup: true, confirmJournalReplacement: true }))
+        .rejects.toMatchObject({ code: 'LINE_CLOCK_RECEIPT_REPLACEMENT_FORBIDDEN' });
+      expect(await snapshot()).toEqual(before);
+    }
+  });
+
+  it('rolls back all restored authority when receipt insertion fails in the fresh DB', async () => {
+    const { DatabaseLineClockInRepository } = await import('./repositories/lineClockInRepository');
+    const { employee } = await fixture();
+    await db.update(schema.employees).set({ lineUserId: 'synthetic-line-owner' }).where(eq(schema.employees.id, employee.id));
+    const repo = new DatabaseLineClockInRepository(db, () => new Date('2026-10-29T00:00:00Z'));
+    const state = await repo.getState(employee.id, 'synthetic-line-owner');
+    await repo.submit(employee.id, 'synthetic-line-owner', { eventId: randomUUID(), stateVersion: state.stateVersion });
+    const { id } = await backup();
+    const before = await snapshot(freshSql);
+    await freshSql.unsafe(`CREATE FUNCTION fail_line_restore() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic restore failure'; END $$;
+      CREATE TRIGGER fail_line_restore BEFORE INSERT ON line_clock_requests FOR EACH ROW EXECUTE FUNCTION fail_line_restore()`);
+    const redirect = vi.spyOn(db, 'transaction').mockImplementation(freshDb.transaction.bind(freshDb));
+    try {
+      await expect(backups.restoreFromBackup(id, backups.BackupType.MANUAL, { skipPreRestoreBackup: true })).rejects.toThrow('transaction could not be completed');
+    } finally {
+      redirect.mockRestore();
+      await freshSql.unsafe('DROP TRIGGER fail_line_restore ON line_clock_requests; DROP FUNCTION fail_line_restore()');
+    }
+    expect(await snapshot(freshSql)).toEqual(before);
+  });
+
   it('preserves daily overtime evidence through correction journal and actual restore, refusing a divergent projection', async () => {
     const { record } = await fixture(true);
     const attendanceData = record.attendanceData!.map(row => ({ ...row, overtimeHours: { ot1: 0, ot2: 0 } }));
@@ -166,7 +240,7 @@ describe('actual PostgreSQL authoritative payroll backup and restore', () => {
       .rejects.toMatchObject({ code: 'INVALID_RESTORE_BACKUP' });
     expect(await snapshot()).toEqual(before);
   });
-  it('exports journal, nullable retention link and idempotency evidence in authority v3', async () => {
+  it('exports journal, nullable retention link and idempotency evidence in the current authority version', async () => {
     const { record } = await fixture();
     const metadata = commitMetadata();
     const corrected = await correct(record, request(), metadata);
@@ -176,7 +250,7 @@ describe('actual PostgreSQL authoritative payroll backup and restore', () => {
     const { id, payload, inspection } = await backup();
     expect(inspection.counts.salaryCorrections).toBe(2);
     expect(inspection.journalCoverage).toBe('complete');
-    expect(payload.metadata.authorityVersion).toBe(3);
+    expect(payload.metadata.authorityVersion).toBe(BACKUP_AUTHORITY_VERSION);
     expect(payload.salaryCorrections.find((row: any) => row.id === corrected.correction.id))
       .toEqual(canonical(corrected.correction));
     expect(payload.salaryCorrections.find((row: any) => row.id === retentionJournal.correction.id))

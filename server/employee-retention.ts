@@ -1,4 +1,5 @@
 import { arePayrollWritesPaused } from './config/payrollWrites';
+import { areBackgroundServicesEnabled } from './config/runtimeMode';
 import { createLogger } from './utils/logger';
 import { storage } from './storage';
 import { salaryRepository } from './repositories/salaryRepository';
@@ -13,7 +14,7 @@ export async function runEmployeeRetentionCycle(): Promise<{
   anonymizedSalaryRecords: number;
   purgedSalaryRecords: number;
 }> {
-  if (arePayrollWritesPaused()) return { purgedEmployeeIds: [], anonymizedSalaryRecords: 0, purgedSalaryRecords: 0 };
+  if (!areBackgroundServicesEnabled() || arePayrollWritesPaused()) return { purgedEmployeeIds: [], anonymizedSalaryRecords: 0, purgedSalaryRecords: 0 };
   const { purgedEmployeeIds, anonymizedSalaryRecords } = await storage.purgeExpiredDeletedEmployees();
   const purgedSalaryRecords = await salaryRepository.purgeExpiredRetainedSalaryRecords();
 
@@ -35,6 +36,7 @@ export async function runEmployeeRetentionCycle(): Promise<{
 export function startEmployeeRetentionScheduler(
   intervalMs = DEFAULT_RETENTION_INTERVAL_MS
 ): NodeJS.Timeout | null {
+  if (!areBackgroundServicesEnabled()) return null;
   if (retentionHandle) {
     log.warn('Employee retention scheduler already running; skipping duplicate start');
     return retentionHandle;

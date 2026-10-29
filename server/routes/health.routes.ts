@@ -4,6 +4,7 @@ import type { Express } from "express";
 
 import { getAppVersion } from "../config/appVersion";
 import { db } from "../db";
+import { isCloudRunMode } from '../config/runtimeMode';
 
 const SERVER_START_TIME = Date.now();
 const FALLBACK_HEAP_FAIL_PERCENT = 90;
@@ -104,6 +105,15 @@ async function runDatabaseCheck(): Promise<ProbeResult> {
 
   try {
     await db.execute("SELECT 1");
+    if (isCloudRunMode()) {
+      // Read only: startup never creates the session or idempotency schemas.
+      await db.execute('SELECT sid,sess,expire FROM public.user_sessions LIMIT 0');
+      await db.execute('SELECT event_id,employee_id,line_user_hash,payload_hash,date_key,state_version,receipt,created_at FROM public.line_clock_requests LIMIT 0');
+      const schema = await db.execute("SELECT c.relrowsecurity AS secured,pg_catalog.obj_description(c.oid,'pg_class') AS marker FROM pg_catalog.pg_class c WHERE c.oid=pg_catalog.to_regclass('public.line_clock_requests')");
+      if (schema[0]?.secured !== true || schema[0]?.marker !== 'barcode-scan:line-clock-requests:v1') {
+        throw new Error('Required Cloud Run request schema is not initialized');
+      }
+    }
     return {
       status: "pass",
       responseTimeMs: Date.now() - start,

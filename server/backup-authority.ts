@@ -5,6 +5,7 @@ export type AuthoritativeBackupPayloadKey =
   | 'holidays'
   | 'salaryRecords'
   | 'salaryCorrections'
+  | 'lineClockRequests'
   | 'temporaryAttendance'
   | 'calculationRules'
   | 'taiwanHolidays';
@@ -16,6 +17,7 @@ export type DatabaseCountKey =
   | 'holidays'
   | 'salaryRecords'
   | 'salaryCorrections'
+  | 'lineClockRequests'
   | 'temporaryAttendance'
   | 'calculationRules'
   | 'taiwanHolidays';
@@ -36,7 +38,7 @@ type ExcludedAuthorityTable = {
   reason: string;
 };
 
-export const BACKUP_AUTHORITY_VERSION = 3;
+export const BACKUP_AUTHORITY_VERSION = 4;
 
 export const AUTHORITATIVE_BACKUP_TABLES: readonly IncludedAuthorityTable[] = [
   {
@@ -98,6 +100,16 @@ export const AUTHORITATIVE_BACKUP_TABLES: readonly IncludedAuthorityTable[] = [
     restoreInsertOrder: 90,
     resetSequence: true,
     notes: 'Preserves stored audit evidence, idempotency and nullable retention links; restore after salary projections.'
+  },
+  {
+    payloadKey: 'lineClockRequests',
+    tableName: 'line_clock_requests',
+    countKey: 'lineClockRequests',
+    countMode: 'rows',
+    restoreDeleteOrder: 100,
+    restoreInsertOrder: 100,
+    resetSequence: false,
+    notes: 'Immutable LINE event receipts are authoritative deduplication evidence; restore must not replace existing receipts.'
   },
   {
     payloadKey: 'temporaryAttendance',

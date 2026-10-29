@@ -1,5 +1,7 @@
 # Railway 主機＋Cloud Run 冷備援部署
 
+> 2026-10-29：使用者已要求 Railway 暫時移出方案。本文件以下為既有實作與歷史流程，不再是現行推薦；不要執行 Railway 建置、`deploy-all.sh` 或沿用雙平台部署 workflow。新的考勤主機候選為 Cloud Run 常駐 service，另評估一般常駐 Docker VM；須先完成 LINE 入口、持久檔案與背景恢復驗收。詳見 [更新後的考勤遷移規劃](ATTENDANCE_MIGRATION_RELIABILITY_PLAN_20261028.md)。本提示沒有停用遠端 workflow 或修改正式平台設定。
+
 本文件說明從 Zeabur 搬出後的部署方式：Railway 當主機，Google Cloud Run 當冷備援，
 兩邊一律用同一個指令部署同一個 commit。建置約定（Dockerfile、`npm ci --include=dev`、
 Node 24）仍以 [ZEABUR_BUILD_CONTRACT.md](ZEABUR_BUILD_CONTRACT.md) 為準。
