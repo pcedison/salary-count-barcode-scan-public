@@ -1,0 +1,22 @@
+{
+  "projectId": "attendance-example",
+  "region": "asia-east1",
+  "service": "attendance-primary",
+  "image": "asia-east1-docker.pkg.dev/attendance-example/images/attendance@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "runtimeServiceAccount": "attendance-runtime@attendance-example.iam.gserviceaccount.com",
+  "origin": "https://attendance.example.com",
+  "bucket": "attendance-example-private-runtime",
+  "liffId": "1234567890-Example",
+  "useAesEncryption": true,
+  "secrets": {
+    "DATABASE_URL": { "name": "attendance-database", "version": "1" },
+    "SESSION_SECRET": { "name": "attendance-session", "version": "1" },
+    "BACKUP_ENCRYPTION_KEY": { "name": "attendance-backup", "version": "1" },
+    "ENCRYPTION_KEY": { "name": "attendance-existing-identity-key", "version": "1" },
+    "ENCRYPTION_SALT": { "name": "attendance-existing-identity-salt", "version": "1" },
+    "LINE_LOGIN_CHANNEL_ID": { "name": "attendance-line-login-id", "version": "1" },
+    "LINE_LOGIN_CHANNEL_SECRET": { "name": "attendance-line-login-secret", "version": "1" },
+    "LINE_MESSAGING_CHANNEL_ACCESS_TOKEN": { "name": "attendance-line-messaging-token", "version": "1" },
+    "LINE_MESSAGING_CHANNEL_SECRET": { "name": "attendance-line-messaging-secret", "version": "1" }
+  }
+}

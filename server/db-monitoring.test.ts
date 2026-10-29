@@ -173,7 +173,7 @@ function journalBackupFixture() {
     holidayDays: 0, totalHolidayPay: 0 };
   return { metadata: { timestamp: projection.createdAt, type: 'manual', databaseType: 'postgres', ...buildAuthorityMetadata() },
     employees: [{ id: 8 }], settings: null, holidays: [], pendingBindings: [],
-    salaryRecords: [projection], temporaryAttendance: [], calculationRules: [], taiwanHolidays: [],
+    salaryRecords: [projection], temporaryAttendance: [], calculationRules: [], taiwanHolidays: [], lineClockRequests: [],
     salaryCorrections: [{ id: 1, salaryRecordId: 7, originalRecordId: 7, revision: 1,
       idempotencyKey: '11111111-1111-4111-8111-111111111111', requestHash: 'a'.repeat(64),
       previewTokenHash: 'b'.repeat(64), actorId: 'c'.repeat(64), actorRole: 'SUPER_ADMIN',
@@ -202,6 +202,8 @@ function getSchemaTableForPayloadKey(payloadKey: (typeof AUTHORITATIVE_RESTORE_D
       return schema.salaryRecords;
     case 'salaryCorrections':
       return schema.salaryCorrections;
+    case 'lineClockRequests':
+      return schema.lineClockRequests;
     case 'temporaryAttendance':
       return schema.temporaryAttendance;
     case 'calculationRules':
@@ -548,6 +550,68 @@ describe('db-monitoring restore safety', () => {
     expect(inspectSyntheticJournal().errors).toEqual([]);
   });
 
+  function lineReceiptFixture() {
+    const eventId = '11111111-1111-4111-8111-111111111111';
+    const stateVersion = `v1.2026-10-29.${'a'.repeat(64)}`;
+    return { eventId, employeeId: 8, lineUserHash: 'b'.repeat(64), payloadHash: 'c'.repeat(64),
+      dateKey: '2026/10/29', stateVersion, createdAt: '2026-10-29T00:00:00.000Z',
+      receipt: { success: true, eventId, dateKey: '2026/10/29', stateVersion, action: 'clock-in',
+        employeeName: 'Synthetic A', department: null, clockTime: '08:00', timestamp: '2026-10-29T00:00:00.000Z',
+        attendance: { id: 1, employeeId: 8, date: '2026/10/29', clockIn: '08:00', clockOut: '',
+          createdAt: '2026-10-29T00:00:00.000Z' } } };
+  }
+
+  it('inspects and restores immutable LINE receipts after employee ownership rows', async () => {
+    const entry = lineReceiptFixture();
+    const payload = { ...journalBackupFixture(), lineClockRequests: [entry] };
+    readFileSyncMock.mockReturnValue(JSON.stringify(payload));
+    readFileMock.mockResolvedValue(JSON.stringify(payload));
+    const inspected = inspectSyntheticJournal();
+    expect(inspected.errors).toEqual([]);
+    expect(inspected.counts.lineClockRequests).toBe(1);
+    expect(inspected.restoreOrder.indexOf('delete line_clock_requests')).toBeLessThan(inspected.restoreOrder.indexOf('delete employees'));
+    expect(inspected.restoreOrder.indexOf('insert line_clock_requests')).toBeGreaterThan(inspected.restoreOrder.indexOf('insert employees'));
+    await restoreFromBackup('synthetic-journal', BackupType.MANUAL, { skipPreRestoreBackup: true });
+    expect(txInsertMock).toHaveBeenCalledWith(schema.lineClockRequests);
+    expect(txInsertValuesMock).toHaveBeenCalledWith([{ ...entry, createdAt: new Date(entry.createdAt) }]);
+  });
+
+  it.each(['owner', 'event', 'snapshot', 'duplicate'])('rejects invalid LINE receipt %s evidence before restore', kind => {
+    const entry = lineReceiptFixture();
+    if (kind === 'owner') entry.employeeId = 9999;
+    if (kind === 'event') entry.receipt.eventId = '22222222-2222-4222-8222-222222222222';
+    if (kind === 'snapshot') entry.receipt.attendance.clockIn = '09:00';
+    const payload = { ...journalBackupFixture(), lineClockRequests: kind === 'duplicate' ? [entry, entry] : [entry] };
+    readFileSyncMock.mockReturnValue(JSON.stringify(payload));
+    expect(inspectSyntheticJournal().errors).toContain(kind === 'duplicate'
+      ? 'lineClockRequests contains duplicate event IDs.' : 'lineClockRequests contains an invalid or inconsistent receipt.');
+  });
+
+  it('rejects missing LINE receipts in v4 and warns for genuine legacy v3 archives', () => {
+    const { lineClockRequests: _receipts, ...payload } = journalBackupFixture();
+    readFileSyncMock.mockReturnValue(JSON.stringify(payload));
+    expect(inspectSyntheticJournal().errors).toContain('Current authority backups must include lineClockRequests, even when empty.');
+    const legacy = { ...payload, metadata: { ...payload.metadata, authorityVersion: 3,
+      authoritativeTables: payload.metadata.authoritativeTables.filter(name => name !== 'line_clock_requests') } };
+    readFileSyncMock.mockReturnValue(JSON.stringify(legacy));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
+    expect(inspectSyntheticJournal().warnings.join(' ')).toContain('no LINE receipts');
+    readFileSyncMock.mockReturnValue(JSON.stringify({ ...journalBackupFixture(), lineClockRequests: null }));
+    expect(inspectSyntheticJournal().errors).toContain('lineClockRequests must be an explicit array, even when empty.');
+  });
+
+  it('refuses legacy restore over any committed LINE receipt before deleting or inserting rows', async () => {
+    const { lineClockRequests: _receipts, ...payload } = journalBackupFixture();
+    const legacy = { ...payload, metadata: { ...payload.metadata, authorityVersion: 3,
+      authoritativeTables: payload.metadata.authoritativeTables.filter(name => name !== 'line_clock_requests') } };
+    readFileMock.mockResolvedValue(JSON.stringify(legacy));
+    selectFromMock.mockImplementation(async table => table === schema.lineClockRequests ? [lineReceiptFixture()] : []);
+    await expect(restoreFromBackup('synthetic-journal', BackupType.MANUAL, { skipPreRestoreBackup: true }))
+      .rejects.toMatchObject({ code: 'LINE_CLOCK_RECEIPT_REPLACEMENT_FORBIDDEN' });
+    expect(txDeleteMock).not.toHaveBeenCalled();
+    expect(txInsertMock).not.toHaveBeenCalled();
+  });
+
   it('compares persisted daily overtime evidence while keeping legacy snapshots compatible', () => {
     const payload = journalBackupFixture();
     Object.assign(payload.salaryRecords[0].attendanceData[0], { overtimeHours: { ot1: 2, ot2: 0.5 } });
@@ -755,6 +819,7 @@ describe('db-monitoring restore safety', () => {
         }
       ],
       salaryCorrections: [],
+      lineClockRequests: [],
       salaryRecords: [
         {
           id: 9,
@@ -882,6 +947,7 @@ describe('db-monitoring restore safety', () => {
         pendingBindings: [],
         salaryRecords: [],
         salaryCorrections: [],
+        lineClockRequests: [],
         temporaryAttendance: [],
         calculationRules: [],
         taiwanHolidays: []
@@ -942,6 +1008,7 @@ describe('db-monitoring restore safety', () => {
         ],
         pendingBindings: [],
         salaryCorrections: [],
+        lineClockRequests: [],
       salaryRecords: [
           {
             id: 9,
@@ -1058,6 +1125,7 @@ describe('db-monitoring restore safety', () => {
         ],
         salaryRecords: [],
         salaryCorrections: [],
+        lineClockRequests: [],
         temporaryAttendance: [],
         calculationRules: [],
         taiwanHolidays: []
@@ -1102,6 +1170,7 @@ describe('db-monitoring restore safety', () => {
         holidays: [],
         pendingBindings: [],
         salaryCorrections: [],
+        lineClockRequests: [],
       salaryRecords: [
           {
             id: 9,
@@ -1236,6 +1305,7 @@ describe('db-monitoring restore safety', () => {
         holidays: [],
         salaryRecords: [],
         salaryCorrections: [],
+        lineClockRequests: [],
         temporaryAttendance: [],
         calculationRules: [],
         taiwanHolidays: []
@@ -1254,7 +1324,7 @@ describe('db-monitoring restore safety', () => {
     txExecuteMock
       .mockResolvedValueOnce([]) // Restore table lock.
       .mockResolvedValueOnce([]) // Transactional administrator-session invalidation.
-      .mockResolvedValueOnce([{ count: 1 }])
+      .mockResolvedValueOnce([{ count: 1 }]) // employees; the remaining empty tables include LINE receipts.
       .mockResolvedValueOnce([{ count: 0 }])
       .mockResolvedValueOnce([{ count: 0 }])
       .mockResolvedValueOnce([{ count: 0 }])
@@ -1263,6 +1333,8 @@ describe('db-monitoring restore safety', () => {
       .mockResolvedValueOnce([{ count: 0 }])
       .mockResolvedValueOnce([{ count: 0 }])
       .mockResolvedValueOnce([{ count: 0 }]);
+
+    txExecuteMock.mockResolvedValue([{ count: 0 }]);
 
     const result = await rehearseRestoreFromBackup('backup-rehearsal-safe');
 
@@ -1275,6 +1347,7 @@ describe('db-monitoring restore safety', () => {
       holidays: 0,
       salaryRecords: 0,
       salaryCorrections: 0,
+      lineClockRequests: 0,
       temporaryAttendance: 0,
       calculationRules: 0,
       taiwanHolidays: 0
@@ -1286,6 +1359,7 @@ describe('db-monitoring restore safety', () => {
       holidays: 1,
       salaryRecords: 4,
       salaryCorrections: 0,
+      lineClockRequests: 0,
       temporaryAttendance: 3,
       calculationRules: 2,
       taiwanHolidays: 10
@@ -1297,6 +1371,7 @@ describe('db-monitoring restore safety', () => {
       holidays: 0,
       salaryRecords: 0,
       salaryCorrections: 0,
+      lineClockRequests: 0,
       temporaryAttendance: 0,
       calculationRules: 0,
       taiwanHolidays: 0
@@ -1322,6 +1397,7 @@ describe('db-monitoring restore safety', () => {
         holidays: [],
         salaryRecords: [],
         salaryCorrections: [],
+        lineClockRequests: [],
         temporaryAttendance: [],
         calculationRules: [],
         taiwanHolidays: []

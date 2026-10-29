@@ -11,8 +11,17 @@ describe('startLineOAuthCleanup', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     process.env.LINE_LOGIN_CHANNEL_ID = originalLineChannelId;
     vi.useRealTimers();
+  });
+
+  it('disabled background role performs no storage import or cleanup timer', async () => {
+    vi.stubEnv('APP_BACKGROUND_SERVICES', 'disabled');
+    vi.stubEnv('LINE_LOGIN_CHANNEL_ID', 'synthetic-channel');
+    const importStorage = vi.fn(); const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+    startLineOAuthCleanup({ importStorage }).stop(); await Promise.resolve();
+    expect(importStorage).not.toHaveBeenCalled(); expect(setIntervalSpy).not.toHaveBeenCalled();
   });
 
   it('does nothing when LINE login is not configured', async () => {

@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SalaryRecord } from '@shared/schema';
 
 import {
   buildMonthlySalaryPrintUrl,
   resolveSalaryPrintBaseUrl,
+  getSalaryReportPdfPath,
 } from './salaryPdf';
 
 function salaryRecord(id: number): SalaryRecord {
@@ -38,6 +39,15 @@ function salaryRecord(id: number): SalaryRecord {
 }
 
 describe('salary PDF print URL builder', () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it('cloud artifacts get unique immutable names while local paths remain stable', () => {
+    const target = { year: 2026, month: 10 };
+    vi.stubEnv('APP_DEPLOYMENT_MODE', 'local');
+    expect(getSalaryReportPdfPath(target)).toBe(getSalaryReportPdfPath(target));
+    vi.stubEnv('APP_DEPLOYMENT_MODE', 'cloudrun');
+    const first = getSalaryReportPdfPath(target); const second = getSalaryReportPdfPath(target);
+    expect(first).not.toBe(second); expect(first).toMatch(/salary-2026-10-[a-f0-9-]{36}\.pdf$/);
+  });
   it('points PDF generation at the existing monthly print page', () => {
     const url = buildMonthlySalaryPrintUrl(
       'https://salary.example.com/',

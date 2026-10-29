@@ -161,6 +161,7 @@ cloud_run_is_public() {
 }
 
 deploy_cloud_run() {
+  assert_legacy_cloud_run_target || fail "歷史雙平台部署不得修改新的考勤主機"
   log "=== Cloud Run（備援）==="
 
   local before

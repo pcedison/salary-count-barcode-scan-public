@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
+import { isCloudRunMode } from '../config/runtimeMode';
 
 import type { SalaryRecord } from '@shared/schema';
 
@@ -27,7 +29,7 @@ export function getSalaryReportPdfPath(target: SalaryReportTarget): string {
     summary.runtimeRootDir,
     'salary-reports',
     String(target.year),
-    `salary-${target.year}-${String(target.month).padStart(2, '0')}.pdf`
+    `salary-${target.year}-${String(target.month).padStart(2, '0')}${isCloudRunMode() ? `-${randomUUID()}` : ''}.pdf`
   );
 }
 

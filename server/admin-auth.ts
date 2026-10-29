@@ -12,6 +12,7 @@ import {
   verifyStoredAdminPinAsync
 } from './utils/adminPinAuth';
 import { createLogger } from './utils/logger';
+import { usesStdoutAudit } from './config/runtimeMode';
 
 const log = createLogger('admin-auth');
 
@@ -129,6 +130,15 @@ export function logOperation(
     ...options
   };
 
+  if (usesStdoutAudit()) {
+    // Never forward free-form details/error text, names, IPs, query strings or
+    // credentials to a platform log. The external audit contains only the
+    // existing non-sensitive event fields and is independent of LOG_LEVEL.
+    console.log(JSON.stringify({ severity: entry.success ? 'INFO' : 'WARNING',
+      component: 'attendance-audit', timestamp, operation, success: entry.success }));
+    return;
+  }
+
   const date = new Date(timestamp);
   const fileName = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
     date.getDate()
@@ -160,6 +170,7 @@ export function logOperation(
 }
 
 export async function getOperationLogs(date?: Date, filterType?: OperationType): Promise<AuditLog[]> {
+  if (usesStdoutAudit()) throw externalAuditError();
   try {
     const targetDate = date || new Date();
     const fileName = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(
@@ -198,6 +209,7 @@ export async function getOperationLogs(date?: Date, filterType?: OperationType):
 }
 
 export async function getAvailableLogDates(): Promise<{ date: Date; count: number }[]> {
+  if (usesStdoutAudit()) throw externalAuditError();
   try {
     let files: string[];
 
@@ -227,6 +239,11 @@ export async function getAvailableLogDates(): Promise<{ date: Date; count: numbe
     log.error('Failed to list available audit log dates', error);
     return [];
   }
+}
+
+function externalAuditError(): Error {
+  return Object.assign(new Error('稽核事件由外部日誌平台保存，請至 Cloud Logging 查閱 attendance-audit。'),
+    { status: 501, code: 'AUDIT_LOGS_EXTERNAL' });
 }
 
 export function hashPassword(password: string): string {

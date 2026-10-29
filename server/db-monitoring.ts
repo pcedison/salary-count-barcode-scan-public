@@ -29,6 +29,7 @@ import {
 import { ensureBackupRootDirExists, getBackupRootDir } from './config/runtimePaths';
 import { assertRestoreMaintenance } from './config/payrollWrites';
 import { createLogger } from './utils/logger';
+import { isCloudRunMode } from './config/runtimeMode';
 
 const log = createLogger('db-monitor');
 
@@ -239,6 +240,7 @@ type BackupPayload = {
   pendingBindings?: typeof schema.pendingBindings.$inferSelect[];
   salaryRecords?: typeof schema.salaryRecords.$inferSelect[];
   salaryCorrections?: typeof schema.salaryCorrections.$inferSelect[];
+  lineClockRequests?: typeof schema.lineClockRequests.$inferSelect[];
   temporaryAttendance?: typeof schema.temporaryAttendance.$inferSelect[];
   calculationRules?: typeof schema.calculationRules.$inferSelect[];
   taiwanHolidays?: typeof schema.taiwanHolidays.$inferSelect[];
@@ -261,6 +263,7 @@ type NormalizedBackupPayload = {
   pendingBindings: typeof schema.pendingBindings.$inferSelect[];
   salaryRecords: typeof schema.salaryRecords.$inferSelect[];
   salaryCorrections: typeof schema.salaryCorrections.$inferSelect[];
+  lineClockRequests: typeof schema.lineClockRequests.$inferSelect[];
   journalCoverage: 'complete' | 'legacy-unrevised';
   temporaryAttendance: typeof schema.temporaryAttendance.$inferSelect[];
   calculationRules: typeof schema.calculationRules.$inferSelect[];
@@ -296,6 +299,7 @@ export type DatabaseCounts = {
   holidays: number;
   salaryRecords: number;
   salaryCorrections: number;
+  lineClockRequests: number;
   temporaryAttendance: number;
   calculationRules: number;
   taiwanHolidays: number;
@@ -376,7 +380,7 @@ async function readAuthoritativeSnapshot(executor: Pick<typeof db, 'select'>): P
   const snapshot: BackupPayload = {};
   for (const { payloadKey } of AUTHORITATIVE_BACKUP_TABLES) {
     const rows = await executor.select().from(getSchemaTableByPayloadKey(payloadKey));
-    rows.sort((a, b) => String(a.id).localeCompare(String(b.id), 'en', { numeric: true }));
+    rows.sort((a, b) => String('eventId' in a ? a.eventId : a.id).localeCompare(String('eventId' in b ? b.eventId : b.id), 'en', { numeric: true }));
     if (payloadKey === 'settings') snapshot.settings = rows[0] as typeof schema.settings.$inferSelect ?? null;
     else snapshot[payloadKey] = rows as never;
   }
@@ -615,6 +619,8 @@ function getSchemaTableByPayloadKey(payloadKey: AuthoritativeBackupPayloadKey) {
       return schema.salaryRecords;
     case 'salaryCorrections':
       return schema.salaryCorrections;
+    case 'lineClockRequests':
+      return schema.lineClockRequests;
     case 'temporaryAttendance':
       return schema.temporaryAttendance;
     case 'calculationRules':
@@ -648,6 +654,8 @@ function getPayloadTableCount(payload: NormalizedBackupPayload, payloadKey: Auth
       return payload.salaryRecords.length;
     case 'salaryCorrections':
       return payload.salaryCorrections.length;
+    case 'lineClockRequests':
+      return payload.lineClockRequests.length;
     case 'temporaryAttendance':
       return payload.temporaryAttendance.length;
     case 'calculationRules':
@@ -679,6 +687,7 @@ function buildPayloadCounts(payload: NormalizedBackupPayload): DatabaseCounts {
     holidays: 0,
     salaryRecords: 0,
     salaryCorrections: 0,
+    lineClockRequests: 0,
     temporaryAttendance: 0,
     calculationRules: 0,
     taiwanHolidays: 0
@@ -702,8 +711,9 @@ function collectAuthorityMetadataIssues(
   const allowedKeys = new Set<string>(['metadata', ...AUTHORITATIVE_BACKUP_PAYLOAD_KEYS]);
   const unexpectedKeys = rawKeys.filter((key) => !allowedKeys.has(key)).sort();
   const legacyJournal = normalizedPayload.journalCoverage === 'legacy-unrevised';
+  const legacyClock = !Object.prototype.hasOwnProperty.call(rawPayload, 'lineClockRequests');
   const missingPayloadKeys = AUTHORITATIVE_BACKUP_PAYLOAD_KEYS.filter((payloadKey) =>
-    !(payloadKey in rawPayload) && !(legacyJournal && payloadKey === 'salaryCorrections'));
+    !(payloadKey in rawPayload) && !(legacyJournal && payloadKey === 'salaryCorrections') && !(legacyClock && payloadKey === 'lineClockRequests'));
 
   if (unexpectedKeys.length > 0) {
     errors.push(`Unexpected backup payload keys: ${unexpectedKeys.join(', ')}`);
@@ -716,7 +726,8 @@ function collectAuthorityMetadataIssues(
   if (!normalizedPayload.metadata?.authorityVersion) {
     warnings.push('Backup metadata is missing authorityVersion; treat as legacy artifact.');
   } else if (normalizedPayload.metadata.authorityVersion !== BACKUP_AUTHORITY_VERSION &&
-    !(legacyJournal && normalizedPayload.metadata.authorityVersion === 2)) {
+    !(legacyJournal && normalizedPayload.metadata.authorityVersion === 2) &&
+    !(legacyClock && normalizedPayload.metadata.authorityVersion === 3)) {
     errors.push(
       `Backup authorityVersion mismatch: expected ${BACKUP_AUTHORITY_VERSION}, received ${normalizedPayload.metadata.authorityVersion}`
     );
@@ -726,13 +737,23 @@ function collectAuthorityMetadataIssues(
     warnings.push('Backup metadata is missing authoritativeTables.');
   } else {
     const actual = [...normalizedPayload.metadata.authoritativeTables].sort();
-    const expected = AUTHORITATIVE_TABLE_NAMES.filter(name => !(legacyJournal && name === 'salary_corrections')).sort();
+    const expected = AUTHORITATIVE_TABLE_NAMES.filter(name => !(legacyJournal && name === 'salary_corrections') && !(legacyClock && name === 'line_clock_requests')).sort();
 
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       errors.push(
         `Backup authoritativeTables mismatch: expected ${expected.join(', ')}, received ${actual.join(', ')}`
       );
     }
+  }
+
+  if (legacyClock) {
+    if (normalizedPayload.metadata?.authorityVersion === BACKUP_AUTHORITY_VERSION) {
+      errors.push('Current authority backups must include lineClockRequests, even when empty.');
+    } else {
+      warnings.push('Legacy backup has no LINE receipts; it cannot replace a target containing committed LINE events. Reconcile before enabling clock-in.');
+    }
+  } else if (!Array.isArray(rawPayload.lineClockRequests)) {
+    errors.push('lineClockRequests must be an explicit array, even when empty.');
   }
 
   if (legacyJournal) {
@@ -816,6 +837,9 @@ function normalizeBackupPayload(payload: unknown): NormalizedBackupPayload {
       parsed.salaryCorrections, 'salaryCorrections'
     ).map(correction => ({ ...correction, createdAt: normalizeTimestampValue(correction.createdAt)! })),
     journalCoverage: Object.prototype.hasOwnProperty.call(parsed, 'salaryCorrections') ? 'complete' : 'legacy-unrevised',
+    lineClockRequests: normalizeRecordArray<typeof schema.lineClockRequests.$inferSelect>(
+      parsed.lineClockRequests, 'lineClockRequests'
+    ).map(receipt => ({ ...receipt, createdAt: normalizeTimestampValue(receipt.createdAt)! })),
     temporaryAttendance: normalizeRecordArray<typeof schema.temporaryAttendance.$inferSelect>(
       parsed.temporaryAttendance,
       'temporaryAttendance'
@@ -1180,6 +1204,26 @@ function inspectNormalizedBackupPayload(
   collectDuplicateIds(payload.salaryRecords, 'salaryRecords', errors);
   collectDuplicateIds(payload.salaryCorrections, 'salaryCorrections', errors);
   collectDuplicateIds(payload.temporaryAttendance, 'temporaryAttendance', errors);
+  const clockEventIds = new Set<string>();
+  for (const entry of payload.lineClockRequests) {
+    const receipt = entry.receipt as Record<string, any> | null;
+    const valid = typeof entry.eventId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(entry.eventId) &&
+      employeeIds.has(entry.employeeId) && typeof entry.lineUserHash === 'string' && /^[0-9a-f]{64}$/.test(entry.lineUserHash) &&
+      typeof entry.payloadHash === 'string' && /^[0-9a-f]{64}$/.test(entry.payloadHash) &&
+      typeof entry.dateKey === 'string' && /^\d{4}\/\d{2}\/\d{2}$/.test(entry.dateKey) &&
+      typeof entry.stateVersion === 'string' && new RegExp(`^v1\\.${entry.dateKey.replaceAll('/', '-')}\\.[0-9a-f]{64}$`).test(entry.stateVersion) &&
+      entry.createdAt instanceof Date && Number.isFinite(entry.createdAt.getTime()) &&
+      receipt && receipt.success === true && receipt.eventId === entry.eventId && receipt.dateKey === entry.dateKey && receipt.stateVersion === entry.stateVersion &&
+      ['clock-in', 'clock-out'].includes(receipt.action) && typeof receipt.employeeName === 'string' &&
+      (receipt.department === null || typeof receipt.department === 'string') &&
+      /^\d{2}:\d{2}$/.test(receipt.clockTime) && typeof receipt.timestamp === 'string' && Number.isFinite(Date.parse(receipt.timestamp)) &&
+      receipt.attendance?.employeeId === entry.employeeId && typeof receipt.attendance.date === 'string' && receipt.attendance.date.replaceAll('-', '/') === entry.dateKey &&
+      Number.isInteger(receipt.attendance.id) && receipt.attendance.id > 0 &&
+      (receipt.action === 'clock-in' ? receipt.attendance.clockIn === receipt.clockTime && !receipt.attendance.clockOut : receipt.attendance.clockOut === receipt.clockTime);
+    if (!valid) errors.push('lineClockRequests contains an invalid or inconsistent receipt.');
+    if (clockEventIds.has(entry.eventId)) errors.push('lineClockRequests contains duplicate event IDs.');
+    clockEventIds.add(entry.eventId);
+  }
 
   collectDuplicateIds(payload.calculationRules, 'calculation rules', errors);
   collectDuplicateComparableIds(payload.taiwanHolidays, 'taiwan_holidays', errors);
@@ -1426,6 +1470,7 @@ async function collectDatabaseCounts(executor: CountExecutor): Promise<DatabaseC
     holidays: 0,
     salaryRecords: 0,
     salaryCorrections: 0,
+    lineClockRequests: 0,
     temporaryAttendance: 0,
     calculationRules: 0,
     taiwanHolidays: 0
@@ -1499,6 +1544,9 @@ async function restoreTableData(
         if (payload.salaryCorrections.length > 0) {
           await executor.insert(schema.salaryCorrections).values(payload.salaryCorrections);
         }
+        break;
+      case 'lineClockRequests':
+        if (payload.lineClockRequests.length > 0) await executor.insert(schema.lineClockRequests).values(payload.lineClockRequests);
         break;
       case 'temporaryAttendance':
         if (payload.temporaryAttendance.length > 0) {
@@ -1637,7 +1685,7 @@ export async function createDatabaseBackup(
   description?: string
 ): Promise<string> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const backupId = `backup-${timestamp}`;
+  const backupId = `backup-${timestamp}${isCloudRunMode() ? `-${crypto.randomUUID()}` : ''}`;
   // Choose the backup directory for the requested type.
   let backupDir;
   switch (type) {
@@ -1675,6 +1723,7 @@ export async function createDatabaseBackup(
     pendingBindings: [],
     salaryRecords: [],
     salaryCorrections: [],
+    lineClockRequests: [],
     temporaryAttendance: [],
     calculationRules: [],
     taiwanHolidays: []
@@ -1699,7 +1748,7 @@ export async function createDatabaseBackup(
     log.info(`${type} backup created at ${backupPath}`);
 
     // Trim older backups in the same category.
-    await cleanupOldBackups(backupDir);
+    if (!isCloudRunMode()) await cleanupOldBackups(backupDir);
 
     return backupId;
   } catch (error) {
@@ -1904,6 +1953,10 @@ function restorePayrollAmounts(record: NormalizedBackupPayload['salaryRecords'][
 
 function restorePreflightForSnapshot(backupId: string, payload: NormalizedBackupPayload, live: BackupPayload): RestorePreflight {
   const current = normalizeBackupPayload(live);
+  const incomingClockReceipts = new Map(payload.lineClockRequests.map(row => [row.eventId, stableJson(row)]));
+  if (current.lineClockRequests.some(row => incomingClockReceipts.get(row.eventId) !== stableJson(row))) {
+    throw new RestoreSafetyError('LINE_CLOCK_RECEIPT_REPLACEMENT_FORBIDDEN', 'Restore cannot delete or replace committed LINE receipts; reconcile attendance and request history before restoring.');
+  }
   if (payload.journalCoverage === 'legacy-unrevised' && (current.salaryCorrections.length > 0 ||
     current.salaryRecords.some(record => (record.revision ?? 0) !== 0))) {
     throw new RestoreSafetyError('LEGACY_BACKUP_JOURNAL_UNAVAILABLE', 'A legacy backup without correction evidence cannot replace a database containing a journal or revised salary projections.');

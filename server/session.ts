@@ -9,6 +9,7 @@ import {
 } from '@shared/utils/adminSessionPolicy';
 import { PermissionLevel } from './admin-auth';
 import { createLogger } from './utils/logger';
+import { isCloudRunMode, areBackgroundServicesEnabled } from './config/runtimeMode';
 
 const log = createLogger('session');
 
@@ -149,7 +150,8 @@ function createSessionStore() {
   const store = new PgStore({
     pool,
     tableName: 'user_sessions',
-    createTableIfMissing: true
+    createTableIfMissing: !isCloudRunMode(),
+    pruneSessionInterval: areBackgroundServicesEnabled() ? undefined : false
   });
   return { store, readRestoreEpoch: async () => {
     // A fresh deployment may not yet have a session table; the store creates it

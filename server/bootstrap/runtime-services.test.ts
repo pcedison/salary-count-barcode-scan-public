@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const startMonitoring = vi.fn(() => ({ kind: 'monitor' } as unknown as NodeJS.Timeout));
 const setupAutomaticBackups = vi.fn(() => ({ kind: 'backup' } as unknown as NodeJS.Timeout));
@@ -9,6 +9,7 @@ const startEmployeeRetentionScheduler = vi.fn(() => ({ kind: 'retention' } as un
 const stopEmployeeRetentionScheduler = vi.fn();
 
 const loadCalculationRulesFromDb = vi.fn();
+const ensureRuntimeDirectoriesExist = vi.fn(async () => {});
 const lineCleanupStop = vi.fn();
 const startLineOAuthCleanup = vi.fn(() => ({ stop: lineCleanupStop }));
 const monthlySalaryStop = vi.fn();
@@ -29,6 +30,7 @@ vi.mock('../employee-retention', () => ({
 vi.mock('../services/calculationRulesLoader', () => ({
   loadCalculationRulesFromDb,
 }));
+vi.mock('../config/runtimePaths', () => ({ ensureRuntimeDirectoriesExist }));
 
 vi.mock('../runtime/line-oauth-cleanup', () => ({
   startLineOAuthCleanup,
@@ -39,8 +41,18 @@ vi.mock('../runtime/monthly-salary-scheduler', () => ({
 }));
 
 describe('startRuntimeServices', () => {
+  afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('disabled role loads business rules once but starts no monitoring, backup, retention, OAuth or salary work', async () => {
+    vi.stubEnv('APP_BACKGROUND_SERVICES', 'disabled');
+    const { startRuntimeServices } = await import('./runtime-services');
+    const services = startRuntimeServices(); services.stop(); services.stop();
+    expect(loadCalculationRulesFromDb).toHaveBeenCalledOnce();
+    expect(ensureRuntimeDirectoriesExist).toHaveBeenCalledOnce();
+    for (const job of [startMonitoring, setupAutomaticBackups, startEmployeeRetentionScheduler, startLineOAuthCleanup, startMonthlySalaryScheduler]) expect(job).not.toHaveBeenCalled();
   });
 
   it('starts all runtime jobs and stops them through a single contract', async () => {

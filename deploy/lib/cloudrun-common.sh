@@ -48,3 +48,18 @@ cloudrun_build_sa_resource() {
     printf 'projects/%s/serviceAccounts/%s' "$project_id" "$build_sa"
   fi
 }
+
+# Must run before any legacy deploy/update or dotenv loading. Read only metadata;
+# a failed lookup is not interpreted as an absent service.
+assert_legacy_cloud_run_target() {
+  local services
+  services="$(gcloud run services list --project "$GCP_PROJECT_ID" --region "$CLOUD_RUN_REGION" \
+    --format='json(metadata.name,metadata.labels,spec.template.metadata.labels)')" \
+    || { printf 'Unable to verify legacy Cloud Run target; refusing changes\n' >&2; return 1; }
+  jq -e --arg name "$CLOUD_RUN_SERVICE" '
+    type == "array" and all(.[] | select(.metadata.name == $name);
+      .metadata.labels["attendance-role"] != "primary" and
+      .spec.template.metadata.labels["attendance-role"] != "primary")
+  ' <<<"$services" >/dev/null \
+    || { printf 'Legacy standby tooling cannot modify an attendance primary service\n' >&2; return 1; }
+}

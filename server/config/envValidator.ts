@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { assertExternalDatabaseTlsUrl } from '../../shared/databaseTls.mjs';
 
-import { getRuntimePathSummary } from './runtimePaths';
+import { assertCloudRuntimeStorage, getRuntimePathSummary } from './runtimePaths';
 import { isKnownSelfSignedPoolerHost } from './databaseUrl';
 import {
   getSalaryAutomationConfig,
@@ -49,6 +50,12 @@ const envSchema = z.object({
   APP_RUNTIME_DIR: z.string().optional(),
   APP_BACKUP_DIR: z.string().optional(),
   APP_LOG_DIR: z.string().optional(),
+  APP_DEPLOYMENT_MODE: z.enum(['local', 'cloudrun']).optional(),
+  APP_BACKGROUND_SERVICES: z.enum(['enabled', 'disabled']).optional(),
+  APP_AUDIT_SINK: z.enum(['file', 'stdout']).optional(),
+  APP_STORAGE_MOUNT: z.string().optional(),
+  APP_STORAGE_BUCKET: z.string().optional(),
+  APP_PUBLIC_ORIGIN: z.string().optional(),
   ALLOW_DOTENV_IN_PRODUCTION: z.enum(['true', 'false']).optional(),
   ENCRYPTION_SALT: z.string().optional(),
   LINE_LOGIN_CHANNEL_ID: z.string().optional(),
@@ -86,6 +93,31 @@ export function validateEnv(): ValidatedEnv {
   const validated = envSchema.parse(process.env);
   const isProduction = validated.NODE_ENV === 'production';
   const runtimePaths = getRuntimePathSummary();
+  if (process.env.K_SERVICE && validated.APP_DEPLOYMENT_MODE !== 'cloudrun') {
+    throw new Error('Cloud Run requires APP_DEPLOYMENT_MODE=cloudrun; ephemeral defaults are not allowed');
+  }
+  if (validated.APP_DEPLOYMENT_MODE === 'cloudrun') {
+    if (!isProduction || validated.APP_BACKGROUND_SERVICES !== 'disabled' || validated.SALARY_AUTOMATION_ENABLED !== 'false') {
+      throw new Error('Cloud Run requires production mode, APP_BACKGROUND_SERVICES=disabled and SALARY_AUTOMATION_ENABLED=false until worker ownership is implemented');
+    }
+    let origin: URL;
+    try { origin = new URL(validated.APP_PUBLIC_ORIGIN || ''); }
+    catch { throw new Error('Cloud Run requires an exact HTTPS APP_PUBLIC_ORIGIN'); }
+    if (origin.protocol !== 'https:' || origin.origin !== validated.APP_PUBLIC_ORIGIN || origin.username || origin.password) {
+      throw new Error('Cloud Run requires an exact HTTPS APP_PUBLIC_ORIGIN');
+    }
+    if (validated.ALLOWED_ORIGINS !== origin.origin || validated.SALARY_AUTOMATION_PUBLIC_BASE_URL !== origin.origin) {
+      throw new Error('Cloud Run allowed origin and salary public base URL must match APP_PUBLIC_ORIGIN');
+    }
+    if (validated.LINE_LOGIN_CALLBACK_URL && validated.LINE_LOGIN_CALLBACK_URL !== `${origin.origin}/api/line/callback`) {
+      throw new Error('Cloud Run LINE callback must match APP_PUBLIC_ORIGIN');
+    }
+    if (process.env.PGSSLREJECT_UNAUTHORIZED?.trim().toLowerCase() === 'false') {
+      throw new Error('Cloud Run requires PostgreSQL certificate validation');
+    }
+    if (validated.DATABASE_URL) assertExternalDatabaseTlsUrl(validated.DATABASE_URL);
+    assertCloudRuntimeStorage();
+  }
   const secureCookiesEnabled =
     validated.SESSION_SECURE === 'true' ||
     (validated.SESSION_SECURE !== 'false' && isProduction);

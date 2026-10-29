@@ -1,4 +1,5 @@
 import { createLogger } from '../utils/logger';
+import { areBackgroundServicesEnabled } from '../config/runtimeMode';
 
 const DEFAULT_LINE_OAUTH_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -34,7 +35,7 @@ export function startLineOAuthCleanup(
   let cleanupHandle: NodeJS.Timeout | null = null;
   let stopped = false;
 
-  if (!process.env.LINE_LOGIN_CHANNEL_ID) {
+  if (!areBackgroundServicesEnabled() || !process.env.LINE_LOGIN_CHANNEL_ID) {
     return {
       stop() {},
     };
@@ -47,6 +48,7 @@ export function startLineOAuthCleanup(
       }
 
       cleanupHandle = setInterval(async () => {
+        if (!areBackgroundServicesEnabled()) return;
         try {
           await storage.cleanupExpiredOAuthStates();
         } catch (error) {

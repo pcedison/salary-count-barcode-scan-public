@@ -3,6 +3,12 @@ name: Acceptance
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      run_external_database_tests:
+        description: 'Run against the separately verified disposable test database secret'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -51,7 +57,10 @@ jobs:
           if-no-files-found: ignore
 
   real-db:
-    name: Real database tests (opt-in via secret)
+    name: External test database (manual opt-in)
+    # PRs use disposable loopback databases in CI; merely having a secret must
+    # not make opening a PR connect to a pre-existing external database.
+    if: github.event_name == 'workflow_dispatch' && inputs.run_external_database_tests == true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:

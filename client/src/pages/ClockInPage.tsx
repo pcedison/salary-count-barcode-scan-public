@@ -1,10 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Loader2, CheckCircle2, XCircle, LogIn, UserCheck } from 'lucide-react';
 import { apiRequest } from '@/lib/queryClient';
 import liff from '@line/liff';
+import { clockJournalKey, readClockAttempt, saveClockAttempt, newClockAttempt,
+  canResendClockAttempt, clockRequest, clockAttemptBody, ClockRequestError,
+  clockTimeAnchor, clockTimeFromAnchor, withClockJournalLock, finishClockAttempt,
+  type ClockState, type ClockAttempt, type ClockTimeAnchor } from '@/lib/lineClockJournal';
 
 type PageState =
   | 'loading'
@@ -14,6 +18,7 @@ type PageState =
   | 'pending'
   | 'ready'
   | 'clocking'
+  | 'unconfirmed'
   | 'success'
   | 'error';
 
@@ -39,38 +44,144 @@ export default function ClockInPage() {
   const [employeeName, setEmployeeName] = useState('');
   const [clockResult, setClockResult] = useState<ClockInResult | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [clockState, setClockState] = useState<ClockState | null>(null);
+  const [canPrepareNext, setCanPrepareNext] = useState(false);
+  const clockBusy = useRef(false);
+  const activeUser = useRef<string | null>(null);
+  const activeJournalKey = useRef<string | null>(null);
+  const timeAnchor = useRef<ClockTimeAnchor | null>(null);
 
-  // 共用打卡邏輯（LIFF 自動觸發與手動按鈕都走這裡）
-  // clientTimestamp：掃碼當下由前端捕捉，減少 API 往返造成的記錄延遲
-  const performClockIn = useCallback(async (userId: string, clientTimestamp?: string) => {
-    setState('clocking');
+  const showReceipt = useCallback(async (key: string, attempt: ClockAttempt, data: ClockInResult) => {
+    if (activeJournalKey.current !== key) return;
+    setClockResult(data);
     try {
-      const body: Record<string, string> = { lineUserId: userId };
-      if (clientTimestamp) body.clientTimestamp = clientTimestamp;
-      const res = await apiRequest('POST', '/api/line/clock-in', body);
-      const data = await res.json();
-      if (data.success) {
-        setClockResult({
-          action: data.action,
-          employeeName: data.employeeName,
-          clockTime: data.clockTime,
-          department: data.department
-        });
-        setState('success');
-      } else {
-        setErrorMessage(data.error ?? '打卡失敗，請再試一次');
-        setState('error');
+      const current = await withClockJournalLock(key, () => finishClockAttempt(localStorage, key, attempt, 'confirmed'));
+      if (activeJournalKey.current !== key) return;
+      if (!current) {
+        setCanPrepareNext(false);
+        setErrorMessage('另一個頁面已有較新的打卡。請先核對原次結果，不會以舊回應覆蓋紀錄。');
+        setState('unconfirmed');
+        return;
       }
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : '打卡失敗，請再試一次');
-      setState('error');
+      setErrorMessage('');
+      setCanPrepareNext(true);
+    } catch {
+      if (activeJournalKey.current !== key) return;
+      setErrorMessage('打卡已記錄，但手機無法保存確認狀態。請保留此頁並聯絡管理員，勿重複打卡。');
+      setCanPrepareNext(false);
     }
+    setState('success');
   }, []);
 
-  // LINE 的內建瀏覽器可能將頁面保留在記憶體中（bfcache）。
-  // 當員工第二次掃碼時，LINE 只是把舊頁面帶回前景（不重新載入），
-  // 導致 useEffect 不重新執行、打卡請求不發出。
-  // pageshow 事件在頁面從 bfcache 恢復時 persisted=true，強制重載修正此問題。
+  const sendOriginal = useCallback(async (key: string, attempt: ClockAttempt) => {
+    if (activeJournalKey.current !== key || !activeUser.current) return;
+    const intendedUser = activeUser.current;
+    try {
+      const data = await clockRequest<ClockInResult>('/api/line/clock-in', {
+        ...clockAttemptBody(attempt), lineUserId: intendedUser,
+      });
+      await showReceipt(key, attempt, data);
+    } catch (error) {
+      // Only an explicit rejection known to occur before the transaction writes
+      // allows a fresh action. Network/auth/server errors remain unresolved.
+      const rejected = error instanceof ClockRequestError && [
+        'LINE_CLOCK_STATE_CONFLICT', 'LINE_CLOCK_TIMESTAMP_INVALID', 'LINE_CLOCK_TIMESTAMP_EXPIRED',
+        'LINE_CLOCK_TIME_CONFLICT',
+      ].includes(error.code);
+      const stillCurrent = rejected
+        ? await withClockJournalLock(key, () => finishClockAttempt(localStorage, key, attempt, 'rejected')) : false;
+      if (activeJournalKey.current !== key) return;
+      setCanPrepareNext(rejected && stillCurrent);
+      setErrorMessage(rejected && stillCurrent ? '這次打卡未寫入：狀態或時間已變更。請核對最新狀態後再確認。'
+        : '尚未確認這次打卡結果。請先確認原次結果，勿重新建立打卡；登入到期時請重新登入。');
+      setState(rejected && stillCurrent ? 'error' : 'unconfirmed');
+    }
+  }, [showReceipt]);
+
+  const recoverOriginal = useCallback(async (userId: string, resend = false): Promise<boolean> => {
+    const key = await clockJournalKey(userId);
+    if (activeUser.current !== userId) return true;
+    activeJournalKey.current = key;
+    const attempt = readClockAttempt(localStorage, key);
+    if (!attempt) return false;
+    if (attempt.phase === 'rejected') {
+      setCanPrepareNext(true);
+      setErrorMessage('前次打卡未寫入。請核對最新狀態後再確認。');
+      setState('error');
+      return true;
+    }
+    try {
+      const receipt = await clockRequest<ClockInResult>(`/api/line/clock-in/requests/${attempt.eventId}?lineUserId=${encodeURIComponent(userId)}`);
+      await showReceipt(key, attempt, receipt);
+    } catch (error) {
+      if (activeJournalKey.current !== key) return true;
+      if (error instanceof ClockRequestError && error.status === 404 && resend && attempt.phase === 'pending') {
+        // Consult server time, not a potentially fast/slow phone wall clock.
+        const current = await clockRequest<ClockState>(`/api/line/clock-in/state?lineUserId=${encodeURIComponent(userId)}`);
+        if (activeJournalKey.current !== key) return true;
+        if (canResendClockAttempt(attempt, clockTimeAnchor(current).serverMs)) {
+          await sendOriginal(key, attempt);
+          return true;
+        }
+      }
+      setCanPrepareNext(false);
+      setErrorMessage('上次打卡尚待核對。請確認原次結果；若超過五分鐘或仍無法確認，請聯絡管理員，不會以現在時間補打。');
+      setState('unconfirmed');
+    }
+    return true;
+  }, [showReceipt, sendOriginal]);
+
+  const prepareClockIn = useCallback(async (userId: string, next = false) => {
+    setState('loading');
+    setErrorMessage('');
+    setCanPrepareNext(false);
+    timeAnchor.current = null;
+    try {
+      const key = await clockJournalKey(userId);
+      if (activeUser.current !== userId) return;
+      activeJournalKey.current = key;
+      const saved = readClockAttempt(localStorage, key);
+      if ((!next || saved?.phase === 'pending') && await recoverOriginal(userId)) return;
+      const current = await clockRequest<ClockState>(`/api/line/clock-in/state?lineUserId=${encodeURIComponent(userId)}`);
+      if (activeUser.current !== userId) return;
+      timeAnchor.current = clockTimeAnchor(current);
+      setClockState(current);
+      setState('ready');
+    } catch (error) {
+      if (activeUser.current !== userId) return;
+      setErrorMessage(error instanceof Error ? error.message : '無法取得打卡狀態，尚未送出');
+      setState('error');
+    }
+  }, [recoverOriginal]);
+
+  const performClockIn = useCallback(async (userId: string) => {
+    if (clockBusy.current || !clockState || !timeAnchor.current) return;
+    clockBusy.current = true;
+    setState('clocking');
+    try {
+      const key = await clockJournalKey(userId);
+      if (activeUser.current !== userId) return;
+      const reserved = await withClockJournalLock(key, () => {
+        if (activeUser.current !== userId || !timeAnchor.current) return null;
+        const previous = readClockAttempt(localStorage, key);
+        if (previous?.phase === 'pending') return { existing: true, attempt: previous };
+        const attempt = newClockAttempt(clockState, clockTimeFromAnchor(timeAnchor.current));
+        saveClockAttempt(localStorage, key, attempt); // Must succeed before any write.
+        return { existing: false, attempt };
+      });
+      if (!reserved) return;
+      if (reserved.existing) { await recoverOriginal(userId, true); return; }
+      await sendOriginal(key, reserved.attempt);
+    } catch (err) {
+      if (activeUser.current !== userId) return;
+      setErrorMessage(err instanceof Error ? err.message : '無法確認打卡結果，請保留此頁並聯絡管理員');
+      setState('error');
+      setCanPrepareNext(false);
+    } finally { clockBusy.current = false; }
+  }, [clockState, recoverOriginal, sendOriginal]);
+
+  // LINE 可能從 bfcache 恢復舊頁面。重載僅重新確認登入與原回執，
+  // 不自動建立打卡；新的上下班動作仍須明確確認。
   useEffect(() => {
     const handlePageShow = (e: PageTransitionEvent) => {
       if (e.persisted) {
@@ -82,12 +193,14 @@ export default function ClockInPage() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         // 1. 確認後端 LINE 功能是否啟用
         // 刻意用裸 fetch:LIFF 公開端點,非 2xx 走優雅分支而非拋錯。
         const configRes = await fetch('/api/line/config');
         const config = await configRes.json();
+        if (cancelled) return;
         if (!config.configured) {
           setState('line_not_configured');
           return;
@@ -102,15 +215,12 @@ export default function ClockInPage() {
               // or an external browser instead of forcing a custom redirect URI.
               withLoginOnExternalBrowser: true
             });
+            if (cancelled) return;
 
             if (!liff.isLoggedIn()) {
               liff.login();
               return;
             }
-
-            // 在 LIFF init 完成後、發出任何 API 請求前立即捕捉時間，
-            // 避免後續 LINE 驗證 API 往返造成打卡時間偏慢
-            const capturedAt = liff.isInClient() ? new Date().toISOString() : undefined;
 
             const accessToken = liff.getAccessToken();
             if (accessToken) {
@@ -118,23 +228,21 @@ export default function ClockInPage() {
               const authData = await authRes.json();
 
               if (authData.success) {
+                if (cancelled) return;
                 const temp: LineTempData = {
                   lineUserId: authData.lineUserId,
                   lineDisplayName: authData.lineDisplayName,
                   linePictureUrl: authData.linePictureUrl
                 };
                 setLineData(temp);
+                activeUser.current = temp.lineUserId;
 
                 // liff-auth 已包含 bindingStatus，不需要再發第 2 個請求
                 if (authData.bindingStatus === 'bound') {
                   setEmployeeName(authData.employeeName ?? '');
-                  if (liff.isInClient()) {
-                    // 在 LINE app 內掃碼開啟 → 直接自動打卡
-                    await performClockIn(temp.lineUserId, capturedAt);
-                  } else {
-                    // 在外部瀏覽器開啟 LIFF → 顯示打卡按鈕（測試用）
-                    setState('ready');
-                  }
+                  // A fixed QR URL cannot distinguish a fresh scan from a reload.
+                  // Restore the receipt first; a new punch always requires a tap.
+                  await prepareClockIn(temp.lineUserId);
                 } else if (authData.bindingStatus === 'pending') {
                   setState('pending');
                 } else {
@@ -145,6 +253,7 @@ export default function ClockInPage() {
             }
           } catch {
             // LIFF 初始化失敗，降回 OAuth 流程
+            if (cancelled) return;
           }
         }
 
@@ -152,29 +261,33 @@ export default function ClockInPage() {
         const tempRes = await fetch('/api/line/temp-data');
         if (tempRes.ok) {
           const temp: LineTempData = await tempRes.json();
+          if (cancelled) return;
           setLineData(temp);
+          activeUser.current = temp.lineUserId;
 
           const statusRes = await fetch(
             `/api/line/binding-status/${encodeURIComponent(temp.lineUserId)}`
           );
           const status = await statusRes.json();
+          if (cancelled) return;
 
           if (status.status === 'bound') {
             setEmployeeName(status.employeeName);
-            setState('ready');
+            await prepareClockIn(temp.lineUserId);
           } else if (status.status === 'pending') {
             setState('pending');
           } else {
             setState('bind');
           }
         } else {
-          setState('login');
+          if (!cancelled) setState('login');
         }
       } catch {
-        setState('login');
+        if (!cancelled) setState('login');
       }
     })();
-  }, [performClockIn]);
+    return () => { cancelled = true; activeUser.current = null; activeJournalKey.current = null; };
+  }, [prepareClockIn]);
 
   const handleBind = useCallback(async () => {
     if (!lineData || !idNumber.trim()) return;
@@ -218,7 +331,7 @@ export default function ClockInPage() {
             <div className="flex flex-col items-center gap-3 py-8">
               <Loader2 className="h-10 w-10 text-green-600 animate-spin" />
               <p className="text-gray-500 text-sm">
-                {state === 'clocking' ? '打卡處理中...' : '載入中...'}
+                {state === 'clocking' ? '正在確認打卡，請勿重複操作...' : '載入中...'}
               </p>
             </div>
           )}
@@ -300,8 +413,8 @@ export default function ClockInPage() {
             </div>
           )}
 
-          {/* 準備打卡（外部瀏覽器測試用） */}
-          {state === 'ready' && lineData && (
+          {/* LINE 與一般瀏覽器皆顯示明確動作後再寫入 */}
+          {state === 'ready' && lineData && clockState && (
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg">
                 {lineData.linePictureUrl && (
@@ -321,10 +434,10 @@ export default function ClockInPage() {
                 className="w-full bg-[#06C755] hover:bg-[#05b34d] text-white h-14 text-lg"
                 onClick={handleClockIn}
               >
-                確認打卡
+                {clockState.action === 'clock-in' ? '確認上班打卡' : '確認下班打卡'}
               </Button>
               <p className="text-xs text-gray-400 text-center">
-                系統將自動判斷上班或下班打卡
+                請核對上方動作，按下確認後才會記錄時間
               </p>
             </div>
           )}
@@ -345,25 +458,31 @@ export default function ClockInPage() {
                   {clockResult.clockTime}
                 </p>
               </div>
-              <p className="text-xs text-gray-400">打卡結果已透過 LINE 通知您</p>
+              <p className="text-xs text-gray-500">出勤已記錄。LINE 通知可能稍後送達。</p>
+              {errorMessage && <p role="alert" className="text-sm text-amber-800 text-center break-words">{errorMessage}</p>}
+              {canPrepareNext && lineData && <Button variant="outline" onClick={() => prepareClockIn(lineData.lineUserId, true)}>
+                準備下一次打卡
+              </Button>}
             </div>
           )}
 
           {/* 錯誤 */}
-          {state === 'error' && (
+          {(state === 'error' || state === 'unconfirmed') && (
             <div className="flex flex-col items-center gap-3 py-6">
               <XCircle className="h-12 w-12 text-red-400" />
-              <p className="text-gray-600 text-center text-sm">{errorMessage || '發生錯誤，請再試一次'}</p>
-              <Button
-                variant="outline"
-                className="mt-2"
-                onClick={() => {
-                  setErrorMessage('');
-                  setState('login');
-                }}
-              >
-                重新開始
-              </Button>
+              <p role="alert" className="text-gray-600 text-center text-sm break-words">{errorMessage || '無法確認，請聯絡管理員'}</p>
+              {state === 'unconfirmed' && lineData && <Button variant="outline" onClick={async () => {
+                if (clockBusy.current) return;
+                clockBusy.current = true;
+                setState('clocking');
+                try { await recoverOriginal(lineData.lineUserId, true); }
+                catch (error) { setErrorMessage(error instanceof Error ? error.message : '無法確認原次結果'); setState('unconfirmed'); }
+                finally { clockBusy.current = false; }
+              }}>確認原次打卡結果</Button>}
+              {canPrepareNext && lineData && <Button variant="outline" onClick={() => prepareClockIn(lineData.lineUserId, true)}>
+                核對最新打卡狀態
+              </Button>}
+              <a href="/api/line/login" className="text-sm text-green-800 underline">重新登入並核對原次結果</a>
             </div>
           )}
 

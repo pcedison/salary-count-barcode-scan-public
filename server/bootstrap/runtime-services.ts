@@ -5,6 +5,7 @@ import { loadCalculationRulesFromDb } from '../services/calculationRulesLoader';
 import { createLogger } from '../utils/logger';
 import { startLineOAuthCleanup, type RuntimeStoppable } from '../runtime/line-oauth-cleanup';
 import { startMonthlySalaryScheduler } from '../runtime/monthly-salary-scheduler';
+import { areBackgroundServicesEnabled } from '../config/runtimeMode';
 
 type RuntimeLogger = {
   info(message: string, ...meta: unknown[]): void;
@@ -33,6 +34,11 @@ export function startRuntimeServices(
   });
 
   void loadCalculationRulesFromDb();
+
+  if (!areBackgroundServicesEnabled()) {
+    logger.info('Background services disabled; one-time calculation rules load remains enabled, but no retention, backup or scheduler jobs will run');
+    return { stop() {} };
+  }
 
   const monitoringHandle = startMonitoring(monitoringIntervalMs);
   const backupHandle = setupAutomaticBackups();

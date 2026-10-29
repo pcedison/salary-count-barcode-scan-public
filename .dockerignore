@@ -22,6 +22,15 @@ test-results
 .env.production.local
 .env.generated.local
 .env.supabase_primary
+**/.env*
+.temp
+**/.temp/**
+**/*.sqlite*
+**/*.db
+**/*.dump
+**/*.pem
+**/*.key
+**/gha-creds-*.json
 
 docs
 *.md

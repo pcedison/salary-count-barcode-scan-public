@@ -238,6 +238,7 @@ export function registerDashboardRoutes(app: Express) {
         data: await getOperationLogs(parsedDate, type)
       });
     } catch (err) {
+      if ((err as { code?: string })?.code === 'AUDIT_LOGS_EXTERNAL') return res.status(501).json({ success: false, code: 'AUDIT_LOGS_EXTERNAL', message: '稽核事件由外部日誌平台保存，請至 Cloud Logging 查閱 attendance-audit。' });
       return handleDashboardError(res, err, 'Failed to load dashboard logs');
     }
   });
@@ -250,6 +251,7 @@ export function registerDashboardRoutes(app: Express) {
         data: await getAvailableLogDates()
       });
     } catch (err) {
+      if ((err as { code?: string })?.code === 'AUDIT_LOGS_EXTERNAL') return res.status(501).json({ success: false, code: 'AUDIT_LOGS_EXTERNAL', message: '稽核事件由外部日誌平台保存，請至 Cloud Logging 查閱 attendance-audit。' });
       return handleDashboardError(res, err, 'Failed to list dashboard log dates');
     }
   });
