@@ -116,6 +116,24 @@ describe('buildHolidayReminder', () => {
     expect(report.text).not.toContain('五、');
   });
 
+  it('counts barcode scans flagged isHoliday as real work, but not holiday-setting records', () => {
+    const report = buildHolidayReminder({
+      target: { year: 2026, month: 12 },
+      today: '2026-12-28',
+      employees: [emp(1, '阿明'), emp(2, '小美')],
+      attendance: [
+        work(1, '2026/12/01'),
+        work(2, '2026/12/01'),
+        // 有人先被標了假，當天掃碼的紀錄會帶 isHoliday=true，但確實有上班
+        { employeeId: 1, date: '2026/12/25', clockIn: '08:00', clockOut: '17:00', isHoliday: true, holidayType: null, holidayId: null },
+        // 後台病假設定產生的紀錄（帶 holidayId）不算上班
+        { employeeId: 2, date: '2026-12-25', clockIn: '08:00', clockOut: '17:00', isHoliday: true, holidayType: 'sick_leave', holidayId: 9 },
+      ] as never,
+      holidayRows: [mark(2, '2026-12-25', 'sick_leave')],
+    });
+    expect(report.workedOnHoliday.map((n) => n.employeeName)).toEqual(['阿明']);
+  });
+
   it('checks next year list in December', () => {
     const base = {
       target: { year: 2026, month: 12 },

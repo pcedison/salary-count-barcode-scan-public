@@ -55,7 +55,8 @@ export interface HolidayWorkedNotice {
 }
 
 type EmployeeLike = Pick<Employee, 'id' | 'name' | 'active' | 'deletedAt'>;
-type AttendanceLike = Pick<TemporaryAttendance, 'employeeId' | 'date' | 'clockIn' | 'clockOut' | 'isHoliday' | 'holidayType'>;
+type AttendanceLike = Pick<TemporaryAttendance, 'employeeId' | 'date' | 'clockIn' | 'clockOut' | 'isHoliday' | 'holidayType'>
+  & Partial<Pick<TemporaryAttendance, 'holidayId'>>;
 type HolidayLike = Pick<Holiday, 'employeeId' | 'date' | 'holidayType' | 'name'>;
 
 /** 把 YYYY/M/D、YYYY-MM-DD 等格式統一成 YYYY-MM-DD。 */
@@ -102,9 +103,13 @@ function isUsableClockTime(value: string | null | undefined): boolean {
   return Boolean(value && value.trim() && value !== '--:--');
 }
 
-/** 實際上班打卡（不是假日紀錄、不是 --:--）。 */
+/**
+ * 實際上班打卡：有真實打卡時間，且不是後台假日設定產生的紀錄（那些帶 holidayId）。
+ * 不看 isHoliday：掃碼打卡時只要當天有任何人的假日設定，紀錄就會被標成 isHoliday，
+ * 但仍是真的上班。
+ */
 export function isRealWorkRecord(record: AttendanceLike): boolean {
-  return !record.isHoliday && isUsableClockTime(record.clockIn);
+  return record.holidayId == null && isUsableClockTime(record.clockIn);
 }
 
 function groupByEmployee<T extends { employeeId: number | null }>(rows: T[]): Map<number, T[]> {
