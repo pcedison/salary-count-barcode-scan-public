@@ -5,12 +5,24 @@ import {
 } from '../services/monthlySalaryAutomation';
 import { createLogger } from '../utils/logger';
 import { areBackgroundServicesEnabled } from '../config/runtimeMode';
+import { getHolidayAutomationConfig } from '../config/holidayAutomation';
 
 export interface RuntimeStoppable {
   stop(): void;
 }
 
 const log = createLogger('monthly-salary-scheduler');
+
+/** 月結前先補標上個月的國定假日；失敗只記 log，不擋月結。 */
+async function syncHolidaysBeforePayroll(now: Date): Promise<void> {
+  if (!getHolidayAutomationConfig().enabled) return;
+  try {
+    const { syncNationalHolidays } = await import('./holiday-automation-scheduler');
+    await syncNationalHolidays(now);
+  } catch (error) {
+    log.error('National holiday sync before payroll failed; continuing with payroll', error);
+  }
+}
 
 let schedulerHandle: NodeJS.Timeout | null = null;
 let running = false;
@@ -29,6 +41,7 @@ export async function runScheduledMonthlySalaryAutomation(now = new Date()): Pro
 
   running = true;
   try {
+    await syncHolidaysBeforePayroll(now);
     const result = await runMonthlySalaryAutomation({ now, config });
     if (result.status === 'failed') {
       log.error('Scheduled monthly salary automation failed', result.reason);

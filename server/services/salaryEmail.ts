@@ -406,3 +406,53 @@ export async function sendSalaryAutomationTestEmail({
     messageId,
   };
 }
+
+export interface SendHolidayReminderEmailOptions {
+  target: SalaryReportTarget;
+  subject: string;
+  text: string;
+  config?: SalaryAutomationConfig;
+}
+
+/**
+ * 月底假日提醒信。收件人與寄信設定沿用月結信；Resend 以月份＋內容當冪等金鑰，
+ * 同一天重啟服務不會重複寄出相同內容。
+ */
+export async function sendHolidayReminderEmail({
+  target,
+  subject,
+  text,
+  config = getSalaryAutomationConfig(),
+}: SendHolidayReminderEmailOptions): Promise<SalaryEmailSendResult> {
+  if (!isSalaryEmailConfigured(config)) {
+    throw new Error(
+      'Holiday reminder email is not configured. Set SALARY_AUTOMATION_EMAIL_TO and either ' +
+        'RESEND_API_KEY with RESEND_FROM, or SMTP_HOST and SMTP_FROM.'
+    );
+  }
+
+  const message: SalaryEmailMessage = {
+    from: resolveSender(config),
+    to: config.emailRecipients,
+    subject,
+    text,
+  };
+  const monthKey = `${target.year}-${String(target.month).padStart(2, '0')}`;
+  const fingerprint = createHash('sha256').update(JSON.stringify(message)).digest('hex');
+
+  try {
+    const messageId = await deliverSalaryEmail(config, message, {
+      idempotencyKey: `holiday-reminder/${monthKey}/${fingerprint}`,
+    });
+    return { recipients: config.emailRecipients, messageId };
+  } catch (error) {
+    if (error instanceof SalaryEmailDeliveryError && error.providerErrorName === 'invalid_idempotent_request') {
+      log.warn('Holiday reminder email not resent; identical reminder already sent within 24 hours', {
+        code: RESEND_DUPLICATE_SUPPRESSED_CODE,
+        target,
+      });
+      return { recipients: config.emailRecipients, duplicateSuppressed: true };
+    }
+    throw error;
+  }
+}

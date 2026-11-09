@@ -14,6 +14,8 @@ const lineCleanupStop = vi.fn();
 const startLineOAuthCleanup = vi.fn(() => ({ stop: lineCleanupStop }));
 const monthlySalaryStop = vi.fn();
 const startMonthlySalaryScheduler = vi.fn(() => ({ stop: monthlySalaryStop }));
+const holidayAutomationStop = vi.fn();
+const startHolidayAutomationScheduler = vi.fn(() => ({ stop: holidayAutomationStop }));
 
 vi.mock('../db-monitoring', () => ({
   startMonitoring,
@@ -40,6 +42,10 @@ vi.mock('../runtime/monthly-salary-scheduler', () => ({
   startMonthlySalaryScheduler,
 }));
 
+vi.mock('../runtime/holiday-automation-scheduler', () => ({
+  startHolidayAutomationScheduler,
+}));
+
 describe('startRuntimeServices', () => {
   afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
@@ -52,7 +58,7 @@ describe('startRuntimeServices', () => {
     const services = startRuntimeServices(); services.stop(); services.stop();
     expect(loadCalculationRulesFromDb).toHaveBeenCalledOnce();
     expect(ensureRuntimeDirectoriesExist).toHaveBeenCalledOnce();
-    for (const job of [startMonitoring, setupAutomaticBackups, startEmployeeRetentionScheduler, startLineOAuthCleanup, startMonthlySalaryScheduler]) expect(job).not.toHaveBeenCalled();
+    for (const job of [startMonitoring, setupAutomaticBackups, startEmployeeRetentionScheduler, startLineOAuthCleanup, startMonthlySalaryScheduler, startHolidayAutomationScheduler]) expect(job).not.toHaveBeenCalled();
   });
 
   it('starts all runtime jobs and stops them through a single contract', async () => {
@@ -66,6 +72,7 @@ describe('startRuntimeServices', () => {
     expect(startEmployeeRetentionScheduler).toHaveBeenCalledTimes(1);
     expect(startLineOAuthCleanup).toHaveBeenCalledTimes(1);
     expect(startMonthlySalaryScheduler).toHaveBeenCalledTimes(1);
+    expect(startHolidayAutomationScheduler).toHaveBeenCalledTimes(1);
 
     runtimeServices.stop();
 
@@ -74,6 +81,7 @@ describe('startRuntimeServices', () => {
     expect(stopEmployeeRetentionScheduler).toHaveBeenCalledWith(expect.objectContaining({ kind: 'retention' }));
     expect(lineCleanupStop).toHaveBeenCalledTimes(1);
     expect(monthlySalaryStop).toHaveBeenCalledTimes(1);
+    expect(holidayAutomationStop).toHaveBeenCalledTimes(1);
   });
 
   it('makes stop idempotent', async () => {
@@ -89,5 +97,6 @@ describe('startRuntimeServices', () => {
     expect(stopEmployeeRetentionScheduler).toHaveBeenCalledTimes(1);
     expect(lineCleanupStop).toHaveBeenCalledTimes(1);
     expect(monthlySalaryStop).toHaveBeenCalledTimes(1);
+    expect(holidayAutomationStop).toHaveBeenCalledTimes(1);
   });
 });
