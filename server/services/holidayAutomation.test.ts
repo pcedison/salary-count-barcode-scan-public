@@ -134,6 +134,26 @@ describe('buildHolidayReminder', () => {
     expect(report.workedOnHoliday.map((n) => n.employeeName)).toEqual(['阿明']);
   });
 
+  it('treats holiday types set directly on attendance records as marked', () => {
+    const attendance: unknown[] = [];
+    for (let day = 1; day <= 27; day += 1) {
+      const date = `2026-11-${String(day).padStart(2, '0')}`;
+      if (isWeekendDate(date) || date === '2026-11-13') continue;
+      attendance.push(work(1, date));
+    }
+    // 考勤表上直接把 11/13 改成颱風假（沒有 holidays 列）
+    attendance.push({ employeeId: 1, date: '2026/11/13', clockIn: '--:--', clockOut: '--:--', isHoliday: true, holidayType: 'typhoon_leave', holidayId: null });
+    const report = buildHolidayReminder({
+      target: { year: 2026, month: 11 },
+      today: '2026-11-28',
+      employees: [emp(1, '阿明')],
+      attendance: attendance as never,
+      holidayRows: [],
+    });
+    expect(report.unmarkedNoClockInDates).toEqual([]);
+    expect(report.text).toContain('- 阿明：11/13（五） 颱風假');
+  });
+
   it('checks next year list in December', () => {
     const base = {
       target: { year: 2026, month: 12 },

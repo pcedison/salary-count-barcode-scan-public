@@ -217,9 +217,20 @@ export function buildHolidayReminder(input: HolidayReminderInput): HolidayRemind
     .sort((a, b) => a.id - b.id);
   const workingIds = new Set(workingEmployees.map((employee) => employee.id));
 
-  const holidayRows = input.holidayRows
-    .filter((row) => row.employeeId != null && workingIds.has(row.employeeId))
-    .map((row) => ({ ...row, date: normalizeDateKey(row.date) }));
+  // 已標假別有兩個來源：後台「假日設定」（holidays 表）與考勤表上直接改的假別
+  // （只改 temporary_attendance.holidayType，不會產生 holidays 列）。兩邊合併、同日同假別去重。
+  const markKeys = new Set<string>();
+  const holidayRows: Array<{ employeeId: number; date: string; holidayType: string }> = [];
+  const addMark = (employeeId: number | null, date: string | null | undefined, holidayType: string | null | undefined) => {
+    if (employeeId == null || !workingIds.has(employeeId) || !holidayType) return;
+    const normalized = normalizeDateKey(date);
+    const key = `${employeeId}|${normalized}|${holidayType}`;
+    if (markKeys.has(key)) return;
+    markKeys.add(key);
+    holidayRows.push({ employeeId, date: normalized, holidayType });
+  };
+  for (const row of input.holidayRows) addMark(row.employeeId, row.date, row.holidayType);
+  for (const record of input.attendance) addMark(record.employeeId, record.date, record.holidayType);
   const holidayRowsByEmployee = groupByEmployee(holidayRows);
 
   const lines: string[] = [];
