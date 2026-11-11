@@ -120,6 +120,21 @@ When `SALARY_AUTOMATION_ENABLED=true`, startup is refused (in every environment,
 as before) unless recipients are set and the active transport is complete:
 Resend needs `RESEND_FROM`; SMTP needs `SMTP_HOST` and `SMTP_FROM`.
 
+### 假日自動化（國定假日自動標註＋月底提醒信）
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `HOLIDAY_AUTOMATION_ENABLED` | `false` | 開啟後才會自動標註與寄提醒信；背景服務停用時（`APP_BACKGROUND_SERVICES=disabled`、Cloud Run 模式）不會執行 |
+| `HOLIDAY_REMINDER_DAY` | `28` | 每月幾號寄提醒信（1–28） |
+| `HOLIDAY_REMINDER_HOUR` | `9` | 當天幾點後寄（以 `SALARY_AUTOMATION_TIMEZONE` 計） |
+| `HOLIDAY_AUTOMATION_INTERVAL_MS` | `3600000` | 檢查間隔 |
+
+- 國定假日清單在 `shared/taiwanStatutoryHolidays.ts`（勞工 16 天，不含公務員調整放假與補假）。每年 12 月的提醒信會檢查下一年是否已收錄，沒有就要在這個檔案補上。
+- 只標已經過去的日期；該月沒有實際打卡、已結算（已有薪資紀錄）、或該日已有考勤／假日設定的員工會跳過。月結排程在結算前也會先補標一次。
+- 國定假日在計薪上不扣不加，自動標註不改變薪資金額；颱風假、停班等天災假無法預知，只在提醒信列出「平日全廠沒人打卡」的日子，仍需管理員到後台標註。
+- 管理員若刪掉某天的自動標註而沒有改標其他假別，下一次檢查會再標回來；要改假別請直接新增其他假別。
+- 提醒信收件人與寄信設定沿用月結信（`SALARY_AUTOMATION_EMAIL_TO`、Resend 或 SMTP），內容不會新增或修改任何資料。
+
 ### 為什麼需要 Resend
 
 Railway 文件說明 Free、Trial、Hobby 方案停用 SMTP，僅 Pro 以上方案可用；

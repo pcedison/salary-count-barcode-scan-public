@@ -19,7 +19,7 @@ export interface SalaryAutomationConfig {
   chromiumExecutablePath?: string;
 }
 
-function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
+export function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
   if (value === undefined) {
     return defaultValue;
   }
@@ -27,7 +27,7 @@ function parseBoolean(value: string | undefined, defaultValue: boolean): boolean
   return value.trim().toLowerCase() === 'true';
 }
 
-function parseInteger(
+export function parseInteger(
   value: string | undefined,
   defaultValue: number,
   options: { min: number; max: number }
