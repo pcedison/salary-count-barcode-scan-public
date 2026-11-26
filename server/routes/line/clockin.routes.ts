@@ -7,6 +7,12 @@ import { storage } from '../../storage';
 import { handleRouteError } from '../route-helpers';
 import { getTaiwanDateTimeParts } from '../scan-helpers';
 import { sendClockInNotification } from '../../services/line.service';
+import {
+  WORKED_HOLIDAY_TYPE,
+  hasWorkedHolidayOn,
+  isUntouchedWorkedPlaceholder,
+  placeholderToClockIn
+} from '../../services/workedHolidayAttendance';
 import { log, requireLineSession, ensureConfigured, assertAuthorizedLineUser } from './shared';
 
 export function registerLineClockInRoutes(app: Express): void {
@@ -62,14 +68,21 @@ export function registerLineClockInRoutes(app: Express): void {
         attendance = await storage.updateTemporaryAttendance(incomplete.id, { clockOut: time });
         isClockIn = false;
       } else {
-        attendance = await storage.createTemporaryAttendance({
-          employeeId: employee.id,
-          date: dateKey,
-          clockIn: time,
-          clockOut: '',
-          isHoliday: false,
-          isBarcodeScanned: true
-        });
+        const workedPlaceholder = todayFiltered.find(isUntouchedWorkedPlaceholder);
+        if (workedPlaceholder) {
+          attendance = await storage.updateTemporaryAttendance(workedPlaceholder.id, placeholderToClockIn(time));
+        } else {
+          const workedHoliday = await hasWorkedHolidayOn(employee.id, dateKey, storage);
+          attendance = await storage.createTemporaryAttendance({
+            employeeId: employee.id,
+            date: dateKey,
+            clockIn: time,
+            clockOut: '',
+            isHoliday: workedHoliday,
+            isBarcodeScanned: true,
+            ...(workedHoliday ? { holidayType: WORKED_HOLIDAY_TYPE } : {})
+          });
+        }
         isClockIn = true;
       }
 
