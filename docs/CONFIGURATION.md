@@ -137,6 +137,19 @@ Resend needs `RESEND_FROM`; SMTP needs `SMTP_HOST` and `SMTP_FROM`.
 - 管理員若刪掉某天的自動標註而沒有改標其他假別，下一次檢查會再標回來；要改假別請直接新增其他假別。
 - 提醒信收件人與寄信設定沿用月結信（`SALARY_AUTOMATION_EMAIL_TO`、Resend 或 SMTP），內容不會新增或修改任何資料。
 
+### 月結前檢查（颱風假、國定假日、週六加班）
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `PAYROLL_REVIEW_ENABLED` | `true` | 自動月結前先檢查上個月；有系統沒標註的疑點就寄一封信給 `SALARY_AUTOMATION_EMAIL_TO` 並暫停該月月結 |
+
+- 需要資料表 `payroll_reviews`：部署前在資料庫執行 repo 根目錄的 `payroll_reviews_schema.sql`（只新增資料表，不動既有資料）。
+- 檢查對象：在職、該月有打卡的員工。疑點包括平日沒打卡也沒假別（全公司都沒打卡的日子合併成一筆，可能是颱風假）、
+  國定假日有打卡沒標「假日出勤」、國定假日沒有任何標記、週六週日有打卡沒標「假日出勤」。補行上班日當平日看。
+- 有疑點：存一筆 `pending`、寄信一次，該次月結不執行；07:20 備援那次看到已寄過就不重寄。寄信失敗會在下一次 tick 重寄。
+- 恢復：後台「薪資月結 Email」區塊會列出暫停的月份與疑點，按「確認無誤，執行月結」後標記已確認並立刻跑該月月結。
+- `PAYROLL_WRITES_PAUSED=true`（備援模式）時不檢查、不寄信。檢查本身讀不到資料（例如資料表還沒建）時只記 log、照常月結。
+
 ### 為什麼需要 Resend
 
 Railway 文件說明 Free、Trial、Hobby 方案停用 SMTP，僅 Pro 以上方案可用；

@@ -694,6 +694,14 @@ describe('db-monitoring restore safety', () => {
     expect(inspectSyntheticJournal().errors).toEqual([]);
   });
 
+  it('accepts backups made before the payroll_reviews table existed', () => {
+    const payload = journalBackupFixture();
+    const artifact = { ...payload, metadata: { ...payload.metadata,
+      excludedTables: payload.metadata.excludedTables.filter(table => table.tableName !== 'payroll_reviews') } };
+    readFileSyncMock.mockReturnValue(JSON.stringify(artifact));
+    expect(inspectSyntheticJournal().errors).toEqual([]);
+  });
+
   it('permits projection revisions advanced by automation after the latest stored journal', () => {
     const payload = journalBackupFixture();
     payload.salaryRecords[0].revision = 7;

@@ -774,7 +774,11 @@ function collectAuthorityMetadataIssues(
       .map((entry) => entry.tableName)
       .filter((tableName): tableName is string => typeof tableName === 'string')
       .sort();
-    const expectedExcluded = EXCLUDED_TABLE_NAMES.filter(name => !(legacyJournal && name === 'monthly_salary_runs')).sort();
+    // 舊備份還沒有 payroll_reviews（月結前檢查）這張排除表；它只存暫停狀態，缺少不影響還原。
+    const expectedExcluded = EXCLUDED_TABLE_NAMES.filter(name =>
+      !(legacyJournal && name === 'monthly_salary_runs') &&
+      !(name === 'payroll_reviews' && !actualExcluded.includes('payroll_reviews'))
+    ).sort();
 
     if (JSON.stringify(actualExcluded) !== JSON.stringify(expectedExcluded)) {
       errors.push(

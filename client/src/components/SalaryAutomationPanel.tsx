@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import PayrollReviewNotice from "@/components/PayrollReviewNotice";
 import { apiRequest } from "@/lib/queryClient";
 import {
   buildSalaryAutomationRunRequest,
@@ -175,6 +176,7 @@ export default function SalaryAutomationPanel({
   return (
     <>
       <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
+        <PayrollReviewNotice />
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="flex items-start gap-3">
             <div className="rounded-lg bg-primary/10 p-2 text-primary">

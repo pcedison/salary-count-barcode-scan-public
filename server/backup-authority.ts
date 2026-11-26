@@ -155,6 +155,10 @@ export const EXCLUDED_BACKUP_TABLES: readonly ExcludedAuthorityTable[] = [
   {
     tableName: 'monthly_salary_runs',
     reason: 'Runtime execution/PDF/email metadata; operator must reconcile after data restore, with no automatic rerun.'
+  },
+  {
+    tableName: 'payroll_reviews',
+    reason: 'Pre-payroll review pause state; a restored database should be re-checked before the next payroll, not replay old confirmations.'
   }
 ] as const;
 

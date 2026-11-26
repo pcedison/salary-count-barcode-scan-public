@@ -33,6 +33,7 @@ let running = false;
 
 export type ScheduledMonthlySalaryOutcome =
   | { ran: false; reason: 'not_due' | 'already_running' | 'background_disabled' }
+  | { ran: false; reason: 'awaiting_review'; target: { year: number; month: number } }
   | {
       ran: true;
       status: 'succeeded' | 'skipped' | 'failed' | 'dry-run';
@@ -69,6 +70,12 @@ export async function runScheduledMonthlySalaryAutomation(
   running = true;
   try {
     await syncHolidaysBeforePayroll(now);
+    const { runPrepayrollReviewGate } = await import('./prepayroll-review');
+    const gate = await runPrepayrollReviewGate(now);
+    if (!gate.proceed) {
+      log.warn('Monthly salary automation paused for pre-payroll review', { target: gate.target, findingCount: gate.findingCount });
+      return { ran: false, reason: 'awaiting_review', target: gate.target };
+    }
     const result = await runMonthlySalaryAutomation({ now, config });
     if (result.status === 'failed') {
       log.error('Scheduled monthly salary automation failed', result.reason);

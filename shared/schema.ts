@@ -226,6 +226,25 @@ export const insertMonthlySalaryRunSchema = createInsertSchema(monthlySalaryRuns
 export type InsertMonthlySalaryRun = typeof monthlySalaryRuns.$inferInsert;
 export type MonthlySalaryRun = typeof monthlySalaryRuns.$inferSelect;
 
+// 月結前檢查：有疑點時暫停當月月結，等管理員在後台確認後才執行。
+export const payrollReviews = pgTable("payroll_reviews", {
+  id: serial("id").primaryKey(),
+  salaryYear: integer("salary_year").notNull(),
+  salaryMonth: integer("salary_month").notNull(),
+  status: text("status", { enum: ["pending", "confirmed"] }).notNull().default("pending"),
+  findings: json("findings").$type<unknown[]>().notNull().default([]),
+  emailText: text("email_text"),
+  notifiedAt: timestamp("notified_at", { withTimezone: true }),
+  confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  confirmedBy: text("confirmed_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+}, (table) => ({
+  payrollReviewMonthUniq: unique("payroll_reviews_year_month_uniq").on(table.salaryYear, table.salaryMonth),
+}));
+
+export type PayrollReview = typeof payrollReviews.$inferSelect;
+export type InsertPayrollReview = typeof payrollReviews.$inferInsert;
+
 // Holiday settings.
 export const holidays = pgTable("holidays", {
   id: serial("id").primaryKey(),

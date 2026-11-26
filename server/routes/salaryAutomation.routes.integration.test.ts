@@ -8,10 +8,15 @@ vi.mock('../storage', () => ({ storage: {} }));
 vi.mock('../repositories/monthlySalaryRunRepository', () => ({
   monthlySalaryRunRepository: { getRecentMonthlySalaryRuns: vi.fn(async () => []) },
 }));
+const { runMonthlySalaryAutomation, payrollReviewRepository } = vi.hoisted(() => ({
+  runMonthlySalaryAutomation: vi.fn(),
+  payrollReviewRepository: { getPendingReviews: vi.fn(), confirm: vi.fn() },
+}));
 vi.mock('../services/monthlySalaryAutomation', () => ({
   getPreviousSalaryMonthTarget: () => ({ year: 2026, month: 9 }),
-  runMonthlySalaryAutomation: vi.fn(),
+  runMonthlySalaryAutomation,
 }));
+vi.mock('../repositories/payrollReviewRepository', () => ({ payrollReviewRepository }));
 const { sendSalaryAutomationTestEmail } = vi.hoisted(() => ({ sendSalaryAutomationTestEmail: vi.fn() }));
 vi.mock('../services/salaryEmail', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/salaryEmail')>()),
@@ -121,5 +126,70 @@ describe('salary automation test-email route', () => {
       await server.close();
       vi.restoreAllMocks();
     }
+  });
+});
+
+describe('pre-payroll review routes', () => {
+  async function call(path: string, init: { method?: string; body?: unknown; admin?: boolean } = {}) {
+    const server = await createJsonTestServer(registerSalaryAutomationRoutes, {
+      setupApp: async (app) => setupTestAdminSession(app),
+    });
+    try {
+      return await jsonRequest<Record<string, unknown>>(server.baseUrl, path, {
+        method: init.method ?? 'GET',
+        headers: {
+          'content-type': 'application/json',
+          ...(init.admin === false ? {} : { [TEST_ADMIN_HEADER]: 'true' }),
+        },
+        ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+      });
+    } finally {
+      await server.close();
+    }
+  }
+
+  afterEach(() => {
+    runMonthlySalaryAutomation.mockReset();
+    payrollReviewRepository.getPendingReviews.mockReset();
+    payrollReviewRepository.confirm.mockReset();
+  });
+
+  it('lists paused months for admins only', async () => {
+    payrollReviewRepository.getPendingReviews.mockResolvedValue([
+      { id: 1, salaryYear: 2026, salaryMonth: 11, status: 'pending', findings: [] },
+    ]);
+    const ok = await call('/api/salary-automation/reviews/pending');
+    expect(ok.response.status).toBe(200);
+    expect(ok.body).toEqual([expect.objectContaining({ salaryYear: 2026, salaryMonth: 11 })]);
+
+    const denied = await call('/api/salary-automation/reviews/pending', { admin: false });
+    expect(denied.response.status).toBe(401);
+  });
+
+  it('confirms the month and then runs that month\'s payroll', async () => {
+    payrollReviewRepository.confirm.mockResolvedValue({ id: 1, salaryYear: 2026, salaryMonth: 11, status: 'confirmed' });
+    runMonthlySalaryAutomation.mockResolvedValue({ target: { year: 2026, month: 11 }, status: 'succeeded' });
+
+    const res = await call('/api/salary-automation/reviews/confirm', { method: 'POST', body: { year: 2026, month: 11 } });
+
+    expect(res.response.status).toBe(200);
+    expect(payrollReviewRepository.confirm).toHaveBeenCalledWith({ year: 2026, month: 11 }, 'admin');
+    expect(runMonthlySalaryAutomation).toHaveBeenCalledWith({ target: { year: 2026, month: 11 } });
+    expect(res.body).toMatchObject({ result: { status: 'succeeded' } });
+  });
+
+  it('does not run payroll when nothing is waiting for confirmation', async () => {
+    payrollReviewRepository.confirm.mockResolvedValue(undefined);
+    const res = await call('/api/salary-automation/reviews/confirm', { method: 'POST', body: { year: 2026, month: 11 } });
+    expect(res.response.status).toBe(409);
+    expect(runMonthlySalaryAutomation).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid month and unauthenticated callers', async () => {
+    const bad = await call('/api/salary-automation/reviews/confirm', { method: 'POST', body: { year: 2026, month: 13 } });
+    expect(bad.response.status).toBe(400);
+    const denied = await call('/api/salary-automation/reviews/confirm', { method: 'POST', body: { year: 2026, month: 11 }, admin: false });
+    expect(denied.response.status).toBe(401);
+    expect(payrollReviewRepository.confirm).not.toHaveBeenCalled();
   });
 });

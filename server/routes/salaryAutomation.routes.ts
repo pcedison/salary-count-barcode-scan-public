@@ -9,6 +9,7 @@ import {
 } from '../config/salaryAutomation';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { monthlySalaryRunRepository } from '../repositories/monthlySalaryRunRepository';
+import { payrollReviewRepository } from '../repositories/payrollReviewRepository';
 import {
   getPreviousSalaryMonthTarget,
   runMonthlySalaryAutomation,
@@ -25,6 +26,11 @@ const runRequestSchema = z.object({
   dryRun: z.boolean().optional(),
   force: z.boolean().optional(),
   sendEmail: z.boolean().optional(),
+});
+
+const reviewConfirmSchema = z.object({
+  year: z.number().int().min(2000).max(2100),
+  month: z.number().int().min(1).max(12),
 });
 
 const testEmailRequestSchema = z.object({
@@ -88,6 +94,44 @@ export function registerSalaryAutomationRoutes(app: Express): void {
       }
 
       return res.json(result);
+    } catch (err) {
+      return handleRouteError(err, res);
+    }
+  });
+
+  // 月結前檢查：列出因疑點而暫停的月份。
+  app.get('/api/salary-automation/reviews/pending', requireAdmin(), async (_req, res) => {
+    try {
+      return res.json(await payrollReviewRepository.getPendingReviews());
+    } catch (err) {
+      return handleRouteError(err, res);
+    }
+  });
+
+  // 管理員看過疑點、補好考勤後按「確認無誤，執行月結」：標記已確認並立刻跑那個月的月結。
+  app.post('/api/salary-automation/reviews/confirm', requireAdmin(), async (req, res) => {
+    try {
+      const target = reviewConfirmSchema.parse(req.body ?? {});
+      const review = await payrollReviewRepository.confirm(target, 'admin');
+      if (!review) {
+        return res.status(409).json({
+          code: 'payroll_review_not_pending',
+          message: '這個月份沒有待確認的月結前檢查。',
+        });
+      }
+
+      const result = await runMonthlySalaryAutomation({ target });
+      if (result.status === 'failed') {
+        return res.status(500).json({
+          status: 'failed',
+          code: 'salary_automation_failed',
+          message: 'Salary automation did not complete. Check the run history before retrying.',
+          review,
+          target: result.target,
+        });
+      }
+
+      return res.json({ review, result });
     } catch (err) {
       return handleRouteError(err, res);
     }
