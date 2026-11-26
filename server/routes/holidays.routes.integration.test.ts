@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
 
 const storageMock = vi.hoisted(() => ({
   getAllHolidays: vi.fn(async () => state.holidays),
+  getTaiwanHolidays: vi.fn(async () => []),
   getHolidayById: vi.fn(async (id: number) => state.holidays.find((holiday) => holiday.id === id)),
   createHoliday: vi.fn(async (holiday: Record<string, any>) => {
     const created = { id: state.nextHolidayId++, ...holiday };
@@ -72,7 +73,7 @@ function scannedRow(overrides: Record<string, any> = {}) {
   return {
     id: 1,
     employeeId: 7,
-    date: '2026/11/14',
+    date: '2026/11/18',
     clockIn: '07:56',
     clockOut: '19:03',
     isHoliday: false,
@@ -91,7 +92,7 @@ async function addHoliday(baseUrl: string, body: Record<string, any>) {
   });
 }
 
-const workedEntry = { employeeId: 7, date: '2026/11/14', name: '一般休息日加班', holidayType: 'worked' };
+const workedEntry = { employeeId: 7, date: '2026/11/18', name: '一般休息日加班', holidayType: 'worked' };
 
 describe('holiday routes keep 考勤 in step with 假日出勤', () => {
   it('marks an existing scanned row as 假日出勤 when the entry is added', async () => {

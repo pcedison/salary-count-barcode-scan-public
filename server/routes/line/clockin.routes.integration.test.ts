@@ -22,6 +22,7 @@ const storageMock = vi.hoisted(() => ({
   ),
   getTemporaryAttendanceByEmployeeAndDate: vi.fn(async (): Promise<Array<Record<string, any>>> => []),
   getAllHolidays: vi.fn(async (): Promise<Array<Record<string, any>>> => []),
+  getTaiwanHolidays: vi.fn(async (): Promise<Array<Record<string, any>>> => []),
   updateTemporaryAttendance: vi.fn(async (id: number, patch: Record<string, any>) => ({ id, ...patch })),
   createTemporaryAttendance: vi.fn(async (attendance: Record<string, any>) => ({ id: 500, ...attendance }))
 }));
@@ -98,6 +99,41 @@ function todayKey(): string {
 describe('line clock-in on a 假日出勤 day', () => {
   beforeEach(() => {
     lineState.employee = { id: 9, name: '加班員工', department: '測試部', active: true };
+    // Thursday 2026-11-26 10:00 in Taiwan; only Date is faked so the HTTP server keeps working
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-26T02:00:00.000Z') });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('marks a Saturday clock-in as 假日出勤 without any 假日設定 entry', async () => {
+    vi.setSystemTime(new Date('2026-11-28T02:00:00.000Z'));
+    const server = await startServer();
+    try {
+      await clockIn(server.baseUrl);
+      expect(storageMock.createTemporaryAttendance).toHaveBeenCalledWith(
+        expect.objectContaining({ date: '2026/11/28', isHoliday: true, holidayType: 'worked' })
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('leaves a 補班 Saturday clock-in unmarked', async () => {
+    vi.setSystemTime(new Date('2026-11-28T02:00:00.000Z'));
+    storageMock.getTaiwanHolidays.mockResolvedValueOnce([
+      { year: 2026, holidayDate: '2026-11-28', holidayName: '補行上班', isHoliday: false }
+    ]);
+    const server = await startServer();
+    try {
+      await clockIn(server.baseUrl);
+      const created = storageMock.createTemporaryAttendance.mock.calls[0]?.[0];
+      expect(created).toMatchObject({ date: '2026/11/28', isHoliday: false });
+      expect(created).not.toHaveProperty('holidayType');
+    } finally {
+      await server.close();
+    }
   });
 
   it('marks a new clock-in as 假日出勤 when 假日設定 has an entry for that employee and date', async () => {

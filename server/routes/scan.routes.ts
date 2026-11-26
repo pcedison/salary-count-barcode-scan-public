@@ -12,7 +12,7 @@ import {
   hasActiveScanAccessSession,
   hasAdminSession
 } from '../session';
-import { hasWorkedHolidayOn } from '../services/workedHolidayAttendance';
+import { shouldMarkClockInAsWorked } from '../services/workedHolidayAttendance';
 import { storage, type AttendanceScanAction } from '../storage';
 import { maskEmployeeIdentityForLog, normalizeEmployeeIdentity } from '../utils/employeeIdentity';
 import { createLogger } from '../utils/logger';
@@ -219,8 +219,8 @@ export function registerScanRoutes(app: Express): void {
   ): Promise<ScanSuccessResult> {
     const { dateKey, time, timestamp } = getTaiwanDateTimeParts();
     const isHolidayRecord = await isHoliday(dateKey);
-    // 不用快取：剛在假日設定加的假日出勤，下一次打卡就要生效
-    const workedHoliday = await hasWorkedHolidayOn(employee.id, dateKey, storage);
+    // 不用快取：剛在假日設定加的假日出勤，下一次打卡就要生效；週六（非補班日）也預設算假日出勤
+    const workedHoliday = await shouldMarkClockInAsWorked(employee.id, dateKey, storage);
 
     const upsertResult = await storage.upsertTemporaryAttendanceScan({
       employeeId: employee.id,

@@ -9,9 +9,9 @@ import { getTaiwanDateTimeParts } from '../scan-helpers';
 import { sendClockInNotification } from '../../services/line.service';
 import {
   WORKED_HOLIDAY_TYPE,
-  hasWorkedHolidayOn,
   isUntouchedWorkedPlaceholder,
-  placeholderToClockIn
+  placeholderToClockIn,
+  shouldMarkClockInAsWorked
 } from '../../services/workedHolidayAttendance';
 import { log, requireLineSession, ensureConfigured, assertAuthorizedLineUser } from './shared';
 
@@ -72,7 +72,7 @@ export function registerLineClockInRoutes(app: Express): void {
         if (workedPlaceholder) {
           attendance = await storage.updateTemporaryAttendance(workedPlaceholder.id, placeholderToClockIn(time));
         } else {
-          const workedHoliday = await hasWorkedHolidayOn(employee.id, dateKey, storage);
+          const workedHoliday = await shouldMarkClockInAsWorked(employee.id, dateKey, storage);
           attendance = await storage.createTemporaryAttendance({
             employeeId: employee.id,
             date: dateKey,

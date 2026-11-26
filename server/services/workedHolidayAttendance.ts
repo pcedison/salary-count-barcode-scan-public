@@ -1,5 +1,9 @@
-import type { Holiday, InsertTemporaryAttendance, TemporaryAttendance } from '@shared/schema';
+import type { Holiday, InsertTemporaryAttendance, TaiwanHoliday, TemporaryAttendance } from '@shared/schema';
 import { normalizeDateToSlash } from '@shared/utils/specialLeaveSync';
+
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('worked-holiday');
 
 /**
  * Keeps 考勤 rows in step with 假日出勤 ("worked") entries in 假日設定.
@@ -9,6 +13,10 @@ import { normalizeDateToSlash } from '@shared/utils/specialLeaveSync';
  * holidayType 'worked'. These helpers write that mark onto real clock-in rows
  * when the entry is added, take it off again when the entry is removed, and
  * mark clock-ins that happen after the entry exists.
+ *
+ * A clock-in on a Saturday (休息日) is also marked 假日出勤 on its own, unless
+ * taiwan_holidays lists that Saturday as a workday (is_holiday = false), which
+ * is how a government 補行上班 day, or a workday the company adds, is stored.
  *
  * Real clock-in rows never get a holidayId: deleting a holiday deletes every
  * row carrying its id, and a real clock-in must survive that.
@@ -27,6 +35,7 @@ type AttendanceRow = Pick<
 
 export interface WorkedHolidayAttendanceStore {
   getAllHolidays(): Promise<Holiday[]>;
+  getTaiwanHolidays(year?: number): Promise<TaiwanHoliday[]>;
   getTemporaryAttendanceByEmployeeAndDate(employeeId: number, date: string): Promise<TemporaryAttendance[]>;
   updateTemporaryAttendance(
     id: number,
@@ -91,6 +100,54 @@ export async function hasWorkedHolidayOn(
   return findWorkedHoliday(holidays, employeeId, date) !== undefined;
 }
 
+function parseDateParts(date: string): { year: number; month: number; day: number } | null {
+  const match = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(normalizeDateToSlash(date));
+  if (!match) return null;
+  return { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) };
+}
+
+export function isSaturday(date: string): boolean {
+  const parts = parseDateParts(date);
+  if (!parts) return false;
+  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay() === 6;
+}
+
+/** taiwan_holidays lists the date as a workday (補行上班, or a workday the company added). */
+export function isListedWorkday(date: string, calendar: TaiwanHoliday[]): boolean {
+  return calendar.some((entry) => entry.isHoliday === false && sameDate(entry.holidayDate, date));
+}
+
+/**
+ * A clock-in on this date counts as 休息日出勤 by default: it is a Saturday and
+ * the stored calendar does not list it as a workday. If the calendar cannot be
+ * read, the clock-in is left unmarked so a 補班 Saturday is never overpaid; the
+ * admin can still mark it in 考勤登記.
+ */
+export async function isDefaultRestDayWork(
+  date: string,
+  store: Pick<WorkedHolidayAttendanceStore, 'getTaiwanHolidays'>
+): Promise<boolean> {
+  if (!isSaturday(date)) return false;
+  const parts = parseDateParts(date);
+  try {
+    const calendar = await store.getTaiwanHolidays(parts?.year);
+    return !isListedWorkday(date, calendar);
+  } catch (error) {
+    log.warn(`無法讀取 ${date} 的行事曆，這筆週六打卡先不自動標假日出勤`, error);
+    return false;
+  }
+}
+
+/** Whether a new clock-in on this date should start out marked 假日出勤. */
+export async function shouldMarkClockInAsWorked(
+  employeeId: number,
+  date: string,
+  store: Pick<WorkedHolidayAttendanceStore, 'getAllHolidays' | 'getTaiwanHolidays'>
+): Promise<boolean> {
+  if (await hasWorkedHolidayOn(employeeId, date, store)) return true;
+  return isDefaultRestDayWork(date, store);
+}
+
 async function loadRowsForDate(holiday: Holiday, store: WorkedHolidayAttendanceStore): Promise<TemporaryAttendance[]> {
   if (!holiday.employeeId) return [];
   const rows = await store.getTemporaryAttendanceByEmployeeAndDate(holiday.employeeId, holiday.date);
@@ -115,7 +172,8 @@ export async function markExistingAttendanceAsWorked(
 
 /**
  * Takes the 假日出勤 mark off the employee's clock-in rows when its entry is deleted,
- * unless another 假日出勤 entry still covers that employee and date. Returns how many rows changed.
+ * unless another 假日出勤 entry still covers that employee and date, or the date is a Saturday
+ * that counts as 休息日出勤 anyway. Returns how many rows changed.
  */
 export async function revertAttendanceForDeletedWorkedHoliday(
   holiday: Holiday,
@@ -125,6 +183,8 @@ export async function revertAttendanceForDeletedWorkedHoliday(
 
   const otherHolidays = await store.getAllHolidays();
   if (findWorkedHoliday(otherHolidays, holiday.employeeId, holiday.date, holiday.id)) return 0;
+  // A Saturday stays 假日出勤 by default, entry or not
+  if (await isDefaultRestDayWork(holiday.date, store)) return 0;
 
   let updated = 0;
   for (const row of await loadRowsForDate(holiday, store)) {
