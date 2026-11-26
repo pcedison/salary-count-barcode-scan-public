@@ -27,16 +27,30 @@ async function syncHolidaysBeforePayroll(now: Date): Promise<void> {
 let schedulerHandle: NodeJS.Timeout | null = null;
 let running = false;
 
-export async function runScheduledMonthlySalaryAutomation(now = new Date()): Promise<void> {
-  if (!areBackgroundServicesEnabled()) return;
+export type ScheduledMonthlySalaryOutcome =
+  | { ran: false; reason: 'not_due' | 'already_running' }
+  | {
+      ran: true;
+      status: 'succeeded' | 'skipped' | 'failed' | 'dry-run';
+      reason?: string;
+      target: { year: number; month: number };
+    };
+
+/**
+ * 跑一次「該不該月結、該就月結」。由程式內排程（startMonthlySalaryScheduler）或
+ * 外部排程（POST /api/salary-automation/cron-tick）呼叫；背景服務開關只管前者。
+ */
+export async function runScheduledMonthlySalaryAutomation(
+  now = new Date()
+): Promise<ScheduledMonthlySalaryOutcome> {
   const config = getSalaryAutomationConfig();
   if (!shouldRunMonthlySalaryAutomation(now, config)) {
-    return;
+    return { ran: false, reason: 'not_due' };
   }
 
   if (running) {
     log.warn('Monthly salary automation is already running; skipping this tick');
-    return;
+    return { ran: false, reason: 'already_running' };
   }
 
   running = true;
@@ -45,7 +59,7 @@ export async function runScheduledMonthlySalaryAutomation(now = new Date()): Pro
     const result = await runMonthlySalaryAutomation({ now, config });
     if (result.status === 'failed') {
       log.error('Scheduled monthly salary automation failed', result.reason);
-      return;
+      return { ran: true, status: result.status, reason: result.reason, target: result.target };
     }
 
     log.info('Scheduled monthly salary automation finished', {
@@ -54,6 +68,7 @@ export async function runScheduledMonthlySalaryAutomation(now = new Date()): Pro
       recordCount: result.persistedRecords.length,
       skippedCount: result.skippedEmployees.length,
     });
+    return { ran: true, status: result.status, reason: result.reason, target: result.target };
   } finally {
     running = false;
   }
