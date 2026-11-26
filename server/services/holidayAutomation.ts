@@ -81,11 +81,6 @@ export function getLocalDateKey(now: Date, timeZone: string): string {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-export function getLocalHour(now: Date, timeZone: string): number {
-  const hour = new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', hourCycle: 'h23' }).format(now);
-  return Number(hour);
-}
-
 export function parseYearMonth(dateKey: string): YearMonth {
   const [year, month] = dateKey.split('-').map(Number);
   return { year, month };

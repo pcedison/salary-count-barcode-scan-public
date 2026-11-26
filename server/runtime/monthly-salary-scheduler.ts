@@ -13,11 +13,15 @@ export interface RuntimeStoppable {
 
 const log = createLogger('monthly-salary-scheduler');
 
-/** 月結前先補標上個月的國定假日；失敗只記 log，不擋月結。 */
+/**
+ * 月結前先補抓人事總處辦公日曆表（有問題會寄信），再補標上個月的國定假日。
+ * 失敗只記 log，不擋月結。
+ */
 async function syncHolidaysBeforePayroll(now: Date): Promise<void> {
   if (!getHolidayAutomationConfig().enabled) return;
   try {
-    const { syncNationalHolidays } = await import('./holiday-automation-scheduler');
+    const { syncGovOfficeCalendarIfEnabled, syncNationalHolidays } = await import('./holiday-automation-scheduler');
+    await syncGovOfficeCalendarIfEnabled(now);
     await syncNationalHolidays(now);
   } catch (error) {
     log.error('National holiday sync before payroll failed; continuing with payroll', error);
@@ -28,7 +32,7 @@ let schedulerHandle: NodeJS.Timeout | null = null;
 let running = false;
 
 export type ScheduledMonthlySalaryOutcome =
-  | { ran: false; reason: 'not_due' | 'already_running' }
+  | { ran: false; reason: 'not_due' | 'already_running' | 'background_disabled' }
   | {
       ran: true;
       status: 'succeeded' | 'skipped' | 'failed' | 'dry-run';
@@ -36,13 +40,22 @@ export type ScheduledMonthlySalaryOutcome =
       target: { year: number; month: number };
     };
 
+export interface ScheduledRunOptions {
+  /** cron：外部排程（Cloud Scheduler）叫醒；in_process：程式內計時器。 */
+  trigger?: 'cron' | 'in_process';
+}
+
 /**
- * 跑一次「該不該月結、該就月結」。由程式內排程（startMonthlySalaryScheduler）或
- * 外部排程（POST /api/salary-automation/cron-tick）呼叫；背景服務開關只管前者。
+ * 跑一次「該不該月結、該就月結」。程式內計時器受背景服務開關限制（Cloud Run 模式預設關閉）；
+ * 外部排程（POST /api/salary-automation/cron-tick）由單一排程叫醒，不受這個開關限制。
  */
 export async function runScheduledMonthlySalaryAutomation(
-  now = new Date()
+  now = new Date(),
+  options: ScheduledRunOptions = {}
 ): Promise<ScheduledMonthlySalaryOutcome> {
+  if (options.trigger !== 'cron' && !areBackgroundServicesEnabled()) {
+    return { ran: false, reason: 'background_disabled' };
+  }
   const config = getSalaryAutomationConfig();
   if (!shouldRunMonthlySalaryAutomation(now, config)) {
     return { ran: false, reason: 'not_due' };

@@ -21,7 +21,7 @@ export function registerSalaryAutomationCronRoutes(app: Express): void {
     }
 
     try {
-      const outcome = await runScheduledMonthlySalaryAutomation();
+      const outcome = await runScheduledMonthlySalaryAutomation(new Date(), { trigger: 'cron' });
       return res.json(outcome);
     } catch (error) {
       log.error('Cron-triggered monthly salary automation failed', error);

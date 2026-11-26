@@ -5,7 +5,6 @@ import { loadCalculationRulesFromDb } from '../services/calculationRulesLoader';
 import { createLogger } from '../utils/logger';
 import { startLineOAuthCleanup, type RuntimeStoppable } from '../runtime/line-oauth-cleanup';
 import { startMonthlySalaryScheduler } from '../runtime/monthly-salary-scheduler';
-import { startHolidayAutomationScheduler } from '../runtime/holiday-automation-scheduler';
 import { areBackgroundServicesEnabled } from '../config/runtimeMode';
 
 type RuntimeLogger = {
@@ -46,7 +45,6 @@ export function startRuntimeServices(
   const retentionHandle = startEmployeeRetentionScheduler();
   const lineOAuthCleanup = startLineOAuthCleanup({ logger });
   const monthlySalaryScheduler = startMonthlySalaryScheduler();
-  const holidayAutomationScheduler = startHolidayAutomationScheduler();
 
   let stopped = false;
 
@@ -62,7 +60,6 @@ export function startRuntimeServices(
       stopEmployeeRetentionScheduler(retentionHandle);
       lineOAuthCleanup.stop();
       monthlySalaryScheduler.stop();
-      holidayAutomationScheduler.stop();
     },
   };
 }

@@ -124,12 +124,14 @@ Resend needs `RESEND_FROM`; SMTP needs `SMTP_HOST` and `SMTP_FROM`.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `HOLIDAY_AUTOMATION_ENABLED` | `false` | 開啟後才會自動標註與寄提醒信；背景服務停用時（`APP_BACKGROUND_SERVICES=disabled`、Cloud Run 模式）不會執行 |
-| `HOLIDAY_REMINDER_DAY` | `28` | 每月幾號寄提醒信（1–28） |
-| `HOLIDAY_REMINDER_HOUR` | `9` | 當天幾點後寄（以 `SALARY_AUTOMATION_TIMEZONE` 計） |
-| `HOLIDAY_AUTOMATION_INTERVAL_MS` | `3600000` | 檢查間隔 |
+| `HOLIDAY_AUTOMATION_ENABLED` | `false` | 開啟後，每月 1 日月結前會補抓人事總處辦公日曆表並自動標國定假日。沒有每小時計時器，只在月結那次執行（程式內排程或 `POST /api/salary-automation/cron-tick`） |
+| `HOLIDAY_INCLUDE_ADJUSTED_DAYS_OFF` | `false` | 是否連公務員的補假、調整放假也自動標成國定假日（民間企業不一定照放，預設不標） |
 
-- 國定假日清單在 `shared/taiwanStatutoryHolidays.ts`（勞工 16 天，不含公務員調整放假與補假）。每年 12 月的提醒信會檢查下一年是否已收錄，沒有就要在這個檔案補上。
+- 國定假日來源：行政院人事行政總處「政府行政機關辦公日曆表」（政府資料開放平臺 dataset 14718，CSV）。
+  - 今年：資料庫（`taiwan_holidays`）沒有就抓一次。
+  - 明年：7 月起每月 1 日查一次，抓到存好就不再查；12 月 1 日還沒上架、資料集查不到、或 CSV 格式變了，會寄信給 `SALARY_AUTOMATION_EMAIL_TO`。
+  - 只接受 `www.dgpa.gov.tw` 的 https 下載網址；`PAYROLL_WRITES_PAUSED=true` 時只檢查、不寫入。
+  - 該年沒存過官方資料時，退回 `shared/taiwanStatutoryHolidays.ts` 的內建清單。
 - 只標已經過去的日期；該月沒有實際打卡、已結算（已有薪資紀錄）、或該日已有考勤／假日設定的員工會跳過。月結排程在結算前也會先補標一次。
 - 國定假日在計薪上不扣不加，自動標註不改變薪資金額；颱風假、停班等天災假無法預知，只在提醒信列出「平日全廠沒人打卡」的日子，仍需管理員到後台標註。
 - 管理員若刪掉某天的自動標註而沒有改標其他假別，下一次檢查會再標回來；要改假別請直接新增其他假別。

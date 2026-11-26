@@ -1,17 +1,30 @@
+/**
+ * 假日自動化（不再有每小時計時器）：
+ * - 每月 1 日外部排程叫醒時（POST /api/salary-automation/cron-tick）：
+ *   1. 補抓人事總處辦公日曆表（今年沒存過就抓；明年 7 月起每月查，存好就不再查），有問題寄信。
+ *   2. 月結前把上個月與本月已過去的國定假日補標到員工身上。
+ * - 國定假日來源：資料庫裡的人事總處辦公日曆表；該年沒存過才用程式內建清單。
+ */
+import { toHolidaysForMarking } from '@shared/govOfficeCalendar';
+import { getStatutoryHolidaysForMonth, type StatutoryHoliday } from '@shared/taiwanStatutoryHolidays';
+
 import { getHolidayAutomationConfig, type HolidayAutomationConfig } from '../config/holidayAutomation';
 import { arePayrollWritesPaused } from '../config/payrollWrites';
-import { areBackgroundServicesEnabled } from '../config/runtimeMode';
 import { getSalaryAutomationConfig, isSalaryEmailConfigured } from '../config/salaryAutomation';
+import { govCalendarRepository } from '../repositories/govCalendarRepository';
 import {
   holidayAutomationRepository,
   type ApplyMarkResult,
   type HolidayMonthContext,
 } from '../repositories/holidayAutomationRepository';
 import {
-  buildHolidayReminder,
+  defaultFetchText,
+  syncGovOfficeCalendar,
+  type GovCalendarSyncDeps,
+  type GovCalendarSyncResult,
+} from '../services/govCalendarSync';
+import {
   getLocalDateKey,
-  getLocalHour,
-  getNextYearHolidaysForReminder,
   getPreviousYearMonth,
   parseYearMonth,
   planNationalHolidayMarks,
@@ -21,22 +34,36 @@ import {
 import { sendHolidayReminderEmail } from '../services/salaryEmail';
 import { createLogger } from '../utils/logger';
 
-import type { RuntimeStoppable } from './line-oauth-cleanup';
-
 const log = createLogger('holiday-automation');
 
 export interface HolidayAutomationDeps {
   loadMonthContext(target: YearMonth): Promise<HolidayMonthContext>;
   applyNationalHolidayMark(mark: PlannedNationalHolidayMark): Promise<ApplyMarkResult>;
-  sendReminder(input: { target: YearMonth; subject: string; text: string }): Promise<unknown>;
-  isEmailConfigured(): boolean;
+  /** 該月要標的國定假日（官方辦公日曆表優先，沒有就用內建清單）。 */
+  loadHolidaysForMonth(target: YearMonth, config: HolidayAutomationConfig): Promise<StatutoryHoliday[]>;
+}
+
+export async function loadHolidaysForMonth(
+  target: YearMonth,
+  config: HolidayAutomationConfig,
+  loadYear: (year: number) => Promise<Awaited<ReturnType<typeof govCalendarRepository.getYear>>> = (year) =>
+    govCalendarRepository.getYear(year)
+): Promise<StatutoryHoliday[]> {
+  const prefix = `${target.year}-${String(target.month).padStart(2, '0')}-`;
+  const stored = await loadYear(target.year);
+  if (stored.length === 0) {
+    return getStatutoryHolidaysForMonth(target.year, target.month);
+  }
+  return toHolidaysForMarking(
+    stored.filter((day) => day.date.startsWith(prefix)),
+    { includeAdjustedDaysOff: config.includeAdjustedDaysOff }
+  );
 }
 
 const defaultDeps: HolidayAutomationDeps = {
   loadMonthContext: (target) => holidayAutomationRepository.loadMonthContext(target),
   applyNationalHolidayMark: (mark) => holidayAutomationRepository.applyNationalHolidayMark(mark),
-  sendReminder: (input) => sendHolidayReminderEmail(input),
-  isEmailConfigured: () => isSalaryEmailConfigured(getSalaryAutomationConfig()),
+  loadHolidaysForMonth: (target, config) => loadHolidaysForMonth(target, config),
 };
 
 export interface HolidaySyncResult {
@@ -60,8 +87,11 @@ export async function syncNationalHolidays(
   const today = getLocalDateKey(now, config.timeZone);
   const current = parseYearMonth(today);
   for (const target of [getPreviousYearMonth(current), current]) {
-    const context = await deps.loadMonthContext(target);
-    const marks = planNationalHolidayMarks({ target, today, ...context });
+    const [context, statutoryHolidays] = await Promise.all([
+      deps.loadMonthContext(target),
+      deps.loadHolidaysForMonth(target, config),
+    ]);
+    const marks = planNationalHolidayMarks({ target, today, ...context, statutoryHolidays });
     for (const mark of marks) {
       const outcome = await deps.applyNationalHolidayMark(mark);
       if (outcome === 'created') {
@@ -81,105 +111,26 @@ export async function syncNationalHolidays(
   return result;
 }
 
-const sentReminderMonths = new Set<string>();
+const defaultCalendarDeps: GovCalendarSyncDeps = {
+  fetchText: defaultFetchText,
+  loadYear: (year) => govCalendarRepository.getYear(year),
+  replaceYear: (year, days) => govCalendarRepository.replaceYear(year, days),
+  writesPaused: () => arePayrollWritesPaused(),
+  isEmailConfigured: () => isSalaryEmailConfigured(getSalaryAutomationConfig()),
+  notify: (input) => sendHolidayReminderEmail(input),
+};
 
-export function shouldSendHolidayReminder(now: Date, config: HolidayAutomationConfig): boolean {
-  if (!config.enabled) return false;
-  const today = getLocalDateKey(now, config.timeZone);
-  const day = Number(today.slice(8, 10));
-  return day === config.reminderDay && getLocalHour(now, config.timeZone) >= config.reminderHour;
-}
-
-export async function sendMonthlyHolidayReminder(
+/** 由外部排程叫醒時呼叫；關閉假日自動化時什麼都不做。失敗只記 log，不擋月結。 */
+export async function syncGovOfficeCalendarIfEnabled(
   now = new Date(),
   config: HolidayAutomationConfig = getHolidayAutomationConfig(),
-  deps: HolidayAutomationDeps = defaultDeps
-): Promise<'sent' | 'not_due' | 'already_sent' | 'email_not_configured'> {
-  if (!shouldSendHolidayReminder(now, config)) return 'not_due';
-
-  const today = getLocalDateKey(now, config.timeZone);
-  const target = parseYearMonth(today);
-  const monthKey = today.slice(0, 7);
-  if (sentReminderMonths.has(monthKey)) return 'already_sent';
-
-  if (!deps.isEmailConfigured()) {
-    log.warn('Holiday reminder skipped: salary email is not configured');
-    sentReminderMonths.add(monthKey);
-    return 'email_not_configured';
-  }
-
-  const context = await deps.loadMonthContext(target);
-  const report = buildHolidayReminder({
-    target,
-    today,
-    employees: context.employees,
-    attendance: context.attendance,
-    holidayRows: context.holidayRows,
-    nextYearHolidays: getNextYearHolidaysForReminder(target),
-  });
-  await deps.sendReminder({ target, subject: report.subject, text: report.text });
-  sentReminderMonths.add(monthKey);
-  log.info('Holiday reminder sent', {
-    month: monthKey,
-    unmarkedNoClockInDates: report.unmarkedNoClockInDates,
-    workedOnHolidayCount: report.workedOnHoliday.length,
-  });
-  return 'sent';
-}
-
-let running = false;
-
-export async function runHolidayAutomationTick(
-  now = new Date(),
-  config: HolidayAutomationConfig = getHolidayAutomationConfig(),
-  deps: HolidayAutomationDeps = defaultDeps
-): Promise<void> {
-  if (!areBackgroundServicesEnabled() || !config.enabled) return;
-  if (running) {
-    log.warn('Holiday automation is already running; skipping this tick');
-    return;
-  }
-
-  running = true;
+  deps: GovCalendarSyncDeps = defaultCalendarDeps
+): Promise<GovCalendarSyncResult | { skipped: 'disabled' } | { skipped: 'error' }> {
+  if (!config.enabled) return { skipped: 'disabled' };
   try {
-    await syncNationalHolidays(now, config, deps);
-    await sendMonthlyHolidayReminder(now, config, deps);
-  } finally {
-    running = false;
+    return await syncGovOfficeCalendar(now, config.timeZone, deps);
+  } catch (error) {
+    log.error('Government office calendar sync crashed; continuing', error);
+    return { skipped: 'error' };
   }
-}
-
-let schedulerHandle: NodeJS.Timeout | null = null;
-
-export function startHolidayAutomationScheduler(): RuntimeStoppable {
-  if (!areBackgroundServicesEnabled()) return { stop() {} };
-  const config = getHolidayAutomationConfig();
-  if (!config.enabled) {
-    log.info('Holiday automation is disabled');
-    return { stop() {} };
-  }
-  if (schedulerHandle) {
-    return { stop: stopHolidayAutomationScheduler };
-  }
-
-  const tick = () => {
-    void runHolidayAutomationTick().catch((error) => {
-      log.error('Holiday automation tick failed', error);
-    });
-  };
-  tick();
-  schedulerHandle = setInterval(tick, config.intervalMs);
-  return { stop: stopHolidayAutomationScheduler };
-}
-
-export function stopHolidayAutomationScheduler(): void {
-  if (!schedulerHandle) return;
-  clearInterval(schedulerHandle);
-  schedulerHandle = null;
-}
-
-/** 測試用：清掉「本月已寄」的記憶。 */
-export function resetHolidayReminderStateForTests(): void {
-  sentReminderMonths.clear();
-  running = false;
 }

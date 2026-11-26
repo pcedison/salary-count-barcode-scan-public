@@ -37,6 +37,7 @@ describe('salary automation cron tick', () => {
       expect(result.response.status).toBe(200);
       expect(result.body).toEqual({ ran: true, status: 'succeeded', target: { year: 2026, month: 11 } });
       expect(runScheduledMock).toHaveBeenCalledTimes(1);
+      expect(runScheduledMock).toHaveBeenCalledWith(expect.any(Date), { trigger: 'cron' });
     } finally {
       await server.close();
     }

@@ -12,3 +12,18 @@ describe('disabled salary worker role', () => {
     expect(run).not.toHaveBeenCalled(); expect(timer).not.toHaveBeenCalled();
   });
 });
+
+describe('external cron trigger', () => {
+  it('runs payroll from the cron route even when in-process background services are off', async () => {
+    vi.stubEnv('APP_BACKGROUND_SERVICES', 'disabled');
+    run.mockResolvedValue({ status: 'succeeded', target: { year: 2026, month: 11 }, persistedRecords: [], skippedEmployees: [] });
+    const outcome = await runScheduledMonthlySalaryAutomation(new Date(), { trigger: 'cron' });
+    expect(outcome).toEqual({ ran: true, status: 'succeeded', reason: undefined, target: { year: 2026, month: 11 } });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports background_disabled for in-process calls', async () => {
+    vi.stubEnv('APP_BACKGROUND_SERVICES', 'disabled');
+    expect(await runScheduledMonthlySalaryAutomation()).toEqual({ ran: false, reason: 'background_disabled' });
+  });
+});
