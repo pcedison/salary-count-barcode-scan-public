@@ -13,6 +13,7 @@ const scanState = vi.hoisted(() => ({
   currentTimestamp: '2026-03-12T00:30:00.000Z',
   employees: [] as Array<Record<string, any>>,
   holidays: [] as Array<Record<string, any>>,
+  taiwanHolidays: [] as Array<Record<string, any>>,
   attendanceRecords: [] as Array<Record<string, any>>,
   nextAttendanceId: 1
 }));
@@ -27,6 +28,7 @@ const storageMock = vi.hoisted(() => ({
   }),
   getAllEmployees: vi.fn(async () => scanState.employees),
   getAllHolidays: vi.fn(async () => scanState.holidays),
+  getTaiwanHolidays: vi.fn(async () => scanState.taiwanHolidays),
   getTemporaryAttendanceByEmployeeAndDate: vi.fn(async (employeeId: number, date: string) =>
     scanState.attendanceRecords.filter(
       (record) =>
@@ -172,6 +174,7 @@ beforeEach(() => {
   scanState.currentTime = '08:30';
   scanState.currentTimestamp = '2026-03-12T00:30:00.000Z';
   scanState.holidays = [];
+  scanState.taiwanHolidays = [];
   scanState.attendanceRecords = [];
   scanState.nextAttendanceId = 1;
   scanState.employees = [
@@ -227,6 +230,73 @@ describe('scan routes integration', () => {
         }
       }
     );
+  });
+
+  it('tells the scan upsert when the employee has a 假日出勤 entry for today', async () => {
+    scanState.holidays = [
+      { id: 31, employeeId: 5, date: '2026-03-12', name: '一般休息日加班', holidayType: 'worked' },
+      { id: 32, employeeId: 6, date: '2026/03/13', name: '一般休息日加班', holidayType: 'worked' }
+    ];
+    const server = await createJsonTestServer(registerScanRoutes);
+
+    try {
+      const scan = await jsonRequest(server.baseUrl, '/api/barcode-scan', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ idNumber: 'A123456789' })
+      });
+
+      expect(scan.response.status).toBe(200);
+      expect(storageMock.upsertTemporaryAttendanceScan).toHaveBeenCalledWith(
+        expect.objectContaining({ employeeId: 5, workedHoliday: true })
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it.each([
+    ['an ordinary Saturday', [], true],
+    ['a 補班 Saturday', [{ year: 2026, holidayDate: '2026-03-14', holidayName: '補行上班', isHoliday: false }], false]
+  ])('flags %s scan as 假日出勤 accordingly', async (_label, calendar, expected) => {
+    scanState.currentDateKey = '2026/03/14';
+    scanState.taiwanHolidays = calendar as Array<Record<string, any>>;
+    const server = await createJsonTestServer(registerScanRoutes);
+
+    try {
+      await jsonRequest(server.baseUrl, '/api/barcode-scan', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ idNumber: 'A123456789' })
+      });
+
+      expect(storageMock.upsertTemporaryAttendanceScan).toHaveBeenCalledWith(
+        expect.objectContaining({ dateKey: '2026/03/14', workedHoliday: expected })
+      );
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('does not flag a 假日出勤 entry that belongs to another employee', async () => {
+    scanState.holidays = [
+      { id: 33, employeeId: 6, date: '2026/03/12', name: '一般休息日加班', holidayType: 'worked' }
+    ];
+    const server = await createJsonTestServer(registerScanRoutes);
+
+    try {
+      await jsonRequest(server.baseUrl, '/api/barcode-scan', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ idNumber: 'A123456789' })
+      });
+
+      expect(storageMock.upsertTemporaryAttendanceScan).toHaveBeenCalledWith(
+        expect.objectContaining({ employeeId: 5, workedHoliday: false })
+      );
+    } finally {
+      await server.close();
+    }
   });
 
   it('creates a clock-in then clock-out flow for a basic employee scan', async () => {

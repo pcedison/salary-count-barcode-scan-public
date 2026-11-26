@@ -20,6 +20,7 @@ import {
 import { db } from './db';
 import { DatabaseEmployeeRepository } from './repositories/employeeRepository';
 import { compareAttendanceByLatestEvent } from './routes/scan-helpers';
+import { WORKED_HOLIDAY_TYPE, isUntouchedWorkedPlaceholder, placeholderToClockIn } from './services/workedHolidayAttendance';
 
 const log = createLogger('storage');
 
@@ -31,6 +32,8 @@ export interface AttendanceScanUpsertInput {
   time: string;
   isHoliday: boolean;
   expectedAction: AttendanceScanAction;
+  /** The employee has a 假日出勤 entry in 假日設定 for this date. */
+  workedHoliday?: boolean;
 }
 
 export interface TemporaryAttendancePageFilters {
@@ -416,6 +419,25 @@ export class DatabaseStorage implements IStorage {
         };
       }
 
+      const workedPlaceholder = existingRecords.find(isUntouchedWorkedPlaceholder);
+      if (workedPlaceholder) {
+        const [convertedAttendance] = await tx
+          .update(temporaryAttendance)
+          .set(placeholderToClockIn(input.time))
+          .where(eq(temporaryAttendance.id, workedPlaceholder.id))
+          .returning();
+
+        if (!convertedAttendance) {
+          throw new Error('Unable to persist scan attendance record');
+        }
+
+        return {
+          duplicate: false,
+          action,
+          attendance: convertedAttendance
+        };
+      }
+
       const [newAttendance] = await tx
         .insert(temporaryAttendance)
         .values({
@@ -423,8 +445,9 @@ export class DatabaseStorage implements IStorage {
           date: input.dateKey,
           clockIn: input.time,
           clockOut: '',
-          isHoliday: input.isHoliday,
-          isBarcodeScanned: true
+          isHoliday: input.isHoliday || input.workedHoliday === true,
+          isBarcodeScanned: true,
+          ...(input.workedHoliday ? { holidayType: WORKED_HOLIDAY_TYPE } : {})
         })
         .returning();
 

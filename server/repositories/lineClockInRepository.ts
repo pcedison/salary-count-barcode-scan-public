@@ -1,11 +1,17 @@
 import { createHash } from 'node:crypto';
 import { and, eq, getTableColumns, isNull, or, sql } from 'drizzle-orm';
 
-import { employees, lineClockRequests, temporaryAttendance, type TemporaryAttendance } from '@shared/schema';
+import {
+  employees, holidays, lineClockRequests, taiwanHolidays, temporaryAttendance,
+  type InsertTemporaryAttendance, type TemporaryAttendance,
+} from '@shared/schema';
 import { normalizeDateToDash, normalizeDateToSlash } from '@shared/utils/specialLeaveSync';
 import { db } from '../db';
 import { assertPayrollWritesEnabled } from '../config/payrollWrites';
 import { getLatestIncompleteAttendanceRecord, getTaiwanDateTimeParts } from '../routes/scan-helpers';
+import {
+  WORKED_HOLIDAY_TYPE, isUntouchedWorkedPlaceholder, placeholderToClockIn, shouldMarkClockInAsWorked,
+} from '../services/workedHolidayAttendance';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const VERSION = /^v1\.(\d{4}-\d{2}-\d{2})\.[0-9a-f]{64}$/;
@@ -75,6 +81,31 @@ export function buildLineClockState(employeeId: number, dateKey: string, records
     dateKey: normalizeDateToSlash(dateKey),
     stateVersion: `v1.${normalizedDate}.${hash([employeeId, hash(lineUserId), normalizedDate, rows])}`,
     action: getLatestIncompleteAttendanceRecord(rows) ? 'clock-out' : 'clock-in',
+  };
+}
+
+export type LineClockWrite =
+  | { kind: 'update'; id: number; set: Partial<InsertTemporaryAttendance> }
+  | { kind: 'insert'; values: InsertTemporaryAttendance };
+
+/**
+ * What a LINE clock-in or clock-out writes. A clock-out only sets clockOut, so the day's
+ * category (including an admin's edit in 考勤登記) stays as it is. A clock-in on a 假日出勤 day
+ * takes over the untouched 08:00–17:00 placeholder, or starts a row marked 假日出勤.
+ */
+export function planLineClockWrite(
+  employeeId: number, dateKey: string, time: string, records: TemporaryAttendance[], markWorked: boolean,
+): LineClockWrite {
+  const incomplete = getLatestIncompleteAttendanceRecord(records);
+  if (incomplete) return { kind: 'update', id: incomplete.id, set: { clockOut: time } };
+  const placeholder = records.find(isUntouchedWorkedPlaceholder);
+  if (placeholder) return { kind: 'update', id: placeholder.id, set: placeholderToClockIn(time) };
+  return {
+    kind: 'insert',
+    values: {
+      employeeId, date: dateKey, clockIn: time, clockOut: '', isHoliday: markWorked, isBarcodeScanned: true,
+      ...(markWorked ? { holidayType: WORKED_HOLIDAY_TYPE } : {}),
+    },
   };
 }
 
@@ -166,9 +197,16 @@ export class DatabaseLineClockInRepository {
       if (incomplete && (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(incomplete.clockIn) || time < incomplete.clockIn)) {
         throw new LineClockError(400, 'LINE_CLOCK_TIME_CONFLICT', '下班時間不可早於上班時間；請先核對原紀錄再重新確認。');
       }
-      const [attendance] = incomplete
-        ? await tx.update(temporaryAttendance).set({ clockOut: time }).where(eq(temporaryAttendance.id, incomplete.id)).returning()
-        : await tx.insert(temporaryAttendance).values({ employeeId, date: dateKey, clockIn: time, clockOut: '', isHoliday: false, isBarcodeScanned: true }).returning();
+      const markWorked = incomplete ? false : await shouldMarkClockInAsWorked(employeeId, dateKey, {
+        getAllHolidays: () => tx.select().from(holidays),
+        getTaiwanHolidays: (year?: number) => year === undefined
+          ? tx.select().from(taiwanHolidays)
+          : tx.select().from(taiwanHolidays).where(eq(taiwanHolidays.year, year)),
+      });
+      const write = planLineClockWrite(employeeId, dateKey, time, records, markWorked);
+      const [attendance] = write.kind === 'update'
+        ? await tx.update(temporaryAttendance).set(write.set).where(eq(temporaryAttendance.id, write.id)).returning()
+        : await tx.insert(temporaryAttendance).values(write.values).returning();
       if (!attendance) throw new Error('Unable to persist LINE attendance');
       const receipt: LineClockReceipt = {
         ...state, eventId: command.eventId, employeeName: employee.name, department: employee.department,

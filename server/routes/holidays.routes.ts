@@ -4,6 +4,10 @@ import { insertHolidaySchema, type Holiday } from '@shared/schema';
 import { removeSpecialLeaveDate } from '@shared/utils/specialLeaveSync';
 
 import { requireAdmin } from '../middleware/requireAdmin';
+import {
+  markExistingAttendanceAsWorked,
+  revertAttendanceForDeletedWorkedHoliday
+} from '../services/workedHolidayAttendance';
 import { storage } from '../storage';
 import { createLogger } from '../utils/logger';
 
@@ -32,6 +36,11 @@ async function ensureHolidayAttendanceRecord(holiday: Holiday) {
   );
 
   if (existingRecords.length > 0) {
+    // 已有打卡紀錄：假日出勤要回寫到那天的考勤，薪資才會算假日出勤加給
+    const updated = await markExistingAttendanceAsWorked(holiday, storage);
+    if (updated > 0) {
+      log.info(`員工 ${holiday.employeeId} 於 ${holiday.date} 的 ${updated} 筆考勤已標記為假日出勤`);
+    }
     return;
   }
 
@@ -119,6 +128,11 @@ export function registerHolidayRoutes(app: Express): void {
       const holiday = await storage.getHolidayById(id);
       if (!holiday) {
         return res.status(404).json({ message: 'Holiday not found' });
+      }
+
+      const reverted = await revertAttendanceForDeletedWorkedHoliday(holiday, storage);
+      if (reverted > 0) {
+        log.info(`員工 ${holiday.employeeId} 於 ${holiday.date} 的 ${reverted} 筆考勤已取消假日出勤標記`);
       }
 
       await storage.deleteTemporaryAttendanceByHolidayId(id);
